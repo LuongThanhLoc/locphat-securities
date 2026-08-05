@@ -1,0 +1,37 @@
+.lp-nav-ai {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid #816d35;
+  background: #17150f;
+  color: #f7d996;
+  font: 800 12px Inter, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lp-nav-ai:hover {
+  border-color: #f4b942;
+  background: #211d12;
+  color: #fff;
+}
+
+.lp-nav-ai svg {
+  width: 16px;
+  height: 16px;
+  color: #f4b942;
+}
+
+@media (max-width: 900px) {
+  .lp-nav-ai {
+    width: 42px;
+    padding: 0;
+  }
+
+  .lp-nav-ai span {
+    display: none;
+  }
+}

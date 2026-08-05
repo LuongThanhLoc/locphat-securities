@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090d10">
+  <title>Lịch doanh nghiệp - Lộc Phát Securities</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
+  <link rel="stylesheet" href="/static/calendar.css?v=20260805_mobile_card_v3">
+</head>
+<body>
+  <div class="lp-page-nav-wrap" data-lp-site-nav></div>
+  <main class="calendar-shell">
+    <header class="calendar-heading">
+      <div>
+        <p class="eyebrow">THỊ TRƯỜNG VIỆT NAM</p>
+        <h1>Lịch doanh nghiệp</h1>
+        <span>Ngày GDKHQ, ngày đăng ký cuối cùng, thanh toán cổ tức, ĐHĐCĐ và BCTC đã xác minh.</span>
+      </div>
+    </header>
+
+    <section class="calendar-kpis" aria-label="Tổng quan lịch">
+      <div><span>TRONG KHOẢNG</span><strong id="totalEvents">--</strong><small id="totalSymbols">-- mã</small></div>
+      <div><span>BCTC / KQKD</span><strong id="reportEvents">--</strong><small>Ngày công bố</small></div>
+      <div><span>CỔ TỨC</span><strong id="dividendEvents">--</strong><small>Ưu tiên GDKHQ</small></div>
+      <div><span>SẮP DIỄN RA</span><strong id="upcomingEvents">--</strong><small>Từ hôm nay</small></div>
+    </section>
+
+    <section class="countdown-banner" id="countdownBanner" style="display:none;">
+      <div class="countdown-title">Sự kiện tiếp theo trong</div>
+      <div class="countdown-display">
+        <span id="countdownDays">--</span><small>ngày</small>
+        <span id="countdownHours">--</span><small>giờ</small>
+        <span id="countdownMins">--</span><small>phút</small>
+        <span id="countdownSecs">--</span><small>giây</small>
+      </div>
+      <div class="countdown-event" id="countdownEvent"></div>
+    </section>
+
+    <div class="calendar-toolbar">
+      <nav class="date-tabs" id="dateTabs" aria-label="Khoảng thời gian">
+        <button data-range="prev">Tuần trước</button>
+        <button data-range="today">Hôm nay</button>
+        <button class="active" data-range="current">Tuần này</button>
+        <button data-range="next">Tuần sau</button>
+        <button data-range="forward">30 ngày tới</button>
+      </nav>
+
+      <div class="calendar-actions-bar">
+        <div class="view-segmented" id="viewSegmented" aria-label="Chế độ xem">
+          <button class="active" data-view="list" type="button" title="Dạng danh sách">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>
+            </svg>
+            <span>Danh sách</span>
+          </button>
+          <button data-view="grid" type="button" title="Dạng lưới lịch">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
+            </svg>
+            <span>Lịch</span>
+          </button>
+        </div>
+
+        <button class="refresh-icon-btn" id="refreshCalendar" type="button" title="Làm mới dữ liệu">
+          <svg class="refresh-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+          </svg>
+          <span class="btn-text">Làm mới</span>
+        </button>
+      </div>
+    </div>
+
+    <section class="calendar-filter">
+      <div class="segmented" aria-label="Loại sự kiện">
+        <button class="active" data-type="all">Tất cả</button>
+        <button data-type="financial_report">BCTC</button>
+        <button data-type="cash_dividend">Cổ tức TM</button>
+        <button data-type="stock_dividend">Cổ tức CP</button>
+        <button data-type="shareholder_meeting_annual">ĐHĐCĐ</button>
+        <button data-type="capital_action">Phát hành</button>
+        <button data-type="listing_change">Niêm yết</button>
+      </div>
+      <label class="symbol-filter"><span>Tìm mã</span><input id="calendarSymbol" maxlength="6" autocomplete="off" placeholder="FPT, PNJ..."></label>
+      <div class="coverage" id="coverageText">Đang xác minh nguồn...</div>
+    </section>
+
+    <!-- List View -->
+    <section id="calendarList" class="calendar-list" aria-live="polite">
+      <div class="calendar-loading"><span></span><strong>Đang đối chiếu lịch doanh nghiệp...</strong></div>
+    </section>
+
+    <!-- Calendar Grid View (hidden by default) -->
+    <section id="calendarGrid" class="calendar-grid" style="display:none;" aria-label="Lịch dạng lưới">
+      <div class="calendar-month-header" id="calendarMonthHeader"></div>
+      <div class="calendar-weekdays">
+        <span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span>
+      </div>
+      <div class="calendar-days" id="calendarDays"></div>
+    </section>
+
+    <div class="data-lineage" id="dataLineage">
+      <span>Nguồn dữ liệu đang tải</span>
+      <span>Ngày sự kiện và ngày công bố được tách riêng</span>
+    </div>
+
+    <!-- Event Type Legend -->
+    <section class="event-legend">
+      <span class="legend-item"><span class="legend-dot cash-div"></span>Cổ tức tiền mặt</span>
+      <span class="legend-item"><span class="legend-dot stock-div"></span>Cổ tức cổ phiếu</span>
+      <span class="legend-item"><span class="legend-dot meeting"></span>ĐHĐCĐ thường niên</span>
+      <span class="legend-item"><span class="legend-dot meeting-egm"></span>ĐHĐCĐ bất thường</span>
+      <span class="legend-item"><span class="legend-dot capital"></span>Phát hành</span>
+      <span class="legend-item"><span class="legend-dot listing"></span>Niêm yết/Hủy NY</span>
+      <span class="legend-item"><span class="legend-dot report"></span>BCTC</span>
+      <span class="legend-item"><span class="legend-dot halt"></span>Tạm ngừng</span>
+    </section>
+
+    <footer class="calendar-note">
+      <strong>Quy ước:</strong> cổ tức dùng ngày GDKHQ khi có; ĐHĐCĐ dùng ngày họp; BCTC dùng ngày công bố. Hệ thống không tự dự đoán lịch chưa xác nhận.
+    </footer>
+  </main>
+  
+  <button id="scrollToTopBtn" class="scroll-to-top-btn" type="button" aria-label="Cuộn lên đầu trang" title="Cuộn lên đầu trang">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 19V5M5 12l7-7 7 7"/>
+    </svg>
+  </button>
+
+  <script src="/static/site-nav.js?v=20260804_mobile_nav_v1"></script>
+  <script src="/static/calendar.js?v=20260805_countdown_live_v99"></script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071015">
+  <title>Market Radar - Lộc Phát Securities</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/heatmap.css?v=20260805_fix_symbol">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
+  <link rel="stylesheet" href="/static/site-nav-ai.css?v=20260804_mobile_nav_v1">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <div class="lp-page-nav-wrap" data-lp-site-nav></div>
+  <div class="app-shell">
+    <header class="topbar" hidden>
+      <a class="brand" href="/" aria-label="Về trang phân tích cổ phiếu">
+        <img src="/static/brand-logo.png" alt="Lộc Phát Securities">
+        <span class="brand-copy">
+          <strong>Lộc Phát Securities</strong>
+          <small>Market Radar</small>
+        </span>
+      </a>
+
+      <div class="topbar-actions">
+        <label class="symbol-search" aria-label="Tìm mã cổ phiếu">
+          <i data-lucide="search"></i>
+          <input id="symbolSearch" autocomplete="off" placeholder="Tìm mã trên bản đồ" maxlength="6">
+          <kbd>/</kbd>
+        </label>
+        <button class="icon-button" id="refreshButton" type="button" title="Làm mới dữ liệu">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+        <button class="ai-button" id="aiButton" type="button">
+          <i data-lucide="sparkles"></i>
+          <span>Phân tích AI</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="market-ribbon" aria-label="Trạng thái dữ liệu">
+      <div class="market-state">
+        <span class="status-dot" id="statusDot"></span>
+        <strong id="marketStatus">Đang kết nối</strong>
+        <span id="sessionTimestamp">Chờ dữ liệu...</span>
+      </div>
+      <div class="lineage" id="lineageText">Nguồn đang được xác minh</div>
+    </section>
+
+    <section class="summary-grid" aria-label="Tổng quan thị trường">
+      <article class="summary-item summary-score">
+        <span>Nhiệt thị trường</span>
+        <strong id="temperatureValue">--</strong>
+        <small id="regimeValue">Đang tính</small>
+      </article>
+      <article class="summary-item">
+        <span>Độ rộng tăng</span>
+        <strong id="breadthValue">--</strong>
+        <small id="advanceDeclineValue">Tăng/Giảm --</small>
+      </article>
+      <article class="summary-item">
+        <span>Thanh khoản</span>
+        <strong id="liquidityValue">--</strong>
+        <small id="activeRatioValue">Mã có giao dịch --</small>
+      </article>
+      <article class="summary-item">
+        <span>Mức tập trung</span>
+        <strong id="concentrationValue">--</strong>
+        <small>Top 10 mã theo GTGD</small>
+      </article>
+      <article class="summary-item market-counts">
+        <span class="ceiling"><b id="ceilingCount">0</b> trần</span>
+        <span class="up"><b id="advanceCount">0</b> tăng</span>
+        <span class="flat"><b id="flatCount">0</b> TC</span>
+        <span class="down"><b id="declineCount">0</b> giảm</span>
+        <span class="floor"><b id="floorCount">0</b> sàn</span>
+      </article>
+    </section>
+
+    <section class="controlbar" aria-label="Bộ lọc heatmap">
+      <div class="segmented" id="colorMode" role="group" aria-label="Chế độ màu">
+        <button class="active" data-mode="performance" type="button">Biến động</button>
+        <button data-mode="flow" type="button">Dòng tiền</button>
+      </div>
+      <label class="field-control">
+        <span>Kích thước</span>
+        <select id="sizeMetric">
+          <option value="market_cap">Vốn hóa</option>
+          <option value="trading_value">Giá trị giao dịch</option>
+        </select>
+      </label>
+      <label class="field-control">
+        <span>Sàn</span>
+        <select id="exchangeFilter">
+          <option value="ALL">Tất cả</option>
+          <option value="HOSE">HOSE</option>
+          <option value="HNX">HNX</option>
+          <option value="UPCOM">UPCoM</option>
+        </select>
+      </label>
+      <label class="field-control sector-control">
+        <span>Ngành</span>
+        <select id="sectorFilter"><option value="ALL">Tất cả ngành</option></select>
+      </label>
+      <label class="toggle-control">
+        <input id="activeOnly" type="checkbox">
+        <span class="toggle-track"></span>
+        <span>Chỉ mã có giao dịch</span>
+      </label>
+      <button class="reset-button" id="resetFilters" type="button" title="Đặt lại bộ lọc">
+        <i data-lucide="rotate-ccw"></i><span>Đặt lại</span>
+      </button>
+    </section>
+
+    <main class="workspace">
+      <section class="map-panel" id="mapPanel">
+        <div class="panel-heading">
+          <div>
+            <p>Toàn thị trường Việt Nam</p>
+            <h1>Bản đồ giá và dòng tiền</h1>
+          </div>
+          <div class="panel-heading-actions">
+            <div class="legend" id="heatLegend" aria-label="Chú giải màu"></div>
+            <button class="fullscreen-button" id="fullscreenToggle" type="button" title="Toàn màn hình / Phóng to bảng điện">
+              <i data-lucide="maximize-2"></i>
+              <span>Toàn màn hình</span>
+            </button>
+          </div>
+        </div>
+        <div class="map-stage" id="mapStage">
+          <div class="loading-state" id="loadingState">
+            <span class="loading-spinner"></span>
+            <strong>Đang chuẩn hóa bảng giá và ICB...</strong>
+          </div>
+          <svg id="treemap" role="img" aria-label="Treemap cổ phiếu Việt Nam"></svg>
+          <div class="empty-state" id="emptyState" hidden>Không có mã phù hợp với bộ lọc hiện tại.</div>
+        </div>
+        <div class="tooltip" id="stockTooltip" hidden></div>
+      </section>
+
+      <aside class="radar-panel">
+        <div class="radar-tabs" role="tablist">
+          <button class="active" data-tab="sectors" type="button">Ngành dẫn dắt</button>
+          <button data-tab="watchlist" type="button">Radar mã</button>
+        </div>
+        <div class="radar-content" id="sectorRadar"></div>
+        <div class="radar-content" id="stockRadar" hidden></div>
+        <div class="method-note">
+          <i data-lucide="shield-check"></i>
+          <p><strong>Quant trước, AI sau.</strong> Điểm số do backend tính từ giá, độ rộng và thanh khoản. AI chỉ diễn giải khi bạn chủ động yêu cầu.</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="page-footer">
+      <span id="coverageText">Đang kiểm tra độ phủ...</span>
+      <button id="methodButton" type="button"><i data-lucide="info"></i> Phương pháp tính</button>
+    </footer>
+  </div>
+
+  <dialog class="ai-dialog" id="aiDialog">
+    <div class="dialog-shell">
+      <header class="dialog-header">
+        <div>
+          <span class="premium-label"><i data-lucide="sparkles"></i> AI Market Brief</span>
+          <h2>Phân tích dòng tiền có căn cứ</h2>
+        </div>
+        <button class="icon-button" id="closeAiDialog" type="button" title="Đóng"><i data-lucide="x"></i></button>
+      </header>
+      <div class="ai-weekly-action" id="aiWeeklyAction">
+        <button class="weekly-btn" id="weeklyAnalysisBtn" type="button">
+          <i data-lucide="calendar-range"></i>
+          <span class="weekly-btn-text">Phân Tích Tuần</span>
+        </button>
+        <p class="weekly-hint" id="weeklyHint"></p>
+      </div>
+      <div class="ai-loading" id="aiLoading">
+        <span class="loading-spinner"></span>
+        <strong>Lộc Phát AI đang diễn giải Quant snapshot...</strong>
+        <p>Chỉ lần bấm này mới gọi API. Kết quả cùng snapshot được cache để tiết kiệm token.</p>
+      </div>
+      <div class="ai-error" id="aiError" hidden></div>
+      <div class="ai-report" id="aiReport" hidden></div>
+    </div>
+  </dialog>
+
+  <dialog class="method-dialog" id="methodDialog">
+    <div class="method-dialog-body">
+      <header><h2>Phương pháp Market Radar 3.2</h2><button class="icon-button" id="closeMethodDialog"><i data-lucide="x"></i></button></header>
+      <dl>
+        <div><dt>Nhiệt thị trường</dt><dd>38% độ rộng, 22% biến động theo vốn hóa, 18% tỷ lệ mã có giao dịch, 8% độ phân tán thanh khoản và 14% độ ổn định độ rộng.</dd></div>
+        <div><dt>Điểm dòng tiền cổ phiếu</dt><dd>24% biến động giá + 14% thanh khoản + 8% xác nhận khối lượng-giá + 6% vị trí trong range.</dd></div>
+        <div><dt>Điểm dòng tiền ngành</dt><dd>6% biến động + 22% độ rộng + 8% tỷ lệ giao dịch + 6% thanh khoản tương đối + 8% độ ổn định độ rộng + 6% phân bổ dòng tiền.</dd></div>
+        <div><dt>Giới hạn</dt><dd>Heatmap là ảnh chụp một phiên. Không thể suy ra chắc chắn giao dịch tổ chức, catalyst hay xu hướng nhiều phiên nếu chưa có dữ liệu tương ứng.</dd></div>
+      </dl>
+    </div>
+  </dialog>
+
+  <script src="/static/site-nav.js?v=20260804_mobile_nav_v1"></script>
+  <script src="/static/heatmap.js?v=20260805_remove_company_name_v5" defer></script>
+</body>
+</html>

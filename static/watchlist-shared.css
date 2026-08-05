@@ -1,0 +1,104 @@
+/* =========================================================
+   WATCHLIST-SHARED.CSS — Shared UI Components for Stock Page
+   Used ONLY on index.html for stock header toggle button
+   No global body, input, or table resets
+   ========================================================= */
+
+.wl-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid #34464e;
+  background: #10191e;
+  color: #dce7ea;
+  font: 700 12px 'Inter', sans-serif;
+  cursor: pointer;
+  margin-left: 8px;
+  vertical-align: middle;
+  white-space: nowrap;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+.wl-toggle-btn:hover {
+  border-color: #2acb9b;
+  color: #38d5a7;
+}
+.wl-toggle-btn.watching {
+  border-color: #2ab98f;
+  background: #16352e;
+  color: #42d9aa;
+}
+.wl-toggle-btn.watching:hover {
+  border-color: #f43f5e;
+  color: #f43f5e;
+  background: #231216;
+}
+
+.wl-inline-confirm {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  margin-top: 4px;
+  padding: 12px 16px;
+  background: #0e1519;
+  border: 1px solid #29383f;
+  font-size: 12px;
+  color: #8c9aa1;
+  min-width: 220px;
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.wl-inline-confirm.open {
+  display: block;
+}
+.wl-inline-confirm p {
+  margin: 0 0 10px;
+  font-weight: 700;
+}
+.wl-inline-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+.wl-inline-confirm-actions button {
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.wl-page-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  padding: 12px 20px;
+  font: 800 12px 'Inter', sans-serif;
+  color: #fff;
+  background: #0e1519;
+  border: 1px solid #2acb9b;
+  color: #35d2a0;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  animation: wl-toast-in 0.3s ease;
+  pointer-events: none;
+  border-radius: 6px;
+}
+.wl-page-toast.error {
+  border-color: #f43f5e;
+  color: #f43f5e;
+}
+.wl-page-toast.fadeout {
+  animation: wl-toast-out 0.3s ease forwards;
+}
+
+@keyframes wl-toast-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes wl-toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(16px); }
+}

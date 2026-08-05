@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Công ty Chứng Khoán Lộc Phát Securities - Hệ Thống Phân Tích Cổ Phiếu</title>
+
+  <!-- Favicon Icons -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=20260728_v1">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png?v=20260728_v1">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png?v=20260728_v1">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png?v=20260728_v1">
+
+  <!-- Google Fonts & Tailwind CSS v3 & ApexCharts & FontAwesome -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Tailwind CSS v3 CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              dark: '#0b0f19',
+              card: '#0f172a',
+              emerald: '#10b981',
+              cyan: '#38bdf8',
+              purple: '#a855f7',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <link rel="stylesheet" href="/static/style.css?v=20260805_trend_table_v3">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260805_search_icon_v5">
+  <link rel="stylesheet" href="/static/watchlist-shared.css?v=20260804_v6">
+</head>
+<body class="is-welcome-page bg-[#0b0f19] text-slate-100 font-sans antialiased min-h-screen selection:bg-emerald-500 selection:text-slate-900">
+
+  <!-- Loading Overlay -->
+  <div id="loading" class="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Đang tải dữ liệu...</div>
+  </div>
+
+  <!-- Shared Global Sticky Header (Top Level Body) -->
+  <div class="lp-page-nav-wrap" data-lp-site-nav></div>
+
+  <div class="container w-full px-2 md:px-4 py-2">
+    <header class="navbar" hidden>
+      <div class="brand flex items-center gap-3 cursor-pointer group" onclick="showWelcomeHome()" title="Quay về Trang chủ Lộc Phát Securities">
+        <img src="/static/brand-logo.png?v=20260728_v1" alt="Lộc Phát Securities Logo" class="brand-logo-img h-10 md:h-12 w-auto object-contain transition-all group-hover:scale-105 filter drop-shadow-[0_4px_12px_rgba(16,185,129,0.25)]">
+        <div>
+          <div class="brand-title text-lg font-bold text-white tracking-wide group-hover:text-emerald-400 transition-colors">Lộc Phát Securities</div>
+          <div class="brand-sub text-xs text-slate-400">Công ty Chứng Khoán Lộc Phát Securities</div>
+        </div>
+      </div>
+
+      <div class="navbar-actions flex items-center gap-3">
+        <a href="/heatmap" class="flex items-center gap-2 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/80 hover:border-rose-500/50 text-slate-200 hover:text-rose-400 font-bold px-3.5 py-1.5 rounded-full text-xs transition-all cursor-pointer shadow-md">
+          <i class="fa-solid fa-fire text-rose-500"></i>
+          <span>Bản Đồ Nhiệt</span>
+        </a>
+
+        <div id="navbarSearchBox" class="search-box flex items-center bg-slate-950/80 border border-slate-700/60 rounded-full px-4 py-1.5 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all">
+          <i class="fa-solid fa-magnifying-glass text-slate-500 mr-2"></i>
+          <input type="text" id="symbolInput" class="search-input bg-transparent border-none outline-none text-white text-sm font-semibold uppercase placeholder:normal-case placeholder:text-slate-500 w-36 md:w-48" placeholder="Mã CP (SSI, PNJ...)" value="">
+          <button class="search-btn bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-4 py-1.5 rounded-full text-xs transition-all shadow-md shadow-emerald-500/30 active:scale-95" id="searchBtn">Phân Tích</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Error Notification Banner -->
+    <div id="errorBanner" class="error-banner hidden items-center gap-3 p-4 mb-6 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-400 text-sm font-semibold shadow-lg shadow-rose-500/10">
+      <i class="fa-solid fa-triangle-exclamation text-lg"></i>
+      <span id="errorMessage">Bạn đã nhập sai mã cổ phiếu!</span>
+    </div>
+
+    <!-- 1. Welcome Landing Home Page State (Shown by default on web launch) -->
+    <div id="welcomeState" class="welcome-container w-full my-4 flex justify-center">
+      <div class="welcome-glow-card relative w-full bg-slate-900/70 border border-slate-800/80 backdrop-blur-2xl rounded-3xl p-8 md:p-12 text-center overflow-hidden shadow-2xl shadow-slate-950/80">
+        <div class="welcome-ring-bg pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] h-[650px] bg-[radial-gradient(circle,rgba(16,185,129,0.14)_0%,rgba(56,189,248,0.08)_45%,transparent_70%)] rounded-full"></div>
+
+        <div class="welcome-header relative z-10 mb-8">
+          <span class="inline-flex items-center gap-2 text-[11px] font-bold tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-4 py-1.5 rounded-full mb-4 uppercase">
+            <i class="fa-solid fa-sparkles"></i> LỘC PHÁT SECURITIES INTELLIGENCE
+          </span>
+
+          <h1 class="welcome-title text-3xl md:text-5xl font-extrabold text-white mb-4 tracking-tight leading-tight">
+            Chào Mừng Đến Với <span class="bg-gradient-to-r from-white via-emerald-400 to-sky-400 bg-clip-text text-transparent inline-block pb-2">Lộc Phát Securities</span>
+          </h1>
+
+          <p class="welcome-subtitle text-slate-400 text-sm md:text-base max-w-2xl mx-auto leading-relaxed font-normal">
+            Hệ thống phân tích tài chính chuyên sâu, trực quan hóa sức khỏe tài sản, mô hình Quant AI 80/20, nhận định mua/bán AI Engine & ma trận so sánh đối thủ cùng ngành.
+          </p>
+        </div>
+
+        <!-- Central Hero Search Box -->
+        <div class="welcome-search-wrapper relative z-10 max-w-2xl mx-auto mb-6">
+          <div class="welcome-search-box flex items-center bg-slate-950/90 border border-emerald-500/40 focus-within:border-emerald-400 focus-within:ring-4 focus-within:ring-emerald-500/20 rounded-full p-2 pl-5 transition-all shadow-xl shadow-emerald-500/10 cursor-pointer" data-lp-open-search>
+            <i class="fa-solid fa-magnifying-glass text-emerald-400 text-lg mr-3"></i>
+            <input type="text" id="welcomeSymbolInput" class="welcome-search-input flex-1 bg-transparent border-none outline-none text-white text-base font-semibold placeholder:text-slate-500 uppercase cursor-pointer" placeholder="Nhập mã cổ phiếu phân tích (VD: SSI, PNJ, BCM, FPT, VNM, HPG)..." data-lp-open-search readonly>
+            <button class="welcome-search-btn bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-extrabold px-6 py-3 rounded-full text-sm flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/30 active:scale-95 cursor-pointer" type="button" data-lp-open-search>
+              <span>Bắt Đầu Phân Tích</span>
+              <i class="fa-solid fa-bolt-lightning"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Quick Ticker Suggestion Pills -->
+        <div class="welcome-suggestions relative z-10 flex items-center justify-center gap-3 flex-wrap mb-10">
+          <span class="suggestion-label text-xs font-semibold text-slate-400 flex items-center gap-1.5"><i class="fa-solid fa-fire text-amber-500"></i> Gợi ý mã phổ biến:</span>
+          <div class="suggestion-pills flex gap-2 flex-wrap">
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('SSI')">SSI</button>
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('PNJ')">PNJ</button>
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('BCM')">BCM</button>
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('FPT')">FPT</button>
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('VNM')">VNM</button>
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('HPG')">HPG</button>
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('MWG')">MWG</button>
+            <button class="welcome-pill bg-slate-800/80 border border-slate-700/60 hover:border-emerald-500/60 hover:text-emerald-400 hover:bg-emerald-500/10 text-slate-200 text-xs font-bold px-3.5 py-1.5 rounded-xl transition-all cursor-pointer" onclick="selectStock('VND')">VND</button>
+          </div>
+        </div>
+
+        <!-- Feature Highlights Grid -->
+        <div class="welcome-features-grid relative z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-left">
+          <div class="feature-card bg-slate-950/50 border border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-950/80 p-5 rounded-2xl transition-all">
+            <div class="feature-icon w-11 h-11 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xl mb-4"><i class="fa-solid fa-shield-halved"></i></div>
+            <div class="feature-title text-white font-bold text-base mb-2">Định Giá & Sức Khỏe Tài Sản</div>
+            <div class="feature-desc text-slate-400 text-xs leading-relaxed">Đánh giá tự động P/B, ROE, dư nợ Margin, chất lượng tài sản FVTPL & hệ số an toàn vốn CAR.</div>
+          </div>
+
+          <div class="feature-card bg-slate-950/50 border border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-950/80 p-5 rounded-2xl transition-all">
+            <div class="feature-icon w-11 h-11 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center text-xl mb-4"><i class="fa-solid fa-microchip"></i></div>
+            <div class="feature-title text-white font-bold text-base mb-2">Phân Tích Chuyên Sâu</div>
+            <div class="feature-desc text-slate-400 text-xs leading-relaxed">Hợp nhất định lượng, phân tích kỹ thuật đa khung thời gian và kiểm định walk-forward trong một quyết định.</div>
+          </div>
+
+          <div class="feature-card bg-slate-950/50 border border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-950/80 p-5 rounded-2xl transition-all">
+            <div class="feature-icon w-11 h-11 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center text-xl mb-4"><i class="fa-solid fa-layer-group"></i></div>
+            <div class="feature-title text-white font-bold text-base mb-2">Ma Trận So Sánh Cùng Ngành</div>
+            <div class="feature-desc text-slate-400 text-xs leading-relaxed">So sánh 15 chỉ số trọng yếu đối thủ cùng ngành với cơ chế Lazy Loading tối ưu tài nguyên.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 2. Detailed Stock Analysis Dashboard State (Revealed after searching a stock) -->
+    <div id="dashboardState" style="display: none;">
+
+      <!-- Stock Header Overview -->
+      <div class="stock-header-card flex flex-wrap items-center justify-between gap-6 p-6 mb-6 bg-slate-900/70 border border-slate-800/80 rounded-2xl backdrop-blur-xl shadow-xl" id="stockHeader">
+        <div class="stock-title-area">
+          <h1 class="text-3xl font-extrabold text-white flex flex-wrap items-center gap-3">
+            <div id="companyLogoWrapper" class="company-logo-wrapper">
+              <img id="companyLogo" class="company-logo" src="" alt="">
+              <div id="companyLogoFallback" class="company-logo-fallback">
+                <span id="companyLogoInitials">--</span>
+              </div>
+            </div>
+            <span id="displaySymbol">---</span>
+            <span class="exchange-badge text-xs font-bold bg-sky-500/20 text-sky-400 border border-sky-500/40 px-3 py-1 rounded-md uppercase" id="displayExchange">HOSE</span>
+            <div style="position:relative;display:inline-block;">
+              <button class="wl-toggle-btn" id="watchlistToggleBtn" type="button" style="display:none;">☆ Thêm vào theo dõi</button>
+              <div class="wl-inline-confirm" id="watchlistInlineConfirm">
+                <p>Xóa khỏi danh mục theo dõi?</p>
+                <div class="wl-inline-confirm-actions">
+                  <button style="background:#f43f5e;color:#fff;border:none;" id="watchlistConfirmYes">Xóa</button>
+                  <button style="background:transparent;color:#94a3b8;border:1px solid #293943;" id="watchlistConfirmNo">Hủy</button>
+                </div>
+              </div>
+            </div>
+          </h1>
+          <div class="organ-name text-sm text-slate-400 mt-1 font-medium" id="displayOrganName">Vui lòng nhập hoặc chọn mã cổ phiếu để bắt đầu phân tích</div>
+        </div>
+
+        <div class="header-badges flex items-center gap-4 flex-wrap">
+          <div class="badge-item bg-slate-950/60 border border-slate-800/80 rounded-xl px-4 py-2 text-center min-w-[110px]">
+            <div class="badge-label text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Kỳ báo cáo</div>
+            <div class="badge-value text-base font-extrabold text-white mt-0.5" id="displayQuarter">---</div>
+          </div>
+          <div class="badge-item bg-slate-950/60 border border-slate-800/80 rounded-xl px-4 py-2 text-center min-w-[110px]">
+            <div class="badge-label text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Vốn hóa (Tỷ)</div>
+            <div class="badge-value text-base font-extrabold text-white mt-0.5" id="displayMarketCap">---</div>
+          </div>
+          <div class="badge-item bg-slate-950/60 border border-slate-800/80 rounded-xl px-4 py-2 text-center min-w-[110px]">
+            <div class="badge-label text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Số lượng CPLH</div>
+            <div class="badge-value text-base font-extrabold text-white mt-0.5" id="displayIssueShareHeader">---</div>
+          </div>
+        </div>
+
+        <div class="price-metric text-right md:text-right">
+          <div class="current-price text-3xl font-extrabold text-emerald-400 tracking-tight"><span id="displayPrice">---</span> <small class="text-xs text-slate-400 font-semibold">VND</small></div>
+          <div class="price-label text-xs text-slate-400 font-medium">Giá thị trường hiện tại</div>
+          <div class="price-label text-[11px] text-slate-500 font-semibold mt-1" id="dnseRealtimeStatus">Nguồn: DNSE / dữ liệu thị trường</div>
+        </div>
+      </div>
+
+      <div id="globalAsOfBar" class="mb-6 px-4 py-3 border border-sky-500/20 bg-sky-500/5 rounded-lg text-[11px] text-slate-300 flex flex-wrap gap-x-5 gap-y-2" aria-live="polite">
+        <span><i class="fa-solid fa-satellite-dish text-emerald-400 mr-1"></i><strong>Giá:</strong> <span id="asOfMarket">Đang kiểm tra DNSE</span></span>
+        <span><i class="fa-solid fa-file-lines text-sky-400 mr-1"></i><strong>BCTC:</strong> <span id="asOfFinancials">Đang tải</span></span>
+        <span><i class="fa-solid fa-layer-group text-violet-400 mr-1"></i><strong>TTM:</strong> <span id="asOfTtm">Đang tải</span></span>
+        <span class="ml-auto"><i class="fa-solid fa-rotate text-slate-400 mr-1"></i><span id="asOfGenerated">Đang tải</span></span>
+      </div>
+
+      <!-- 2x2 Main Grid -->
+      <div class="dashboard-grid">
+
+        <!-- 1. Valuation & Profitability -->
+        <div class="glass-card">
+          <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-scale-balanced"></i> 1. Định Giá & Hiệu Quả (Valuation & Profitability)</div>
+          </div>
+
+          <!-- Row 1: Định giá & Thước đo thị trường -->
+          <div class="metrics-row grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div class="metric-box highlight">
+              <div class="metric-name">P/B (Price-to-Book)</div>
+              <div class="metric-num" id="valPB">--</div>
+              <span class="status-tag primary" id="tagPB">Đang tải...</span>
+            </div>
+
+            <div class="metric-box highlight">
+              <div class="metric-name">ROE (Return on Equity)</div>
+              <div class="metric-num" id="valROE">--</div>
+              <span class="status-tag warning" id="tagROE">Đang tải...</span>
+            </div>
+
+            <div class="metric-box">
+              <div class="metric-name">P/E (Price-to-Earnings)</div>
+              <div class="metric-num" id="valPE">--</div>
+              <span class="status-tag primary">Tham khảo</span>
+            </div>
+
+            <div class="metric-box highlight">
+              <div class="metric-name">Hệ Số Beta</div>
+              <div class="metric-num" id="valBeta">--</div>
+              <span class="status-tag primary" id="tagBeta">VNI Benchmark</span>
+            </div>
+          </div>
+
+          <!-- Row 2: Quy mô & Chỉ số cổ phiếu -->
+          <div class="metrics-row grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div class="metric-box">
+              <div class="metric-name">EPS TTM</div>
+              <div class="metric-num" style="font-size: 18px;" id="valEPS">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium">Lợi nhuận ròng / CP</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-name">BVPS (Giá trị sổ sách)</div>
+              <div class="metric-num" style="font-size: 18px;" id="valBVPS">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium">Giá trị tài sản ròng / CP</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-name">LNST TTM (Tỷ)</div>
+              <div class="metric-num" style="font-size: 18px;" id="valNPAT">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium">Lợi nhuận 4 quý gần nhất</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-name">Số Lượng CPLH</div>
+              <div class="metric-num" style="font-size: 18px;" id="valIssueShare">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium">Cổ phiếu lưu hành</div>
+            </div>
+          </div>
+
+          <!-- Row 3: Chính sách Cổ tức & Thông tin Niêm yết -->
+          <div class="metrics-row grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div class="metric-box">
+              <div class="metric-name">Ngày GDKHQ</div>
+              <div class="metric-num text-emerald-400" style="font-size: 17px;" id="valExRightDate">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium"><i class="fa-solid fa-calendar-check text-emerald-400"></i> Ngày chốt quyền gần nhất</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-name">Tăng cổ tức (3-5 năm)</div>
+              <div class="metric-num text-emerald-400" style="font-size: 17px;" id="valDivGrowth">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium"><i class="fa-solid fa-arrow-trend-up text-emerald-400"></i> Tốc độ tăng trưởng cổ tức</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-name">Tỷ lệ trả cổ tức</div>
+              <div class="metric-num text-sky-400" style="font-size: 17px;" id="valPayoutRatio">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium"><i class="fa-solid fa-chart-pie text-sky-400"></i> Tỷ lệ chi trả / LNST</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-name">Ngày IPO (Niêm yết)</div>
+              <div class="metric-num text-purple-400" style="font-size: 17px;" id="valIPODate">--</div>
+              <div class="text-[11px] text-slate-400 mt-1 font-medium"><i class="fa-solid fa-building-columns text-purple-400"></i> Ngày chính thức lên sàn</div>
+            </div>
+          </div>
+
+          <div class="benchmark-note" id="pbNote">
+            <i class="fa-solid fa-circle-info"></i> <strong>Đánh giá P/B:</strong> Vui lòng chọn hoặc nhập mã cổ phiếu để xem đánh giá chi tiết.
+          </div>
+        </div>
+
+        <!-- 2. Balance Sheet & Asset Quality (Dynamic Sector Engine) -->
+        <div class="glass-card">
+          <div class="card-header flex flex-wrap items-center justify-between gap-2">
+            <div class="card-title"><i class="fa-solid fa-shield-halved"></i> 2. Sức Khỏe Tài Chính & Chất Lượng Tài Sản</div>
+            <span class="ref-pill" id="sectorArchetypeBadge">Ngành: Chứng khoán</span>
+          </div>
+          <div id="dataQualityNote" class="text-[11px] text-slate-400 mb-3" aria-live="polite"></div>
+
+          <!-- 4 Main Sector Metrics Grid -->
+          <div class="metrics-row grid grid-cols-2 gap-3 mb-4" id="sectorMainMetricsGrid">
+            <!-- Injected dynamically via JS -->
+          </div>
+
+          <!-- 2 Detail Metrics Row -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3" id="sectorDetailMetricsRow">
+            <!-- Injected dynamically via JS -->
+          </div>
+
+          <!-- Risk Warning Note -->
+          <div class="benchmark-note" id="sectorRiskNote">
+            <i class="fa-solid fa-layer-group"></i> <span id="sectorRiskText">Cơ cấu tài sản & rủi ro đặc thù ngành...</span>
+          </div>
+        </div>
+
+        <!-- 3. Dynamic Revenue & Income Breakdown (TTM) -->
+        <div class="glass-card" id="section3GlassCard">
+          <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-chart-pie" style="color: var(--primary-emerald);"></i> 3. Cơ Cấu Doanh Thu & Nguồn Thu Nhập</div>
+            <span class="ref-pill" id="revBadgeTop"><i class="fa-solid fa-chart-pie" style="color: var(--primary-emerald);"></i> TTM Engine Ready</span>
+          </div>
+
+          <!-- Pre-Analysis Teaser View (Cyber Hero Style) -->
+          <div id="revPreAnalysisState" class="ai-hero-minimal-container">
+            <div class="ai-core-glow-card">
+              <div class="ai-core-ring-bg" style="background: radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, transparent 70%);"></div>
+              
+              <div class="ai-core-header">
+                <span class="ai-chip-pill" style="color: var(--primary-emerald); border-color: rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.1);"><i class="fa-solid fa-chart-pie"></i> REVENUE ANALYTICS ENGINE</span>
+                <h3 class="ai-hero-heading">Cơ Cấu Doanh Thu & Thu Nhập <span id="revTeaserSymbolName" class="glow-symbol-text" style="background: linear-gradient(90deg, #ffffff, var(--primary-emerald)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">---</span></h3>
+              </div>
+
+              <!-- Central Hero Glowing Button -->
+              <div class="ai-button-wrapper">
+                <div class="ai-button-aura" style="background: radial-gradient(circle, rgba(16, 185, 129, 0.4) 0%, transparent 70%);"></div>
+                <button class="btn-ai-cyber-hero" style="background: linear-gradient(135deg, #10b981, #059669); border-color: rgba(16, 185, 129, 0.5); box-shadow: 0 0 25px rgba(16, 185, 129, 0.4);" onclick="triggerRevenueAnalysis()">
+                  <div class="btn-shine"></div>
+                  <i class="fa-solid fa-chart-pie"></i>
+                  <span class="btn-text">Trích Xuất Cơ Cấu Doanh Thu</span>
+                  <i class="fa-solid fa-bolt-lightning"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Scanning HUD State (During calculation animation) -->
+          <div id="revScanningState" class="ai-scanning-hud" style="display: none;">
+            <div class="ai-hud-spinner">
+              <i class="fa-solid fa-chart-pie fa-spin" style="font-size: 42px; color: var(--primary-emerald);"></i>
+            </div>
+            <div class="ai-hud-status" id="revScanText">⚡ Đang kết nối BCTC & Phân tích các nguồn Thu Nhập TTM...</div>
+            <div class="ai-hud-progressbar"><div class="ai-hud-fill" id="revScanProgress" style="background: linear-gradient(90deg, #10b981, #06b6d4);"></div></div>
+          </div>
+
+          <!-- Post-Analysis Results View (Revealed after clicking button) -->
+          <div id="revResultsState" style="display: none;">
+            <!-- Revenue Summary KPIs -->
+            <div id="revKpiGrid" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <!-- Injected via JS -->
+            </div>
+
+            <!-- Disclosure Meta -->
+            <div id="revenueDisclosureMeta" class="mb-4" aria-live="polite"></div>
+
+            <!-- Main Visualization: Donut + Legend -->
+            <div id="revenueVisualizationGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start mb-6">
+
+              <!-- Donut Chart Box with Total in Center -->
+              <div style="position: relative; min-height: 280px; display: flex; align-items: center; justify-content: center;">
+                <div id="revenueDonutChart" style="width: 100%;"></div>
+                <div class="revenue-chart-center">
+                  <div id="chartCenterPeriodLabel" style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Tổng doanh thu</div>
+                  <div style="font-size: 20px; font-weight: 800; color: #fff;" id="chartCenterTotal">0 Tỷ</div>
+                </div>
+              </div>
+
+              <!-- Dynamic Legend & Detailed Sub-Items Column -->
+              <div id="revenueLegendList" style="display: flex; flex-direction: column; gap: 12px;">
+                <!-- Injected dynamically via JS -->
+              </div>
+
+            </div>
+
+            <!-- Historical Trends Section -->
+            <div id="revTrendsSection" class="rev-trends-section" style="display: none;">
+              <div class="rev-section-header">
+                <i class="fa-solid fa-chart-line" style="color: var(--primary-emerald);"></i>
+                <h4>Xu Hướng Doanh Thu Qua Các Kỳ</h4>
+                <span id="revTrendsPeriods" class="rev-trends-badge"></span>
+              </div>
+              <div class="rev-trends-content">
+                <!-- Trend Summary KPIs -->
+                <div id="revTrendKpis" class="rev-trend-kpis grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <!-- Injected via JS -->
+                </div>
+                <!-- Area/Line Chart - ApexCharts controls height -->
+                <div id="revenueTrendChart" class="apex-chart-container"></div>
+                <!-- Segment Trends (if available) -->
+                <div id="revSegmentTrendsSection" style="display: none;">
+                  <div class="rev-segment-header">
+                    <i class="fa-solid fa-layer-group" style="color: var(--primary-cyan);"></i>
+                    <span>Cơ Cấu Nguồn Thu Theo Thời Gian</span>
+                  </div>
+                  <div id="revenueSegmentStackedChart" class="apex-chart-container"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sector Context Panel -->
+            <div id="revSectorContext" class="rev-sector-context" style="display: none;">
+              <!-- Injected via JS -->
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 4. Decision & Recommendation Framework (80% / 20% Model) -->
+        <div class="glass-card" id="section4GlassCard" style="display:none" aria-hidden="true">
+          <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-microchip" style="color: #38bdf8;"></i> 4. Mô Hình Quant AI 80/20</div>
+            <span class="ref-pill" id="scoreBadgeTop"><i class="fa-solid fa-sparkles" style="color: #38bdf8;"></i> Quant Model Ready</span>
+          </div>
+
+          <!-- Pre-Analysis AI Teaser View (Ultra-Minimalist & Futuristic) -->
+          <div id="aiPreAnalysisState" class="ai-hero-minimal-container">
+            <div class="ai-core-glow-card">
+              <div class="ai-core-ring-bg"></div>
+              
+              <div class="ai-core-header">
+                <span class="ai-chip-pill"><i class="fa-solid fa-calculator"></i> DIRECT QUANT ENGINE</span>
+                <h3 class="ai-hero-heading">Mô Hình Quant AI 80/20 <span id="teaserSymbolName" class="glow-symbol-text">---</span></h3>
+              </div>
+
+              <!-- Central Hero Glowing AI Button -->
+              <div class="ai-button-wrapper">
+                <div class="ai-button-aura"></div>
+                <button class="btn-ai-cyber-hero" onclick="triggerQuantAiAnalysis()">
+                  <div class="btn-shine"></div>
+                  <i class="fa-solid fa-calculator"></i>
+                  <span class="btn-text">Trích Xuất Quant AI 80/20</span>
+                  <i class="fa-solid fa-bolt-lightning"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- AI Scanning HUD State (During calculation animation) -->
+          <div id="aiScanningState" class="ai-scanning-hud" style="display: none;">
+            <div class="ai-hud-spinner">
+              <i class="fa-solid fa-microchip fa-spin" style="font-size: 42px; color: #38bdf8;"></i>
+            </div>
+            <div class="ai-hud-status" id="aiScanText">⚡ Đang kết nối AI Neural Net & Quét dữ liệu Vĩ mô TTM...</div>
+            <div class="ai-hud-progressbar"><div class="ai-hud-fill" id="aiScanProgress"></div></div>
+          </div>
+
+          <!-- Post-Analysis AI Results View (Revealed after clicking button) -->
+          <div id="aiResultsState" style="display: none;">
+            <!-- Action Recommendation Banner -->
+            <div class="recommendation-header-box" id="recHeaderBox">
+              <div>
+                <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted);">Khuyến Nghị Mua / Bán Tự Động</div>
+                <div style="font-size: 24px; font-weight: 800; color: #fff;" id="recActionText">MUA MẠNH (STRONG BUY)</div>
+              </div>
+              <div class="score-circle-lg success" id="displayTotalScore">85</div>
+            </div>
+
+            <!-- 80% vs 20% Breakdown Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
+              
+              <!-- 80% Weight Column -->
+              <div class="lg:col-span-2" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px;">
+                <div style="font-size: 13px; font-weight: 700; color: var(--primary-emerald); margin-bottom: 12px; display: flex; justify-content: space-between;">
+                  <span><i class="fa-solid fa-layer-group"></i> TRỌNG SỐ 80% (Khả năng đầu tư)</span>
+                  <strong id="score80Val">68 / 80 Đ</strong>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div class="sub-score-box">
+                    <div class="sub-score-title">1. Thị trường & Sức mạnh tương đối</div>
+                    <div class="sub-score-val" id="macroScoreVal">18 / 20 Đ</div>
+                    <div class="sub-score-desc" id="macroDesc">Ngành & Cổ phiếu đang thu hút dòng tiền</div>
+                  </div>
+
+                  <div class="sub-score-box">
+                    <div class="sub-score-title">2. Định giá & Vị thế peer</div>
+                    <div class="sub-score-val" id="sectorPeersVal">14 / 15 Đ</div>
+                    <div class="sub-score-desc" id="sectorPeersDesc">Top đầu ngành, hiệu quả vốn tốt</div>
+                  </div>
+
+                  <div class="sub-score-box">
+                    <div class="sub-score-title">3. Cơ bản & Tăng trưởng</div>
+                    <div class="sub-score-val" id="fundamentalScoreVal">22 / 25 Đ</div>
+                    <div class="sub-score-desc" id="fundamentalDesc">ROE > 20%, Định giá hợp lý</div>
+                  </div>
+
+                  <div class="sub-score-box">
+                    <div class="sub-score-title">4. Kỹ thuật & Kiểm định lịch sử</div>
+                    <div class="sub-score-val" id="taProbVal">16 / 20 Đ</div>
+                    <div class="sub-score-desc" id="taProbDesc">Xác suất tăng: 75% | Tích lũy MA20</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 20% Weight Column -->
+              <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                  <div style="font-size: 13px; font-weight: 700; color: var(--primary-cyan); margin-bottom: 12px; display: flex; justify-content: space-between;">
+                    <span><i class="fa-solid fa-gauge-high"></i> TRỌNG SỐ 20% (Bằng chứng & Độ tin cậy)</span>
+                    <strong id="score20Val">19 / 20 Đ</strong>
+                  </div>
+
+                  <div class="sub-score-box" style="margin-bottom: 10px;">
+                    <div class="sub-score-title">1. Toàn vẹn dữ liệu</div>
+                    <div class="sub-score-val" id="speedScoreVal">10 / 10 Đ</div>
+                    <div class="sub-score-desc" id="latencyVal">Đang chờ đối chiếu nguồn...</div>
+                  </div>
+
+                  <div class="sub-score-box">
+                    <div class="sub-score-title">2. Hiệu chuẩn mẫu lịch sử</div>
+                    <div class="sub-score-val" id="accuracyScoreVal">9 / 10 Đ</div>
+                    <div class="sub-score-desc">Khớp 100% dữ liệu BCTC & Giá</div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <div class="benchmark-note" style="border-left-color: var(--primary-emerald); margin-top: 16px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <i class="fa-solid fa-lightbulb"></i> <strong>Khuyến Nghị Tổng Quan:</strong> <span id="overallActionRecommendation">Khuyến nghị...</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Main Dashboard 2-Column Grid System (Left ~70%, Right ~30%) -->
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-4" style="margin-bottom: 24px; width: 100%;">
+        
+        <!-- Left Main Content Area (70% Width: lg:col-span-3) -->
+        <div class="lg:col-span-3 flex flex-col gap-4">
+          
+          <!-- Top Main Horizontal Navigation Tabs Bar -->
+          <div class="dash-tab-bar flex flex-wrap items-center justify-between p-2.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 backdrop-blur-xl gap-3" style="margin-bottom: 0;">
+            <div class="flex items-center gap-2.5">
+              <button id="dashTabBtnChart" onclick="switchDashboardTab('chart')" class="dash-tab-btn active flex items-center gap-2">
+                <i class="fa-solid fa-chart-candlestick text-emerald-400 text-sm"></i>
+                <span>Biểu Đồ Nến (Chart)</span>
+              </button>
+              <button id="dashTabBtnAi" onclick="switchDashboardTab('ai')" class="dash-tab-btn flex items-center gap-2">
+                <i class="fa-solid fa-wand-magic-sparkles text-sky-400 text-sm"></i>
+                <span>Nhận Định AI & Luận Điểm</span>
+              </button>
+            </div>
+
+            <!-- Timeframe Selector Switcher (ONLY VISIBLE WHEN TAB 1: CHART IS ACTIVE) -->
+            <div id="chartTimeframeToolbar" class="mode-toggle-group flex items-center gap-1">
+              <button class="toggle-btn" id="btnTf1D" onclick="setTimeframeMode('1D')">1D</button>
+              <button class="toggle-btn" id="btnTf3D" onclick="setTimeframeMode('3D')">3D</button>
+              <button class="toggle-btn" id="btnTf1W" onclick="setTimeframeMode('1W')">1W</button>
+              <button class="toggle-btn" id="btnTf1M" onclick="setTimeframeMode('1M')">1M</button>
+              <button class="toggle-btn" id="btnTf3M" onclick="setTimeframeMode('3M')">3M</button>
+              <button class="toggle-btn" id="btnTf1Y" onclick="setTimeframeMode('1Y')">1Y</button>
+              <button class="toggle-btn active" id="btnTfALL" onclick="setTimeframeMode('ALL')">Tất cả</button>
+            </div>
+          </div>
+
+          <!-- TAB 1 CONTENT: Biểu Đồ Nến (Chart) -->
+          <div id="dashTabContentChart" class="glass-card p-4" style="margin-bottom: 0;">
+            <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+              <div class="card-title text-sm font-bold text-slate-100 flex items-center gap-2">
+                <i class="fa-solid fa-chart-candlestick text-emerald-400"></i> Diễn Biến Giá & Khối Lượng Giao Dịch (DNSE / Market Data)
+              </div>
+            </div>
+            <div id="priceCandleChart" class="chart-box" style="min-height: 440px; width: 100%;"></div>
+          </div>
+
+          <!-- TAB 2 CONTENT: Nhận Định AI & Luận Điểm -->
+          <div id="dashTabContentAi" class="glass-card p-4 rounded-xl" style="display: none; margin-bottom: 0; background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.85)); border: 1px solid rgba(56, 189, 248, 0.3);">
+            <div class="flex items-center justify-between border-b border-slate-700/60 pb-3 mb-3">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-wand-magic-sparkles text-sky-400 text-lg"></i>
+                <span class="font-bold text-slate-100 text-sm" id="aiReportTitle">PHÂN TÍCH · QUANT + KỸ THUẬT + LỘC PHÁT AI</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span id="aiModelBadge" class="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold"><i class="fa-solid fa-shield-halved"></i> Real-time AI Quant Engine</span>
+                <button class="btn-reanalyze-sm" id="btnReanalyzeAi" onclick="triggerAiAdvisorReport()" style="display: none;"><i class="fa-solid fa-arrows-rotate"></i> Phân Tích Lại AI</button>
+              </div>
+            </div>
+
+            <!-- AI Pre-Analysis Teaser View (Cyber Hero Style - Only fetched on click) -->
+            <div id="aiThesisPlaceholder" class="ai-hero-minimal-container" style="margin-top: 10px; margin-bottom: 10px;">
+              <div class="ai-core-glow-card">
+                <div class="ai-core-ring-bg" style="background: radial-gradient(circle, rgba(56, 189, 248, 0.15) 0%, transparent 70%);"></div>
+                
+                <div class="ai-core-header">
+                  <span class="ai-chip-pill" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.1);"><i class="fa-solid fa-layer-group"></i> QUANT TRƯỚC · AI SAU</span>
+                  <h3 class="ai-hero-heading">Phân Tích <span id="aiSymbolPlaceholder" class="glow-symbol-text" style="background: linear-gradient(90deg, #ffffff, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">---</span></h3>
+                </div>
+
+                <!-- Central Hero Glowing AI Button -->
+                <div class="ai-button-wrapper">
+                  <div class="ai-button-aura" style="background: radial-gradient(circle, rgba(56, 189, 248, 0.4) 0%, transparent 70%);"></div>
+                  <button class="btn-ai-cyber-hero" id="btnGenerateAiReport" style="background: linear-gradient(135deg, #0284c7, #0369a1); border-color: rgba(56, 189, 248, 0.5); box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);" onclick="triggerAiAdvisorReport()">
+                    <div class="btn-shine"></div>
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span class="btn-text">Chạy Phân Tích Hợp Nhất</span>
+                    <i class="fa-solid fa-bolt-lightning"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Scanning HUD State (During API call calculation) -->
+            <div id="aiThesisScanningState" class="ai-scanning-hud" style="display: none; margin-top: 10px; margin-bottom: 10px;">
+              <div class="ai-hud-spinner">
+                <i class="fa-solid fa-brain fa-spin" style="font-size: 42px; color: #38bdf8;"></i>
+              </div>
+              <div class="ai-hud-status" id="aiThesisScanText">⚡ Đang kết nối Lộc Phát AI Engine & Trích xuất luận điểm đầu tư...</div>
+              <div class="ai-hud-progressbar"><div class="ai-hud-fill" id="aiThesisScanProgress" style="background: linear-gradient(90deg, #38bdf8, #10b981);"></div></div>
+            </div>
+
+            <!-- AI Deep Analysis Report Body (Displayed after user clicks button) -->
+            <div id="aiThesisContent" style="display: none;">
+              <!-- 3 Top Summary Boxes (Recommendation, Trade Setup & Risk) -->
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                <div style="background: rgba(15, 23, 42, 0.7); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Khuyến Nghị & Tỷ Trọng</div>
+                  <div id="aiRecText" style="font-size: 16px; font-weight: 800; color: #10b981; margin-top: 2px;">MUA TÍCH LŨY</div>
+                  <div id="aiPortfolioWeight" style="font-size: 11px; color: #cbd5e1; font-weight: 600; margin-top: 2px;">Tỷ trọng: N/A</div>
+                </div>
+                <div style="background: rgba(15, 23, 42, 0.7); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Vùng Mua & Mục Tiêu</div>
+                  <div id="aiTargetRange" style="font-size: 14px; font-weight: 800; color: #f59e0b; margin-top: 2px;">Mục tiêu: N/A</div>
+                  <div id="aiEntryZone" style="font-size: 11px; color: #cbd5e1; font-weight: 600; margin-top: 2px;">Vùng mua: 42.000 - 45.000 VNĐ</div>
+                </div>
+                <div style="background: rgba(15, 23, 42, 0.7); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Cắt Lỗ & Mức Rủi Ro</div>
+                  <div id="aiStopLossText" style="font-size: 14px; font-weight: 800; color: #f43f5e; margin-top: 2px;">Cắt lỗ: 39.500 VNĐ (-6.0%)</div>
+                  <div id="aiRiskLevelText" style="font-size: 11px; color: #cbd5e1; font-weight: 600; margin-top: 2px;">Rủi ro: TRUNG BÌNH | 3 - 6 tháng</div>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4" id="aiAuditStrip">
+                <div class="ai-audit-cell"><span>Độ tin cậy dữ liệu</span><strong id="aiConfidenceGrade">--</strong><small id="aiConfidenceGates">-- gate</small></div>
+                <div class="ai-audit-cell"><span>Điểm Quant</span><strong id="aiQuantScore">--/100</strong><small>Máy tính, không phải LLM</small></div>
+                <div class="ai-audit-cell"><span>Giá trị hợp lý</span><strong id="aiFairValue">N/A</strong><small id="aiValuationMethod">Chưa đủ dữ liệu</small></div>
+                <div class="ai-audit-cell"><span>Biên an toàn</span><strong id="aiMarginSafety">N/A</strong><small id="aiRewardRisk">R:R N/A</small></div>
+              </div>
+
+              <div class="decision-technical-grid mb-4">
+                <section class="decision-technical-summary"><span>CHẾ ĐỘ THỊ TRƯỜNG</span><strong id="aiTechnicalRegime">--</strong><small id="aiTechnicalAsOf">--</small></section>
+                <section><span>KHUNG NGÀY</span><strong id="aiDailyTrend">--</strong><small id="aiIndicatorLine">--</small></section>
+                <section><span>KHUNG TUẦN</span><strong id="aiWeeklyTrend">--</strong><small id="aiWeeklyLine">--</small></section>
+                <section><span>KIỂM ĐỊNH WALK-FORWARD</span><strong id="aiCalibration">--</strong><small id="aiCalibrationDetail">--</small></section>
+              </div>
+              <div class="decision-signal-board mb-4"><div><strong>Ma trận tín hiệu kỹ thuật</strong><span>Không dùng một chỉ báo đơn lẻ để ra quyết định.</span></div><div id="aiTechnicalSignals" class="decision-signal-list"></div></div>
+
+              <!-- Quantified Investment Thesis 3 Points -->
+              <div style="margin-bottom: 14px;">
+                <div style="font-size: 12px; font-weight: 700; color: #10b981; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                  <i class="fa-solid fa-circle-check"></i> 3 LUẬN ĐIỂM ĐẦU TƯ CỐT LÕI (ĐỊNH LƯỢNG THỰC TẾ)
+                </div>
+                <ul id="aiThesisList" style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #e2e8f0; padding-left: 4px;">
+                  <!-- Dynamic bullet points -->
+                </ul>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                <!-- Catalysts -->
+                <div style="background: rgba(16, 185, 129, 0.08); padding: 10px; border-radius: var(--radius-sm); border: 1px solid rgba(16, 185, 129, 0.2);">
+                  <div style="font-size: 12px; font-weight: 700; color: #10b981; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                    <i class="fa-solid fa-rocket"></i> Động Lực Tăng Giá (Catalysts)
+                  </div>
+                  <ul id="aiCatalystsList" style="display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: #cbd5e1; padding-left: 14px; list-style-type: disc;">
+                  </ul>
+                </div>
+                <!-- Key Risks -->
+                <div style="background: rgba(244, 63, 94, 0.08); padding: 10px; border-radius: var(--radius-sm); border: 1px solid rgba(244, 63, 94, 0.2);">
+                  <div style="font-size: 12px; font-weight: 700; color: #f43f5e; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Rủi Ro Trọng Yếu (Key Risks)
+                  </div>
+                  <ul id="aiRisksList" style="display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: #cbd5e1; padding-left: 14px; list-style-type: disc;">
+                  </ul>
+                </div>
+              </div>
+
+              <!-- Invalidation Trigger & Capital Allocation Strategy -->
+              <div style="background: rgba(30, 41, 59, 0.7); padding: 10px; border-radius: var(--radius-sm); border: 1px solid rgba(56, 189, 248, 0.2); font-size: 11px; color: #cbd5e1; display: flex; flex-direction: column; gap: 6px;">
+                <div>
+                  <strong style="color: #f43f5e;"><i class="fa-solid fa-ban"></i> Điều Kiện Hủy Bỏ Luận Điểm:</strong>
+                  <span id="aiInvalidationText">Nếu giá đóng cửa thủng mốc cắt lỗ hoặc chỉ số tài chính gãy ngưỡng, luận điểm hoàn toàn bị hủy bỏ.</span>
+                </div>
+                <div>
+                  <strong style="color: #38bdf8;"><i class="fa-solid fa-chess"></i> Chiến Lược Đi Vốn Vi Vị Thế:</strong>
+                  <span id="aiCapitalStrategyText">Chưa có chiến lược cho đến khi mô hình trả dữ liệu hợp lệ.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Right 1 Column: Widget Tin Nóng (Hot News Sidebar) -->
+        <div class="lg:col-span-1 glass-card" style="margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 16px; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border-color); border-radius: var(--radius-md);">
+          <div>
+            <div class="flex items-center justify-between border-b border-slate-700/60 pb-2 mb-3">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-newspaper text-sky-400"></i>
+                <span class="font-bold text-slate-100 text-sm" style="letter-spacing: 0.5px;">TIN NÓNG DOANH NGHIỆP</span>
+              </div>
+              <span class="text-xs px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 font-semibold">Search-grounded Feed</span>
+            </div>
+
+            <!-- Dynamic search-grounded news content -->
+            <div id="newsContent">
+              <!-- Catalyst Hashtags -->
+              <div id="newsCatalystTags" class="flex flex-wrap gap-1.5 mb-3">
+                <span class="badge-tag">#KinhDoanh</span>
+                <span class="badge-tag">#MởRộng</span>
+                <span class="badge-tag">#CổTức</span>
+              </div>
+
+              <!-- News Feed -->
+              <div id="hotNewsFeed" class="space-y-3 overflow-y-auto max-h-[360px] pr-1 scrollbar-thin">
+                <div class="py-6 text-center text-slate-400 text-xs">
+                  <i class="fa-solid fa-spinner fa-spin text-sky-400 text-lg mb-2"></i>
+                  <div>Đang tải tin tức có grounding...</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- News Placeholder for Error Notification -->
+            <div id="newsPlaceholder" style="display: none;" class="flex-col items-center justify-center py-6 text-center"></div>
+          </div>
+
+          <!-- Non-financial Risks Footer -->
+          <div id="newsRisksBox" class="mt-3 pt-2 border-t border-slate-800 text-[10px] text-slate-400 space-y-1">
+            <div class="font-bold text-sky-400/90 flex items-center gap-1"><i class="fa-solid fa-shield-cat"></i> Rủi ro phi tài chính:</div>
+            <div id="newsRisksContent">Rủi ro biến động chi phí nguyên vật liệu & thị trường.</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 2. Dynamic Quarterly & Yearly Trend Component (Full Width Stacked Below Price Chart) -->
+      <div class="glass-card" id="sectionTrendGlassCard" style="margin-bottom: 24px; width: 100%;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div class="card-title"><i class="fa-solid fa-chart-column" style="color: #38bdf8;"></i> Diễn Biến Kết Quả Kinh Doanh & Tài Sản (Đơn vị: Tỷ VNĐ)</div>
+          <span class="ref-pill" id="trendBadgeTop"><i class="fa-solid fa-chart-column" style="color: #38bdf8;"></i> Trend Engine Ready</span>
+        </div>
+
+        <!-- Pre-Analysis Teaser View (Cyber Hero Style) -->
+        <div id="trendPreAnalysisState" class="ai-hero-minimal-container">
+          <div class="ai-core-glow-card">
+            <div class="ai-core-ring-bg" style="background: radial-gradient(circle, rgba(56, 189, 248, 0.18) 0%, transparent 70%);"></div>
+            
+            <div class="ai-core-header">
+              <span class="ai-chip-pill" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); background: rgba(56, 189, 248, 0.1);"><i class="fa-solid fa-chart-column"></i> FINANCIAL TREND ENGINE</span>
+              <h3 class="ai-hero-heading">Diễn Biến KQKD & Tài Sản <span id="trendTeaserSymbolName" class="glow-symbol-text" style="background: linear-gradient(90deg, #ffffff, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">---</span></h3>
+            </div>
+
+            <!-- Central Hero Glowing Button -->
+            <div class="ai-button-wrapper">
+              <div class="ai-button-aura" style="background: radial-gradient(circle, rgba(56, 189, 248, 0.45) 0%, transparent 70%);"></div>
+              <button class="btn-ai-cyber-hero" style="background: linear-gradient(135deg, #0284c7, #0369a1); border-color: rgba(56, 189, 248, 0.5); box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);" onclick="triggerTrendAnalysis()">
+                <div class="btn-shine"></div>
+                <i class="fa-solid fa-chart-column"></i>
+                <span class="btn-text">Trích Xuất Diễn Biến KQKD</span>
+                <i class="fa-solid fa-bolt-lightning"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scanning HUD State (During calculation animation) -->
+        <div id="trendScanningState" class="ai-scanning-hud" style="display: none;">
+          <div class="ai-hud-spinner">
+            <i class="fa-solid fa-chart-column fa-spin" style="font-size: 42px; color: #38bdf8;"></i>
+          </div>
+          <div class="ai-hud-status" id="trendScanText">⚡ Đang kết nối nguồn BCTC & Trích xuất các kỳ báo cáo...</div>
+          <div class="ai-hud-progressbar"><div class="ai-hud-fill" id="trendScanProgress" style="background: linear-gradient(90deg, #38bdf8, #0284c7);"></div></div>
+        </div>
+
+        <!-- Post-Analysis Results View (Revealed after clicking button) -->
+        <div id="trendResultsState" style="display: none;">
+          <div id="trendDataMeta" class="mb-4" aria-live="polite"></div>
+          <div style="display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+            <!-- View Mode Toggle Switch: Chart vs Line vs Table -->
+            <div class="mode-toggle-group">
+              <button class="toggle-btn active" id="btnChartViewMode" onclick="setTrendViewMode('chart')"><i class="fa-solid fa-chart-column"></i> Biểu Đồ Cột</button>
+              <button class="toggle-btn" id="btnLineViewMode" onclick="setTrendViewMode('line')"><i class="fa-solid fa-chart-line"></i> Biểu Đồ Đường</button>
+              <button class="toggle-btn" id="btnTableViewMode" onclick="setTrendViewMode('table')"><i class="fa-solid fa-table"></i> Bảng Số Liệu</button>
+            </div>
+
+            <!-- Period Mode Toggle Switch -->
+            <div class="mode-toggle-group">
+              <button class="toggle-btn active" id="btnQuarterMode" onclick="setTrendPeriodMode('quarter')">Theo Quý (4 Kỳ)</button>
+              <button class="toggle-btn" id="btnYearMode" onclick="setTrendPeriodMode('year')">Theo Năm (4 Năm)</button>
+            </div>
+          </div>
+
+          <!-- Dual Y-Axis Combo Chart View Container -->
+          <div id="trendComboChartContainer" style="width: 100%; min-height: 380px;">
+            <div id="trendComboChart" style="width: 100%; min-height: 360px;"></div>
+          </div>
+
+          <!-- Table View Container -->
+          <div id="trendTableContainer" style="overflow-x: auto; display: none;">
+            <table class="data-table">
+              <thead>
+                <tr id="trendTableHead">
+                  <!-- Injected dynamically via JS -->
+                </tr>
+              </thead>
+              <tbody id="trendTableBody">
+                <!-- Injected dynamically via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Peer Comparison (15 Key Metrics) Full Width Section -->
+      <div class="glass-card" id="section5GlassCard" style="margin-bottom: 24px; width: 100%;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div class="card-title">
+            <i class="fa-solid fa-layer-group" style="color: #a855f7;"></i> 5. Bảng So Sánh Cùng Ngành (Peer Comparison - 15 Chỉ Số Trọng Yếu)
+          </div>
+          <span class="ref-pill" id="peerBadgeTop"><i class="fa-solid fa-bolt" style="color: #a855f7;"></i> Matrix Engine Ready</span>
+        </div>
+
+        <!-- Pre-Analysis Teaser View (Cyber Hero Style) -->
+        <div id="peerPreAnalysisState" class="ai-hero-minimal-container">
+          <div class="ai-core-glow-card">
+            <div class="ai-core-ring-bg" style="background: radial-gradient(circle, rgba(168, 85, 247, 0.18) 0%, transparent 70%);"></div>
+            
+            <div class="ai-core-header">
+              <span class="ai-chip-pill" style="color: #a855f7; border-color: rgba(168, 85, 247, 0.3); background: rgba(168, 85, 247, 0.1);"><i class="fa-solid fa-layer-group"></i> PEER COMPARISON MATRIX ENGINE</span>
+              <h3 class="ai-hero-heading">Ma Trận So Sánh 15 Chỉ Số Trọng Yếu <span id="peerTeaserSymbolName" class="glow-symbol-text" style="background: linear-gradient(90deg, #ffffff, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">---</span></h3>
+            </div>
+
+            <!-- Central Hero Glowing Button -->
+            <div class="ai-button-wrapper">
+              <div class="ai-button-aura" style="background: radial-gradient(circle, rgba(168, 85, 247, 0.45) 0%, transparent 70%);"></div>
+              <button class="btn-ai-cyber-hero" style="background: linear-gradient(135deg, #a855f7, #7e22ce); border-color: rgba(168, 85, 247, 0.5); box-shadow: 0 0 25px rgba(168, 85, 247, 0.4);" onclick="triggerPeerAnalysis()">
+                <div class="btn-shine"></div>
+                <i class="fa-solid fa-layer-group"></i>
+                <span class="btn-text">Trích Xuất Matrix So Sánh</span>
+                <i class="fa-solid fa-bolt-lightning"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scanning HUD State (During calculation animation) -->
+        <div id="peerScanningState" class="ai-scanning-hud" style="display: none;">
+          <div class="ai-hud-spinner">
+            <i class="fa-solid fa-layer-group fa-spin" style="font-size: 42px; color: #a855f7;"></i>
+          </div>
+          <div class="ai-hud-status" id="peerScanText">⚡ Đang kết nối nguồn dữ liệu & Cào 15 chỉ số của các đối thủ cùng ngành...</div>
+          <div class="ai-hud-progressbar"><div class="ai-hud-fill" id="peerScanProgress" style="background: linear-gradient(90deg, #a855f7, #ec4899);"></div></div>
+        </div>
+
+        <!-- Post-Analysis Results View (Revealed after clicking button) -->
+        <div id="peerResultsState" style="display: none;">
+          <!-- Interactive Peer Ticker Input & Pills Bar -->
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 12px; background: rgba(15, 23, 42, 0.5); border: 1px solid var(--border-color); border-radius: var(--radius-md);">
+            <div style="font-size: 13px; font-weight: 700; color: #a855f7; display: flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-sliders"></i> Danh Sách Doanh Nghiệp So Sánh:
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <input type="text" id="addPeerInput" class="search-input" placeholder="+ Thêm mã đối thủ (VD: VND)..." style="width: 190px; height: 32px; font-size: 12px; text-transform: uppercase;">
+                <button class="search-btn" style="padding: 6px 12px; font-size: 12px; background: linear-gradient(135deg, #a855f7, #7e22ce);" onclick="handleAddPeerSymbol()">+ Thêm</button>
+              </div>
+              <div id="peerPillsContainer" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <!-- Injected dynamically via JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Peer Comparison Table Container -->
+          <div id="peerDataProvenance" class="mb-3" aria-live="polite"></div>
+          <div style="overflow-x: auto;">
+            <table class="data-table peer-table" style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr id="peerTableHeaderRow">
+                  <th style="width: 240px; text-align: left;">Nhóm Chỉ Số & Tên Chỉ Số (15 chỉ số)</th>
+                  <th style="width: 80px; text-align: center;">Đơn vị</th>
+                  <!-- Injected dynamically via JS -->
+                </tr>
+              </thead>
+              <tbody id="peerTableBody">
+                <!-- Injected dynamically via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+    </div>
+    <!-- End dashboardState -->
+    </div>
+
+    <div id="trackRecordState" style="display: none;" aria-hidden="true">
+      
+      <!-- Track Record Header Overview -->
+      <div class="flex flex-wrap items-center justify-between gap-6 p-6 mb-6 bg-slate-900/70 border border-slate-800/80 rounded-2xl backdrop-blur-xl shadow-xl">
+        <div>
+          <span class="inline-flex items-center gap-2 text-[11px] font-bold tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3.5 py-1 rounded-full mb-2 uppercase">
+            <i class="fa-solid fa-trophy"></i> HỆ THỐNG TỰ ĐỘNG CHẤM ĐIỂM KHUYẾN NGHỊ AI
+          </span>
+          <h1 class="text-2xl md:text-3xl font-extrabold text-white">Tính năng đang tạm dừng</h1>
+          <p class="text-xs md:text-sm text-slate-400 mt-1">
+            Minh bạch tỷ lệ đúng/sai, lợi nhuận thực tế và hiệu suất các khuyến nghị đầu tư được AI Engine & Quant Engine xác lập.
+          </p>
+        </div>
+        <button onclick="showWelcomeHome()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all border border-slate-700 flex items-center gap-2 cursor-pointer">
+          <i class="fa-solid fa-arrow-left"></i> Quay Về Trang Chủ
+        </button>
+      </div>
+
+      <!-- Stats Metric Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div class="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-xl">
+          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Tổng Số Khuyến Nghị</div>
+          <div class="text-2xl font-extrabold text-white" id="trStatTotal">--</div>
+          <div class="text-[11px] text-slate-400 mt-1" id="trStatSources">-- AI Engine / -- Fallback</div>
+        </div>
+
+        <div class="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-xl">
+          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Tỷ Lệ Thắng (Win-Rate)</div>
+          <div class="text-2xl font-extrabold text-emerald-400" id="trStatWinRate">--%</div>
+          <div class="text-[11px] text-slate-400 mt-1" id="trStatFinished">Trên -- khuyến nghị đã chốt</div>
+        </div>
+
+        <div class="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-xl">
+          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Lợi Nhuận Trung Bình</div>
+          <div class="text-2xl font-extrabold text-sky-400" id="trStatAvgReturn">--%</div>
+          <div class="text-[11px] text-slate-400 mt-1">Tính trên các vị thế đã kết thúc</div>
+        </div>
+
+        <div class="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-5 backdrop-blur-xl">
+          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Ngành Tốt Nhất AI</div>
+          <div class="text-base font-extrabold text-amber-400 truncate mt-1" id="trStatTopSector">--</div>
+          <div class="text-[11px] text-slate-400 mt-1" id="trStatTopSectorSub">Hiệu suất cao nhất</div>
+        </div>
+      </div>
+
+      <!-- Filters & Table Glass Card -->
+      <div class="glass-card mb-6 p-6 bg-slate-900/70 border border-slate-800/80 rounded-2xl backdrop-blur-xl">
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <i class="fa-solid fa-list-check text-emerald-400"></i>
+            <h3 class="text-base font-bold text-white">Danh Sách Nhật Ký Khuyến Nghị</h3>
+          </div>
+
+          <div class="flex items-center gap-3 flex-wrap">
+            <input type="text" id="trFilterTicker" placeholder="Lọc mã cổ phiếu (VD: FPT)..." oninput="applyTrackRecordFilters()" class="bg-slate-950/80 border border-slate-700/60 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder:text-slate-500 uppercase outline-none focus:border-emerald-500 transition-all w-44">
+            
+            <select id="trFilterStatus" onchange="applyTrackRecordFilters()" class="bg-slate-950/80 border border-slate-700/60 rounded-xl px-3.5 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500 transition-all">
+              <option value="">Tất cả trạng thái</option>
+              <option value="DANG_THEO_DOI">Đang Theo Dõi ⚡</option>
+              <option value="DAT_MUC_TIEU">Đạt Mục Tiêu 🎯</option>
+              <option value="CHAM_CAT_LO">Chạm Cắt Lỗ 🛡️</option>
+              <option value="HET_HAN_KHONG_DAT">Hết Hạn Không Đạt ⏳</option>
+            </select>
+
+            <button onclick="fetchTrackRecordData()" class="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 text-emerald-400 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5">
+              <i class="fa-solid fa-arrows-rotate"></i> Làm Mới
+            </button>
+          </div>
+        </div>
+
+        <!-- Table Container -->
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400 font-semibold uppercase tracking-wider">
+                <th class="py-3 px-4">Mã CP & Ngành</th>
+                <th class="py-3 px-4">Ngày Khởi Tạo</th>
+                <th class="py-3 px-4">Nguồn AI</th>
+                <th class="py-3 px-4">Khuyến Nghị</th>
+                <th class="py-3 px-4 text-right">Giá Khởi Tạo</th>
+                <th class="py-3 px-4 text-center">Setup (Vùng Mua ➔ Mục Tiêu ➔ Cắt Lỗ)</th>
+                <th class="py-3 px-4 text-center">Trạng Thái</th>
+                <th class="py-3 px-4 text-right">Lợi Nhuận Thực Tế</th>
+              </tr>
+            </thead>
+            <tbody id="trTableBody" class="divide-y divide-slate-800/60 font-medium text-slate-200">
+              <!-- Injected via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  <!-- Floating Scroll To Top Button (Appears when scrolled > 30%) -->
+  <button id="scrollToTopBtn" onclick="scrollToTop()" aria-label="Cuộn lên đầu trang" title="Cuộn lên đầu trang" class="scroll-to-top-btn">
+    <i class="fa-solid fa-arrow-up"></i>
+    <span class="btn-label">Đầu Trang</span>
+  </button>
+
+  <script src="/static/site-nav.js?v=20260805_search_icon_v5"></script>
+  <script src="/static/app.js?v=20260805_peer_clean_v3"></script>
+
+</body>
+</html>

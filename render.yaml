@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: locphat-securities
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DNSE_API_KEY
+        sync: false
+      - key: DNSE_API_SECRET
+        sync: false
+      - key: DNSE_BOARD_ID
+        value: G1
+      - key: VNSTOCK_API_KEY
+        sync: false
+      - key: VNAI_API_KEY
+        sync: false

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#090d10">
+  <meta name="description" content="Danh mục theo dõi cổ phiếu cá nhân - Lộc Phát Securities">
+  <title>Theo Dõi Của Tôi - Lộc Phát Securities</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=20260728_v1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
+  <link rel="stylesheet" href="/static/watchlist.css?v=20260805_v2">
+</head>
+<body>
+  <div class="lp-page-nav-wrap" data-lp-site-nav></div>
+
+  <main class="wl-shell">
+    <!-- Header -->
+    <header class="wl-heading">
+      <div>
+        <p class="eyebrow">DANH MỤC CÁ NHÂN</p>
+        <h1>Theo Dõi Của Tôi</h1>
+        <span>Quản lý các cổ phiếu bạn đang quan tâm để xem lại nhanh.</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="refresh-button" id="wlExportBtn" type="button" title="Xuất dữ liệu danh mục ra file JSON">Xuất dữ liệu</button>
+        <button class="refresh-button" id="wlImportBtn" type="button" title="Nhập danh mục từ file JSON">Nhập dữ liệu</button>
+        <input type="file" id="wlImportFile" accept=".json" style="display:none;">
+        <button class="refresh-button" id="wlRefreshBtn" type="button" title="Làm mới giá">Làm mới giá</button>
+        <button class="refresh-button danger" id="wlClearAllBtn" type="button" title="Xóa tất cả mã cổ phiếu khỏi danh mục theo dõi">Xóa tất cả</button>
+      </div>
+    </header>
+
+    <!-- LocalStorage Storage Disclaimer Banner -->
+    <div class="wl-storage-disclaimer">
+      ℹ Danh mục được lưu trên trình duyệt và thiết bị hiện tại. Dữ liệu không tự đồng bộ sang thiết bị khác và có thể mất nếu bạn xóa dữ liệu trình duyệt.
+    </div>
+
+    <!-- KPIs -->
+    <section class="wl-kpis" aria-label="Tổng quan theo dõi">
+      <div>
+        <span>TỔNG THEO DÕI</span>
+        <strong id="wlKpiTotal">0</strong>
+        <small>mã cổ phiếu</small>
+      </div>
+      <div>
+        <span>TĂNG GIÁ</span>
+        <strong id="wlKpiUp">0</strong>
+        <small>trong danh mục</small>
+      </div>
+      <div>
+        <span>GIẢM GIÁ</span>
+        <strong id="wlKpiDown">0</strong>
+        <small>trong danh mục</small>
+      </div>
+      <div>
+        <span>ĐÃ PHÂN TÍCH AI</span>
+        <strong id="wlKpiAi">0</strong>
+        <small>kết quả hợp lệ</small>
+      </div>
+    </section>
+
+    <!-- Toolbar / Filter -->
+    <section class="wl-filter">
+      <div class="wl-add-group">
+        <label class="symbol-filter">
+          <span>Thêm mã</span>
+          <input id="wlAddInput" maxlength="6" autocomplete="off" placeholder="FPT, PNJ...">
+        </label>
+        <button class="wl-add-btn" id="wlAddBtn" type="button">Thêm</button>
+        <div class="wl-suggest-dropdown" id="wlSuggestDropdown"></div>
+      </div>
+
+      <div class="segmented" id="wlSegmentedFilter" aria-label="Bộ lọc AI">
+        <button class="active" data-filter="all">Tất cả</button>
+        <button data-filter="ai_yes">Đã phân tích AI</button>
+        <button data-filter="ai_no">Chưa phân tích AI</button>
+      </div>
+
+      <label class="symbol-filter" style="margin-left:auto;">
+        <span>Tìm mã</span>
+        <input id="wlSearchFilter" maxlength="20" autocomplete="off" placeholder="Tìm trong danh mục...">
+      </label>
+
+      <select class="wl-select" id="wlSortBy">
+        <option value="newest">Mới thêm gần nhất</option>
+        <option value="alpha">Mã A–Z</option>
+        <option value="gain_desc">Tăng mạnh nhất</option>
+        <option value="loss_desc">Giảm mạnh nhất</option>
+        <option value="updated">Cập nhật gần nhất</option>
+      </select>
+    </section>
+
+    <!-- Error banner -->
+    <div class="wl-error-banner" id="wlErrorBanner">
+      <span>⚠</span>
+      <span id="wlErrorText">Không cập nhật được giá mới. Đang hiển thị dữ liệu gần nhất đã lưu.</span>
+    </div>
+
+    <!-- Table (Desktop) -->
+    <div class="wl-table-wrap" id="wlTableWrap">
+      <table class="wl-table">
+        <thead>
+          <tr>
+            <th>Mã</th>
+            <th>Doanh nghiệp</th>
+            <th>Giá gần nhất</th>
+            <th>Thay đổi</th>
+            <th>Cập nhật</th>
+            <th>Phân tích AI</th>
+            <th>Ghi chú</th>
+            <th>Thao tác</th>
+          </tr>
+        </thead>
+        <tbody id="wlTableBody">
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Cards (Mobile) -->
+    <div class="wl-cards" id="wlCards"></div>
+
+    <!-- Empty state -->
+    <div class="wl-empty" id="wlEmptyState" style="display:none;">
+      <div class="wl-empty-icon">☆</div>
+      <h3>Bạn chưa theo dõi cổ phiếu nào</h3>
+      <p>Hãy nhập mã ở ô "Thêm mã" phía trên hoặc bấm nút "☆ Thêm vào theo dõi" tại trang phân tích cổ phiếu.</p>
+    </div>
+
+    <footer class="wl-note">
+      <strong>Ghi chú:</strong> Dữ liệu giá được lưu và tự động cập nhật từ nguồn realtime DNSE hoặc snapshot bảng giá cuối phiên. Kết quả phân tích AI chỉ hiển thị khi bạn đã chủ động bấm phân tích cho mã đó.
+    </footer>
+  </main>
+
+  <!-- Confirm Modal -->
+  <div class="wl-confirm-overlay" id="wlConfirmOverlay">
+    <div class="wl-confirm-box">
+      <h4 id="wlConfirmTitle">Xóa khỏi danh mục?</h4>
+      <p id="wlConfirmMsg">Mã cổ phiếu sẽ bị xóa khỏi danh mục theo dõi.</p>
+      <div class="wl-confirm-actions">
+        <button class="wl-confirm-yes" id="wlConfirmYes" type="button">Xóa</button>
+        <button class="wl-confirm-no" id="wlConfirmNo" type="button">Hủy</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="wl-toast-container" id="wlToastContainer"></div>
+
+  <script src="/static/site-nav.js?v=20260804_mobile_nav_v1"></script>
+  <script src="/static/watchlist.js?v=20260805_v2"></script>
+</body>
+</html>
