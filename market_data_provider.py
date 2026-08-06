@@ -54,21 +54,13 @@ def _cache_set(key: str, value: Any) -> Any:
 
 
 def _get_json(url: str, *, params: Optional[Dict[str, Any]] = None,
-              method: str = "GET", payload: Any = None, timeout: int = 20) -> Any:
-    last_err = None
-    for attempt in range(2):
-        try:
-            response = _SESSION.request(method, url, params=params, json=payload, timeout=timeout)
-            response.raise_for_status()
-            body = response.json()
-            if isinstance(body, dict) and body.get("successful") is False:
-                raise RuntimeError(body.get("msg") or "Nguồn dữ liệu trả về lỗi")
-            return body
-        except (requests.RequestException, RuntimeError, ValueError) as err:
-            last_err = err
-            if attempt == 0:
-                time.sleep(0.5)
-    raise last_err or RuntimeError("Không thể tải dữ liệu")
+              method: str = "GET", payload: Any = None, timeout: int = 10) -> Any:
+    response = _SESSION.request(method, url, params=params, json=payload, timeout=timeout)
+    response.raise_for_status()
+    body = response.json()
+    if isinstance(body, dict) and body.get("successful") is False:
+        raise RuntimeError(body.get("msg") or "Nguồn dữ liệu trả về lỗi")
+    return body
 
 
 def _unwrap_data(body: Any) -> Any:
