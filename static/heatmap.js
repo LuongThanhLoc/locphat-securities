@@ -501,13 +501,6 @@
           </div>
           <footer class="pick-footer" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
             <small>${esc(stock.validation_rule || 'Chỉ radar, không phải khuyến nghị')}</small>
-            <a href="/backtest?symbol=${encodeURIComponent(stock.symbol)}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#35d4a4;font-size:11px;font-weight:700;text-decoration:none;">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 3v18h18"></path>
-                <path d="m19 9-5 5-4-4-3 3"></path>
-              </svg>
-              <span>RSI Backtest</span>
-            </a>
           </footer>
         </article>`).join('')}
       </div></section>
@@ -753,7 +746,9 @@
       $('sectorRadar').hidden = button.dataset.tab !== 'sectors';
       $('stockRadar').hidden = button.dataset.tab !== 'watchlist';
     }));
-    $('aiButton').addEventListener('click', openAiReport);
+    document.querySelectorAll('#aiButton, .ai-button').forEach((btn) => {
+      btn.addEventListener('click', openAiReport);
+    });
     document.querySelectorAll('[data-lp-heatmap-ai]').forEach((button) => {
       button.addEventListener('click', () => {
         if (window.LPGlobalSearch && typeof window.LPGlobalSearch.closeMobileNav === 'function') {

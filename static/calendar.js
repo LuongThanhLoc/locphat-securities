@@ -145,13 +145,6 @@
         <div class="event-source">
           <span class="event-status ${event.status || ''}">${status}</span>
           ${sourceUrl ? `<a href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">Mở nguồn</a>` : `<small>${esc(event.source || 'Nguồn xác minh')}</small>`}
-          <a class="event-backtest-link" href="/backtest?symbol=${encodeURIComponent(event.symbol)}" style="font-size:11px;color:#35d4a4;font-weight:700;text-decoration:none;margin-top:4px;display:inline-flex;align-items:center;gap:4px;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 3v18h18"></path>
-              <path d="m19 9-5 5-4-4-3 3"></path>
-            </svg>
-            <span>RSI Backtest</span>
-          </a>
         </div>
       </article>`;
   }).join('');

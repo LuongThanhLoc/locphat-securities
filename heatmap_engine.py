@@ -7,9 +7,12 @@ import hashlib
 import sqlite3
 import urllib.request
 import requests
+import logging
 from datetime import datetime, timedelta, time as dtime
 from typing import Dict, Any, List, Optional
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from sector_mapping import get_sector_info, SECTOR_DEFINITIONS
 
@@ -1608,7 +1611,21 @@ def _parse_json_object(content: str) -> Dict[str, Any]:
         start, end = cleaned.find("{"), cleaned.rfind("}")
         if start < 0 or end <= start:
             raise
-        value = json.loads(cleaned[start:end + 1])
+        cleaned_substr = cleaned[start:end + 1]
+        try:
+            value = json.loads(cleaned_substr)
+        except json.JSONDecodeError:
+            # Repair common LLM JSON syntax errors:
+            # 1. Trailing commas before closing brackets/braces
+            repaired = re.sub(r",\s*([}\]])", r"\1", cleaned_substr)
+            # 2. Missing quotes on property key names like "scenarios: -> "scenarios":
+            repaired = re.sub(r'("[\w_]+)\s*:', r'\1":', repaired)
+            # 3. Control characters inside strings
+            repaired = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", repaired)
+            try:
+                value = json.loads(repaired)
+            except json.JSONDecodeError:
+                raise
     if not isinstance(value, dict):
         raise ValueError("DeepSeek response is not a JSON object")
     return value
@@ -1833,7 +1850,7 @@ Trả JSON hợp lệ, không markdown, theo đúng schema:
     }}
   }},
   "risk_radar": ["Cảnh báo rủi ro 1 ngắn gọn", "Cảnh báo rủi ro 2", "Cảnh báo rủi ro 3"],
-  "scenarios: {{
+  "scenarios": {{
     "positive_confirmation": "Kịch bản lạc quan: điều kiện nào xảy ra?",
     "positive_action": "Hành động cụ thể: ví dụ 'Có thể tăng tỷ trọng cổ phiếu lên 60-70%, ưu tiên ngành X'",
     "base_case": "Kịch bản cơ sở: thị trường đi sideways hay như thế nào?",
@@ -1864,17 +1881,26 @@ INPUT:
         "temperature": 0.15,
         "max_tokens": 2200,
     }
-    response = requests.post(
-        "https://api.deepseek.com/chat/completions",
-        json=payload,
-        headers={"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"},
-        timeout=50.0,
-    )
-    if response.status_code != 200:
-        raise RuntimeError(f"DeepSeek API status {response.status_code}")
+    try:
+        response = requests.post(
+            "https://api.deepseek.com/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"},
+            timeout=50.0,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"DeepSeek API status {response.status_code}")
 
-    body = response.json()
-    narrative = _parse_json_object(body["choices"][0]["message"]["content"])
+        body = response.json()
+        narrative = _parse_json_object(body["choices"][0]["message"]["content"])
+    except Exception as err:
+        logger.warning(f"Lỗi gọi/parse DeepSeek AI insight: {err}")
+        return _build_quant_only_heatmap_insight_v2(
+            heatmap_data,
+            f"Không thể phản hồi từ DeepSeek AI ({str(err)}). Hiển thị chế độ dữ liệu định lượng thuần.",
+            historical,
+            anomalies,
+        )
     sector_notes = narrative.get("sector_notes") if isinstance(narrative.get("sector_notes"), dict) else {}
     watchlist_notes = narrative.get("watchlist_notes") if isinstance(narrative.get("watchlist_notes"), dict) else {}
     risk_radar = narrative.get("risk_radar") if isinstance(narrative.get("risk_radar"), list) else []
