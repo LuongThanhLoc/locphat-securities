@@ -639,10 +639,15 @@ def _load_snapshot() -> Optional[Dict[str, Any]]:
     return None
 
 
-def _seed_db_from_snapshot(conn: sqlite3.Connection) -> bool:
+def _seed_db_from_snapshot(conn: sqlite3.Connection, force: bool = False) -> bool:
     snapshot_data = _load_snapshot()
     if not snapshot_data or not snapshot_data.get("events"):
         return False
+    db_count = conn.execute("SELECT COUNT(*) FROM corporate_events").fetchone()[0]
+    snapshot_count = len(snapshot_data["events"])
+    if not force and db_count >= min(500, snapshot_count // 2):
+        return False
+
     now = datetime.now(timezone.utc).isoformat()
     conn.execute("DELETE FROM corporate_events")
     for event in snapshot_data["events"]:
@@ -689,10 +694,8 @@ def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) 
     window_end = max(end, monday + timedelta(days=27))
 
     with closing(_connection()) as conn:
-        # If DB has no events, auto-seed from snapshot if available
-        count = conn.execute("SELECT COUNT(*) FROM corporate_events").fetchone()[0]
-        if count == 0:
-            _seed_db_from_snapshot(conn)
+        # Seed snapshot if DB is empty or has incomplete/stale cache
+        _seed_db_from_snapshot(conn)
 
         row = conn.execute("SELECT * FROM calendar_sync WHERE id=1").fetchone()
         if row and row["window_start"] <= start.isoformat() and row["window_end"] >= end.isoformat() and not force_refresh:
