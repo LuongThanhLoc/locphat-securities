@@ -25,7 +25,14 @@ VCI_TRADING = "https://trading.vietcap.com.vn/api"
 _SESSION = requests.Session()
 _SESSION.headers.update({
     "Accept": "application/json, text/plain, */*",
-    "User-Agent": "Mozilla/5.0 LPSecResearch/1.0",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+    "Sec-Ch-Ua": '"Not)A;Brand";v="99", "Google Chrome";v="127", "Chromium";v="127"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
 })
 _CACHE: Dict[str, Any] = {}
 _CACHE_TIME: Dict[str, float] = {}
@@ -48,12 +55,20 @@ def _cache_set(key: str, value: Any) -> Any:
 
 def _get_json(url: str, *, params: Optional[Dict[str, Any]] = None,
               method: str = "GET", payload: Any = None, timeout: int = 20) -> Any:
-    response = _SESSION.request(method, url, params=params, json=payload, timeout=timeout)
-    response.raise_for_status()
-    body = response.json()
-    if isinstance(body, dict) and body.get("successful") is False:
-        raise RuntimeError(body.get("msg") or "Nguồn dữ liệu trả về lỗi")
-    return body
+    last_err = None
+    for attempt in range(2):
+        try:
+            response = _SESSION.request(method, url, params=params, json=payload, timeout=timeout)
+            response.raise_for_status()
+            body = response.json()
+            if isinstance(body, dict) and body.get("successful") is False:
+                raise RuntimeError(body.get("msg") or "Nguồn dữ liệu trả về lỗi")
+            return body
+        except (requests.RequestException, RuntimeError, ValueError) as err:
+            last_err = err
+            if attempt == 0:
+                time.sleep(0.5)
+    raise last_err or RuntimeError("Không thể tải dữ liệu")
 
 
 def _unwrap_data(body: Any) -> Any:

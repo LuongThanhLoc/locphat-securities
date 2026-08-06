@@ -16,8 +16,15 @@ from typing import Any, Dict, Iterable, Optional
 
 from market_data_provider import VCI_IQ, _get_json, _unwrap_data
 
+VN_TZ = timezone(timedelta(hours=7))
+
+
+def _vietnam_today() -> date:
+    return datetime.now(VN_TZ).date()
+
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "corporate_calendar.db")
+SNAPSHOT_PATH = os.path.join(os.path.dirname(__file__), "corporate_calendar_snapshot.json")
 
 DEFAULT_TOP_SYMBOLS = [
     "FPT", "VNM", "HPG", "VCB", "SSI", "MWG", "TCB", "MBB", "STB", "VIC",
@@ -149,9 +156,10 @@ def _in_window(value: Optional[str], start: date, end: date) -> bool:
 
 
 def _status(event_date: str) -> str:
-    if event_date > date.today().isoformat():
+    today_iso = _vietnam_today().isoformat()
+    if event_date > today_iso:
         return "upcoming"
-    if event_date == date.today().isoformat():
+    if event_date == today_iso:
         return "today"
     return "occurred"
 
@@ -613,6 +621,44 @@ def _fetch(start: date, end: date) -> Dict[str, Any]:
     }
 
 
+def _save_snapshot(snapshot_data: Dict[str, Any]) -> None:
+    try:
+        with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
+            json.dump(snapshot_data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _load_snapshot() -> Optional[Dict[str, Any]]:
+    if os.path.exists(SNAPSHOT_PATH):
+        try:
+            with open(SNAPSHOT_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def _seed_db_from_snapshot(conn: sqlite3.Connection) -> bool:
+    snapshot_data = _load_snapshot()
+    if not snapshot_data or not snapshot_data.get("events"):
+        return False
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("DELETE FROM corporate_events")
+    for event in snapshot_data["events"]:
+        conn.execute("INSERT OR REPLACE INTO corporate_events VALUES (?,?,?,?,?)", (
+            event["id"], event["symbol"], event["event_date"], json.dumps(event, ensure_ascii=False), now,
+        ))
+    meta = {key: value for key, value in snapshot_data.items() if key != "events"}
+    window_start = snapshot_data.get("window_start") or "2026-01-01"
+    window_end = snapshot_data.get("window_end") or "2026-12-31"
+    conn.execute("INSERT OR REPLACE INTO calendar_sync VALUES (1,?,?,?,?)", (
+        window_start, window_end, json.dumps(meta, ensure_ascii=False), now,
+    ))
+    conn.commit()
+    return True
+
+
 def _events_from_db(conn: sqlite3.Connection, start: date, end: date) -> list[Dict[str, Any]]:
     return [json.loads(item["payload"]) for item in conn.execute(
         "SELECT payload FROM corporate_events WHERE event_date BETWEEN ? AND ? ORDER BY event_date, symbol",
@@ -637,19 +683,26 @@ def _response(meta: Dict[str, Any], events: list[Dict[str, Any]], nearby: list[D
 def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) -> Dict[str, Any]:
     if end < start or (end - start).days > 62:
         raise ValueError("Khoảng lịch phải từ 0 đến 62 ngày.")
-    today = date.today()
+    today = _vietnam_today()
     monday = today - timedelta(days=today.weekday())
     window_start = min(start, monday - timedelta(days=14))
     window_end = max(end, monday + timedelta(days=27))
 
     with closing(_connection()) as conn:
+        # If DB has no events, auto-seed from snapshot if available
+        count = conn.execute("SELECT COUNT(*) FROM corporate_events").fetchone()[0]
+        if count == 0:
+            _seed_db_from_snapshot(conn)
+
         row = conn.execute("SELECT * FROM calendar_sync WHERE id=1").fetchone()
         if row and row["window_start"] <= start.isoformat() and row["window_end"] >= end.isoformat() and not force_refresh:
             try:
                 updated = datetime.fromisoformat(row["updated_at"])
                 if datetime.now(timezone.utc) - updated < timedelta(hours=6):
                     meta = json.loads(row["payload"])
-                    return _response(meta, _events_from_db(conn, start, end), _nearby_from_db(conn, today), "hit")
+                    events = _events_from_db(conn, start, end)
+                    if events:  # Only use cache hit if we actually have events
+                        return _response(meta, events, _nearby_from_db(conn, today), "hit")
             except (ValueError, json.JSONDecodeError):
                 pass
 
@@ -659,10 +712,10 @@ def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) 
         int(snapshot.get("coverage", {}).get("action_sources_ok") or 0),
         int(snapshot.get("coverage", {}).get("disclosure_sources_ok") or 0),
     )
+    fetched_events_count = len(snapshot.get("events") or [])
 
-    if source_ok > 0:
+    if source_ok > 0 and fetched_events_count > 0:
         with closing(_connection()) as conn:
-            # A successful refresh is authoritative for the retained window.
             conn.execute("DELETE FROM corporate_events")
             for event in snapshot["events"]:
                 conn.execute("INSERT OR REPLACE INTO corporate_events VALUES (?,?,?,?,?)", (
@@ -675,23 +728,36 @@ def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) 
             conn.commit()
             events = _events_from_db(conn, start, end)
             nearby = _nearby_from_db(conn, today)
+
+        # Save snapshot for future offline/datacenter fallback
+        snapshot_export = {
+            **snapshot,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+        }
+        _save_snapshot(snapshot_export)
+
         response = _response(meta, events, nearby, "refreshed")
         response["retention"] = f"{window_start.isoformat()} đến {window_end.isoformat()}"
         return response
 
     with closing(_connection()) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM corporate_events").fetchone()[0]
+        if count == 0:
+            _seed_db_from_snapshot(conn)
         events = _events_from_db(conn, start, end)
         nearby = _nearby_from_db(conn, today)
+
     fallback_meta = {
         "coverage": {
             "mode": "cached_verified_events",
             "confirmed_events": len(events),
             "issuer_universe": len(DEFAULT_TOP_SYMBOLS),
-            "source_coverage_pct": 0,
+            "source_coverage_pct": snapshot.get("coverage", {}).get("source_coverage_pct", 0),
             "coverage_note": "Nguồn đang gián đoạn; hiển thị snapshot đã xác minh gần nhất.",
             "warning": "Dữ liệu có thể chưa phản ánh công bố mới nhất.",
         },
-        "source": "SQLite verified-event cache",
+        "source": "Verified event snapshot",
         "fetched_at": now,
     }
     return _response(fallback_meta, events, nearby, "fallback")

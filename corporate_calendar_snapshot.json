@@ -1,0 +1,26 @@
+{
+  "events": [
+    {
+      "id": "test:event",
+      "symbol": "FPT",
+      "event_date": "2026-08-06",
+      "published_at": "2026-08-06",
+      "type": "financial_report",
+      "title": "Công bố BCTC quý",
+      "status": "published",
+      "date_role": "Ngày công bố",
+      "source": "test"
+    }
+  ],
+  "coverage": {
+    "confirmed_events": 1,
+    "issuer_universe": 1,
+    "action_sources_ok": 1,
+    "disclosure_sources_ok": 1,
+    "source_coverage_pct": 100
+  },
+  "source": "test",
+  "fetched_at": "2026-08-01T00:00:00+00:00",
+  "window_start": "2026-07-20",
+  "window_end": "2026-08-30"
+}
