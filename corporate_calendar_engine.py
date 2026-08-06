@@ -719,7 +719,7 @@ def _save_snapshot(snapshot_data: Dict[str, Any]) -> None:
 
 
 def _load_snapshot() -> Optional[Dict[str, Any]]:
-    if os.path.exists(SNAPSHOT_PATH):
+    if _os.path.exists(SNAPSHOT_PATH):
         try:
             with open(SNAPSHOT_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
