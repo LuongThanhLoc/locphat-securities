@@ -27,6 +27,12 @@
         description: 'Sự kiện và quyền cổ đông',
       },
       {
+        key: 'backtest',
+        href: '/backtest',
+        label: 'Kiểm Định RSI',
+        description: 'Kiểm định chiến lược phân kỳ RSI',
+      },
+      {
         key: 'watchlist',
         href: '/watchlist',
         label: 'Theo Dõi Của Tôi',
@@ -37,6 +43,7 @@
     const path = location.pathname.toLowerCase().replace(/\/$/, '') || '/';
     const active = path.startsWith('/stock') ? 'home'
       : path.startsWith('/heatmap') ? 'heatmap'
+      : path.startsWith('/backtest') ? 'backtest'
       : path.startsWith('/calendar') ? 'calendar'
       : path.startsWith('/watchlist') ? 'watchlist'
       : 'home';
@@ -50,17 +57,15 @@
       document.head.insertAdjacentHTML('beforeend', '<link data-lp-search-style rel="stylesheet" href="/static/site-nav-search.css?v=20260804_mobile_nav_v1">');
     }
 
-    const heatmapAiActionDesktop = active === 'heatmap'
-      ? `<button class="lp-nav-ai" data-lp-heatmap-ai type="button" aria-label="Mở nhận định AI thị trường"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg><span>Nhận định AI</span></button>`
-      : '';
-
     // 2. Render Header
     mount.innerHTML = `<header class="lp-global-nav">
       <a class="lp-nav-brand" href="/" aria-label="Lộc Phát Securities">
-        <img src="/static/brand-logo.png" alt="Lộc Phát Securities">
-        <span>
+        <div class="lp-nav-brand-logo-wrap">
+          <img src="/static/brand-logo.png" alt="Lộc Phát Securities">
+        </div>
+        <span class="lp-nav-brand-text">
           <strong>Lộc Phát Securities</strong>
-          <small>Market Intelligence</small>
+          <small class="lp-brand-badge">Market Intelligence</small>
         </span>
       </a>
 
@@ -76,10 +81,9 @@
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <span>Tra cứu mã cổ phiếu</span>
+          <span>Tra cứu mã cổ phiếu...</span>
           <kbd>/</kbd>
         </button>
-        ${heatmapAiActionDesktop}
       </div>
 
       <div class="lp-nav-mobile-actions">

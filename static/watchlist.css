@@ -62,20 +62,35 @@ img {
 }
 
 .refresh-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 42px;
   padding: 0 18px;
   border: 1px solid #34464e;
   background: #10191e;
   color: #dce7ea;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.2s;
   border-radius: 4px;
+  box-sizing: border-box;
+  text-decoration: none;
 }
 .refresh-button:hover {
   border-color: #2acb9b;
   color: #38d5a7;
+}
+.refresh-button.accent {
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #35d4a4;
+}
+.refresh-button.accent:hover {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+  color: #34d399;
 }
 .refresh-button.danger {
   border-color: #4a282e;

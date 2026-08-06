@@ -4,17 +4,31 @@
 
 from __future__ import annotations
 
+# Set timezone immediately — must be done before any datetime operations
+import os as _os
+_os.environ.setdefault("TZ", "Asia/Ho_Chi_Minh")
+
 import json
 import math
-import os
-import re
-import sqlite3
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import closing
+import re as _re
+import time as _time
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional
 
+# sqlite3 is standard library but may be unavailable in some restricted environments
+try:
+    import sqlite3
+    _SQLITE3_AVAILABLE = True
+except ImportError:
+    sqlite3 = None  # type: ignore
+    _SQLITE3_AVAILABLE = False
+
 from market_data_provider import VCI_IQ, _get_json, _unwrap_data
+
+ENVIRONMENT_IS_RENDER = _os.environ.get("RENDER") == "true"
+MAX_WORKERS = 3 if ENVIRONMENT_IS_RENDER else 8
+WORKER_TIMEOUT_SECONDS = 12
 
 VN_TZ = timezone(timedelta(hours=7))
 
@@ -23,8 +37,55 @@ def _vietnam_today() -> date:
     return datetime.now(VN_TZ).date()
 
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "corporate_calendar.db")
-SNAPSHOT_PATH = os.path.join(os.path.dirname(__file__), "corporate_calendar_snapshot.json")
+DB_PATH = _os.path.join(_os.path.dirname(__file__), "corporate_calendar.db")
+SNAPSHOT_PATH = _os.path.join(_os.path.dirname(__file__), "corporate_calendar_snapshot.json")
+_MEMORY_DB_KEY = "__lpsec_inmemory__"  # sentinel to detect in-memory mode
+
+
+def _can_write_db() -> bool:
+    """Detect whether the filesystem allows SQLite writes."""
+    try:
+        dir_path = _os.path.dirname(DB_PATH)
+        if dir_path and not _os.path.exists(dir_path):
+            return False
+        if dir_path:
+            test_path = _os.path.join(dir_path, f".write_test_{_time.time()}")
+            with open(test_path, "w") as f:
+                f.write("test")
+            _os.remove(test_path)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _connection() -> Optional[sqlite3.Connection]:
+    """Return a SQLite connection, using in-memory DB when disk writes are unavailable."""
+    if not _SQLITE3_AVAILABLE:
+        return None
+    try:
+        use_memory = not _can_write_db()
+        if use_memory:
+            # In-memory DB: share via attach to survive closing/reopening in same session
+            conn = sqlite3.connect(DB_PATH if not use_memory else ":memory:", timeout=10)
+        else:
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.row_factory = sqlite3.Row
+        conn.execute("""CREATE TABLE IF NOT EXISTS corporate_events (
+            id TEXT PRIMARY KEY, symbol TEXT NOT NULL, event_date TEXT NOT NULL,
+            payload TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS calendar_sync (
+            id INTEGER PRIMARY KEY CHECK(id=1), window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+        conn.commit()
+        if use_memory:
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA journal_mode = MEMORY")
+        return conn
+    except Exception:
+        return None
 
 DEFAULT_TOP_SYMBOLS = [
     "FPT", "VNM", "HPG", "VCB", "SSI", "MWG", "TCB", "MBB", "STB", "VIC",
@@ -113,16 +174,16 @@ def _connection() -> sqlite3.Connection:
 
 def _classify(title: str) -> str | None:
     """Strictly classify disclosures; generic business news is intentionally ignored."""
-    lowered = re.sub(r"\s+", " ", str(title or "").lower()).strip()
-    if any(re.search(pattern, lowered) for pattern in MEETING_PATTERNS):
+    lowered = _re.sub(r"\s+", " ", str(title or "").lower()).strip()
+    if any(_re.search(pattern, lowered) for pattern in MEETING_PATTERNS):
         return "shareholder_meeting"
-    if any(re.search(pattern, lowered) for pattern in CAPITAL_PATTERNS):
+    if any(_re.search(pattern, lowered) for pattern in CAPITAL_PATTERNS):
         return "capital_action"
-    if any(re.search(pattern, lowered) for pattern in DIVIDEND_PATTERNS):
+    if any(_re.search(pattern, lowered) for pattern in DIVIDEND_PATTERNS):
         return "dividend"
-    if any(re.search(pattern, lowered) for pattern in REPORT_EXCLUSION_PATTERNS):
+    if any(_re.search(pattern, lowered) for pattern in REPORT_EXCLUSION_PATTERNS):
         return None
-    if any(re.search(pattern, lowered) for pattern in REPORT_PATTERNS):
+    if any(_re.search(pattern, lowered) for pattern in REPORT_PATTERNS):
         return "financial_report"
     return None
 
@@ -142,7 +203,7 @@ def _iso_date(value: Any) -> Optional[str]:
     text = _clean(value)
     if not text:
         return None
-    match = re.match(r"^(\d{4}-\d{2}-\d{2})", text)
+    match = _re.match(r"^(\d{4}-\d{2}-\d{2})", text)
     if not match:
         return None
     try:
@@ -172,14 +233,14 @@ def _event_kind(row: Dict[str, Any]) -> Optional[str]:
     # Cổ tức
     if code == "DIV":
         # Phân biệt cổ tức tiền mặt và cổ phiếu thưởng
-        if any(re.search(p, title) for p in STOCK_DIVIDEND_PATTERNS):
+        if any(_re.search(p, title) for p in STOCK_DIVIDEND_PATTERNS):
             return "stock_dividend"
         return "cash_dividend"
 
     # Đại hội đồng cổ đông
     if code in {"AGME", "AGMR"} or category == "SHAREHOLDER_MEETING":
         return "shareholder_meeting_annual"
-    if code in {"EGME", "EGMR"} or re.search(r"bất thường|egm", title):
+    if code in {"EGME", "EGMR"} or _re.search(r"bất thường|egm", title):
         return "shareholder_meeting_extraordinary"
 
     # Hành động vốn
@@ -200,7 +261,7 @@ def _event_kind(row: Dict[str, Any]) -> Optional[str]:
 def _dividend_type(row: Dict[str, Any]) -> str:
     """Phân biệt cổ tức tiền mặt và cổ phiếu thưởng."""
     title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "").lower()
-    if any(re.search(p, title) for p in STOCK_DIVIDEND_PATTERNS):
+    if any(_re.search(p, title) for p in STOCK_DIVIDEND_PATTERNS):
         return "stock"
     return "cash"
 
@@ -263,7 +324,7 @@ def _meeting_location(row: Dict[str, Any]) -> Optional[str]:
 
     # Thử trích xuất từ title
     title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "")
-    match = re.search(r"(?:tại|@)\s*([A-ZÀ-ỹ][A-ZÀ-ỹ0-9\s,.-]{5,50})", title, re.IGNORECASE)
+    match = _re.search(r"(?:tại|@)\s*([A-ZÀ-ỹ][A-ZÀ-ỹ0-9\s,.-]{5,50})", title, _re.IGNORECASE)
     if match:
         return match.group(1).strip()
     return None
@@ -299,7 +360,7 @@ def _impact_level(event_type: str, has_high_value: bool = False) -> str:
 def _corporate_action_event(row: Dict[str, Any], start: date, end: date) -> Optional[Dict[str, Any]]:
     kind = _event_kind(row)
     symbol = str(_clean(row.get("ticker")) or "").upper()
-    if not kind or not re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+    if not kind or not _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
         return None
 
     exright_date = _iso_date(row.get("exright_date"))
@@ -341,7 +402,7 @@ def _corporate_action_event(row: Dict[str, Any], start: date, end: date) -> Opti
         return None
 
     title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "Sự kiện doanh nghiệp")
-    title = re.sub(rf"^{re.escape(symbol)}\s*[-:]\s*", "", title, flags=re.IGNORECASE).strip()
+    title = _re.sub(rf"^{_re.escape(symbol)}\s*[-:]\s*", "", title, flags=_re.IGNORECASE).strip()
 
     # Enrich dữ liệu cổ tức
     dividend_info = None
@@ -413,10 +474,10 @@ def _disclosure_event(item: Dict[str, Any], symbol_hint: str, start: date, end: 
         # Các loại này đã có trong corporate action dataset
         return None
 
-    match = re.match(r"^([A-Z][A-Z0-9]{1,5})\s*[:\-–]\s*(.+)$", title)
+    match = _re.match(r"^([A-Z][A-Z0-9]{1,5})\s*[:\-–]\s*(.+)$", title)
     symbol = (match.group(1) if match else symbol_hint or _clean(item.get("ticker")) or "").upper()
     clean_title = match.group(2) if match else title
-    if not re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+    if not _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
         return None
     published_at = str(_clean(item.get("publicDate")) or _clean(item.get("displayDate")) or "")
     event_date = _iso_date(published_at)
@@ -428,7 +489,7 @@ def _disclosure_event(item: Dict[str, Any], symbol_hint: str, start: date, end: 
     enriched_info = {}
 
     # Tìm số liệu cổ tức trong content
-    div_match = re.search(r"(\d[\d.,]*)\s*(?:VND|vnd)\s*(?:/cp|/cổ phiếu)?", content)
+    div_match = _re.search(r"(\d[\d.,]*)\s*(?:VND|vnd)\s*(?:/cp|/cổ phiếu)?", content)
     if div_match:
         try:
             enriched_info["dividend_announced"] = float(div_match.group(1).replace(",", ""))
@@ -436,7 +497,7 @@ def _disclosure_event(item: Dict[str, Any], symbol_hint: str, start: date, end: 
             pass
 
     # Tìm ngày họp ĐHĐCĐ trong content
-    agm_match = re.search(r"(?:ngày|họp)\s*(?:ĐHĐCĐ|đại hội)\s*[:\-]?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})", content, re.IGNORECASE)
+    agm_match = _re.search(r"(?:ngày|họp)\s*(?:ĐHĐCĐ|đại hội)\s*[:\-]?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})", content, _re.IGNORECASE)
     if agm_match:
         try:
             day, month, year = agm_match.groups()
@@ -446,7 +507,7 @@ def _disclosure_event(item: Dict[str, Any], symbol_hint: str, start: date, end: 
 
     event_id = str(_clean(item.get("id")) or f"news-{symbol}-{event_date}-{clean_title.lower()}")
 
-    clean_title = re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", clean_title).strip()
+    clean_title = _re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", clean_title).strip()
     result = {
         "id": f"disclosure:{event_id}",
         "symbol": symbol,
@@ -484,7 +545,7 @@ def _symbols_for_calendar() -> list[str]:
         stocks.sort(key=lambda stock: float(stock.get("market_cap") or 0), reverse=True)
         for stock in stocks[:220]:
             symbol = str(stock.get("symbol") or "").upper()
-            if re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+            if _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
                 symbols.add(symbol)
     except Exception:
         pass
@@ -493,7 +554,7 @@ def _symbols_for_calendar() -> list[str]:
 
 def _snake_case_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower(): value
+        _re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower(): value
         for key, value in row.items()
     }
 
@@ -501,6 +562,7 @@ def _snake_case_row(row: Dict[str, Any]) -> Dict[str, Any]:
 def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, Any]], Dict[str, bool]]:
     events: list[Dict[str, Any]] = []
     health = {"actions": False, "disclosures": False}
+    fetch_start = _time.monotonic()
     try:
         action_start = start - timedelta(days=365)
         body = _unwrap_data(_get_json(
@@ -513,6 +575,7 @@ def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, A
                 "page": 0,
                 "size": 100,
             },
+            timeout=WORKER_TIMEOUT_SECONDS,
         )) or {}
         raw_rows = body.get("content", []) if isinstance(body, dict) else body
         health["actions"] = True
@@ -522,6 +585,12 @@ def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, A
                 events.append(event)
     except Exception:
         pass
+
+    # Abort second fetch if first already consumed most of the timeout
+    elapsed = _time.monotonic() - fetch_start
+    remaining = WORKER_TIMEOUT_SECONDS - elapsed
+    if remaining <= 2:
+        return events, health
 
     try:
         body = _unwrap_data(_get_json(
@@ -534,6 +603,7 @@ def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, A
                 "page": 0,
                 "size": 100,
             },
+            timeout=max(remaining, 3),
         )) or {}
         rows = body.get("content", []) if isinstance(body, dict) else body
         health["disclosures"] = True
@@ -547,8 +617,8 @@ def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, A
 
 
 def _normalize_title_key(title: str) -> str:
-    cleaned = re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", str(title or ""))
-    return re.sub(r"\W+", "", cleaned.lower())
+    cleaned = _re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", str(title or ""))
+    return _re.sub(r"\W+", "", cleaned.lower())
 
 
 def _deduplicate(events: Iterable[Dict[str, Any]]) -> list[Dict[str, Any]]:
@@ -586,26 +656,37 @@ def _fetch(start: date, end: date) -> Dict[str, Any]:
         "financial_report": 0,
     }
 
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        futures = {pool.submit(_fetch_symbol, symbol, start, end): symbol for symbol in symbols}
-        for future in as_completed(futures):
+    batch_size = MAX_WORKERS
+    total_symbols = len(symbols)
+
+    for batch_start in range(0, total_symbols, batch_size):
+        batch = symbols[batch_start: batch_start + batch_size]
+        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+            futures = {pool.submit(_fetch_symbol, symbol, start, end): symbol for symbol in batch}
+            done_futures = set()
             try:
-                rows, health = future.result()
-                events.extend(rows)
-                action_success += int(health["actions"])
-                disclosure_success += int(health["disclosures"])
-                # Đếm theo loại sự kiện
-                for row in rows:
-                    event_type = row.get("type", "")
-                    if event_type in event_type_counts:
-                        event_type_counts[event_type] += 1
-            except Exception:
-                continue
+                # Wait for futures with a global batch timeout to avoid indefinite hangs
+                for future in as_completed(futures, timeout=WORKER_TIMEOUT_SECONDS * 2):
+                    done_futures.add(future)
+                    try:
+                        rows, health = future.result(timeout=2)
+                        events.extend(rows)
+                        action_success += int(health["actions"])
+                        disclosure_success += int(health["disclosures"])
+                        for row in rows:
+                            event_type = row.get("type", "")
+                            if event_type in event_type_counts:
+                                event_type_counts[event_type] += 1
+                    except Exception:
+                        continue
+            except FuturesTimeoutError:
+                # Some futures may not have completed — abandon them and continue
+                # to avoid blocking indefinitely on a slow symbol
+                pass
 
     events = _deduplicate(events)
     source_coverage = round(max(action_success, disclosure_success) / len(symbols) * 100, 1) if symbols else 0.0
 
-    # Tính toán thống kê bổ sung
     high_impact_count = sum(1 for e in events if e.get("impact") == "high")
     upcoming_count = sum(1 for e in events if e.get("status") in ("upcoming", "today"))
 
@@ -647,7 +728,9 @@ def _load_snapshot() -> Optional[Dict[str, Any]]:
     return None
 
 
-def _seed_db_from_snapshot(conn: sqlite3.Connection, force: bool = False) -> bool:
+def _seed_db_from_snapshot(conn: Optional[sqlite3.Connection], force: bool = False) -> bool:
+    if conn is None:
+        return False
     snapshot_data = _load_snapshot()
     if not snapshot_data or not snapshot_data.get("events"):
         return False
@@ -672,14 +755,18 @@ def _seed_db_from_snapshot(conn: sqlite3.Connection, force: bool = False) -> boo
     return True
 
 
-def _events_from_db(conn: sqlite3.Connection, start: date, end: date) -> list[Dict[str, Any]]:
+def _events_from_db(conn: Optional[sqlite3.Connection], start: date, end: date) -> list[Dict[str, Any]]:
+    if conn is None:
+        return []
     return [json.loads(item["payload"]) for item in conn.execute(
         "SELECT payload FROM corporate_events WHERE event_date BETWEEN ? AND ? ORDER BY event_date, symbol",
         (start.isoformat(), end.isoformat()),
     )]
 
 
-def _nearby_from_db(conn: sqlite3.Connection, today: date) -> list[Dict[str, Any]]:
+def _nearby_from_db(conn: Optional[sqlite3.Connection], today: date) -> list[Dict[str, Any]]:
+    if conn is None:
+        return []
     return [json.loads(item["payload"]) for item in conn.execute(
         "SELECT payload FROM corporate_events ORDER BY ABS(julianday(event_date)-julianday(?)), event_date LIMIT 12",
         (today.isoformat(),),
@@ -696,21 +783,33 @@ def _response(meta: Dict[str, Any], events: list[Dict[str, Any]], nearby: list[D
 def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) -> Dict[str, Any]:
     if end < start or (end - start).days > 62:
         raise ValueError("Khoảng lịch phải từ 0 đến 62 ngày.")
+
+    # Warn if timezone is not set correctly
+    tz = _os.environ.get("TZ", "")
+    if tz != "Asia/Ho_Chi_Minh":
+        import sys
+        print(
+            f"[lpsec calendar] WARNING: TZ='{tz}' (expected 'Asia/Ho_Chi_Minh'). "
+            f"Date boundaries may be incorrect. Set TZ env var or set it in app.py.",
+            file=sys.stderr
+        )
+
     today = _vietnam_today()
     monday = today - timedelta(days=today.weekday())
     window_start = min(start, monday - timedelta(days=14))
     window_end = max(end, monday + timedelta(days=27))
 
-    with closing(_connection()) as conn:
-        # Seed snapshot if DB is empty or has incomplete/stale cache
+    conn = _connection()
+    if conn is not None:
         _seed_db_from_snapshot(conn)
 
-        # Fast path: return existing cached/snapshot events immediately if available and force_refresh is False
         if not force_refresh:
             events = _events_from_db(conn, start, end)
             row = conn.execute("SELECT payload FROM calendar_sync WHERE id=1").fetchone()
             meta = json.loads(row["payload"]) if row else {}
-            return _response(meta, events, _nearby_from_db(conn, today), "hit")
+            nearby = _nearby_from_db(conn, today)
+            conn.close()
+            return _response(meta, events, nearby, "hit")
 
     # If force_refresh is explicitly requested, attempt live fetch with safety try-except
     try:
@@ -723,21 +822,25 @@ def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) 
         fetched_events_count = len(snapshot.get("events") or [])
 
         if source_ok > 0 and fetched_events_count > 0:
-            with closing(_connection()) as conn:
-                conn.execute("DELETE FROM corporate_events")
+            fresh_conn = _connection()
+            if fresh_conn is not None:
+                fresh_conn.execute("DELETE FROM corporate_events")
                 for event in snapshot["events"]:
-                    conn.execute("INSERT OR REPLACE INTO corporate_events VALUES (?,?,?,?,?)", (
+                    fresh_conn.execute("INSERT OR REPLACE INTO corporate_events VALUES (?,?,?,?,?)", (
                         event["id"], event["symbol"], event["event_date"], json.dumps(event, ensure_ascii=False), now,
                     ))
                 meta = {key: value for key, value in snapshot.items() if key != "events"}
-                conn.execute("INSERT OR REPLACE INTO calendar_sync VALUES (1,?,?,?,?)", (
+                fresh_conn.execute("INSERT OR REPLACE INTO calendar_sync VALUES (1,?,?,?,?)", (
                     "2020-01-01", "2030-12-31", json.dumps(meta, ensure_ascii=False), now,
                 ))
-                conn.commit()
-                events = _events_from_db(conn, start, end)
-                nearby = _nearby_from_db(conn, today)
+                fresh_conn.commit()
+                events = _events_from_db(fresh_conn, start, end)
+                nearby = _nearby_from_db(fresh_conn, today)
+                fresh_conn.close()
+            else:
+                events = snapshot.get("events", [])
+                nearby = []
 
-            # Save snapshot for future offline/datacenter fallback
             snapshot_export = {
                 **snapshot,
                 "window_start": window_start.isoformat(),
@@ -748,14 +851,16 @@ def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) 
             response = _response(meta, events, nearby, "refreshed")
             response["retention"] = f"{window_start.isoformat()} đến {window_end.isoformat()}"
             return response
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[lpsec calendar] Live fetch failed, falling back to snapshot: {exc}")
 
-    # Instant fallback to DB / snapshot if live fetch fails or is slow
-    with closing(_connection()) as conn:
-        _seed_db_from_snapshot(conn, force=True)
-        events = _events_from_db(conn, start, end)
-        nearby = _nearby_from_db(conn, today)
+    # Instant fallback to snapshot if live fetch fails or is slow
+    fallback_conn = _connection()
+    _seed_db_from_snapshot(fallback_conn, force=True)
+    events = _events_from_db(fallback_conn, start, end)
+    nearby = _nearby_from_db(fallback_conn, today)
+    if fallback_conn is not None:
+        fallback_conn.close()
 
     now = datetime.now(timezone.utc).isoformat()
     fallback_meta = {

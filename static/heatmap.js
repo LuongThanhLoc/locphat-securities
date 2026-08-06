@@ -499,8 +499,15 @@
             ${stock.stop_loss ? `<div class="zone"><span class="zone-label">Cắt lỗ</span><b class="negative">${esc(stock.stop_loss)}</b></div>` : ''}
             ${stock.target_price ? `<div class="zone"><div class="zone-label">Mục tiêu</div><b class="positive">${esc(stock.target_price)}</b></div>` : ''}
           </div>
-          <footer class="pick-footer">
+          <footer class="pick-footer" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
             <small>${esc(stock.validation_rule || 'Chỉ radar, không phải khuyến nghị')}</small>
+            <a href="/backtest?symbol=${encodeURIComponent(stock.symbol)}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:4px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);color:#35d4a4;font-size:11px;font-weight:700;text-decoration:none;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3v18h18"></path>
+                <path d="m19 9-5 5-4-4-3 3"></path>
+              </svg>
+              <span>RSI Backtest</span>
+            </a>
           </footer>
         </article>`).join('')}
       </div></section>

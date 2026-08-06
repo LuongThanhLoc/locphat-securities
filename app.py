@@ -1,4 +1,8 @@
 import os
+# Set timezone before any datetime operations — ensures consistent date boundaries
+# regardless of the host system's clock or TZ configuration (critical for Render).
+os.environ.setdefault("TZ", "Asia/Ho_Chi_Minh")
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -15,6 +19,7 @@ from dnse_realtime import get_dnse_realtime_snapshot
 from market_data_provider import Quote
 from quant_engine import build_quant_framework
 from premium_analysis import build_premium_analysis
+from rsi_backtest_engine import run_backtest
 
 app = FastAPI(
     title="Hệ Thống Phân Tích Cổ Phiếu Chứng Khoán (CTCK)",
@@ -135,6 +140,19 @@ def read_watchlist():
     raise HTTPException(
         status_code=404,
         detail="Danh mục theo dõi chưa sẵn sàng",
+    )
+
+@app.get("/backtest", response_class=HTMLResponse)
+def read_backtest():
+    backtest_path = os.path.join(static_dir, "backtest.html")
+    if os.path.exists(backtest_path):
+        return FileResponse(
+            backtest_path,
+            headers=_cache_busting_headers_for_file(backtest_path),
+        )
+    raise HTTPException(
+        status_code=404,
+        detail="Trang Backtest chưa sẵn sàng",
     )
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -449,6 +467,63 @@ def get_weekly_analysis(x_lp_user_action: Optional[str] = Header(default=None)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi phân tích tuần: {str(e)}")
+
+
+@app.get("/api/backtest/rsi/{symbol}")
+def rsi_backtest(
+    symbol: str,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    rsi_period: int = 14,
+    lookback: int = 20,
+    exit_strategy: str = "time",
+    holding_days: int = 20,
+    rsi_entry_min: float = 40.0,
+    rsi_entry_max: float = 60.0,
+    # v2 parameters
+    include_short: bool = True,
+    max_concurrent_trades: int = 1,
+    commission_pct: float = 0.0,
+    slippage_pct: float = 0.0,
+    position_mode: str = "full",
+    position_size_pct: float = 100.0,
+    confirm_timeframe: str = "",
+    confirm_rsi_min: float = 50.0,
+    confirm_rsi_max: float = 50.0,
+    trend_filter: str = "none",
+    market_index: str = "^VNINDEX",
+    initial_capital: float = 100_000_000.0,
+):
+    """RSI Divergence Backtest API for Lộc Phát Securities (v2)."""
+    try:
+        return run_backtest(
+            symbol=symbol.upper(),
+            start=start,
+            end=end,
+            rsi_period=rsi_period,
+            lookback=lookback,
+            exit_strategy=exit_strategy,
+            holding_days=holding_days,
+            rsi_entry_min=rsi_entry_min,
+            rsi_entry_max=rsi_entry_max,
+            include_short=include_short,
+            max_concurrent_trades=max_concurrent_trades,
+            commission_pct=commission_pct,
+            slippage_pct=slippage_pct,
+            position_mode=position_mode,
+            position_size_pct=position_size_pct,
+            confirm_timeframe=confirm_timeframe,
+            confirm_rsi_min=confirm_rsi_min,
+            confirm_rsi_max=confirm_rsi_max,
+            trend_filter=trend_filter,
+            market_index=market_index,
+            initial_capital=initial_capital,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi backtest RSI cho {symbol}: {str(e)}")
+
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

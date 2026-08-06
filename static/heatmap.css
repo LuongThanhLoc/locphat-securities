@@ -91,18 +91,23 @@ kbd { border: 1px solid var(--line); background: var(--surface-2); color: var(--
 .icon-button.spinning svg { animation: spin .8s linear infinite; }
 
 .ai-button {
-  height: 38px;
+  height: 36px;
   border: 1px solid rgba(244, 185, 66, .45);
   background: #14201d;
   color: #fff2ca;
-  padding: 0 15px;
+  padding: 0 14px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-weight: 800;
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
-.ai-button svg { width: 17px; color: var(--amber); }
-.ai-button:hover { background: #1b2b26; border-color: var(--amber); }
+.ai-button svg { width: 15px; height: 15px; color: var(--amber); }
+.ai-button:hover { background: #1b2b26; border-color: var(--amber); box-shadow: 0 0 12px rgba(244, 185, 66, 0.2); }
 
 .market-ribbon {
   min-height: 42px;

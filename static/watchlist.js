@@ -379,6 +379,13 @@
         <td>
           <div class="wl-actions">
             <a class="wl-btn-view" href="/stock/${encodeURIComponent(item.symbol)}">Xem</a>
+            <a class="wl-btn-view" href="/backtest?symbol=${encodeURIComponent(item.symbol)}" style="display:inline-flex;align-items:center;gap:4px;background:rgba(16,185,129,0.15);border-color:rgba(16,185,129,0.4);color:#35d4a4;" title="Kiểm định phân kỳ RSI">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3v18h18"></path>
+                <path d="m19 9-5 5-4-4-3 3"></path>
+              </svg>
+              <span>RSI</span>
+            </a>
             <button class="wl-btn-delete" onclick="window._wlConfirmDelete('${escHtml(item.symbol)}')">Xóa</button>
           </div>
         </td>
@@ -404,6 +411,13 @@
         <div style="margin-top:10px;">${renderNoteCell(item.symbol, item.note, 'mobile')}</div>
         <div class="wl-card-foot">
           <a class="wl-btn-view" href="/stock/${encodeURIComponent(item.symbol)}">Xem phân tích</a>
+          <a class="wl-btn-view" href="/backtest?symbol=${encodeURIComponent(item.symbol)}" style="display:inline-flex;align-items:center;gap:4px;background:rgba(16,185,129,0.15);border-color:rgba(16,185,129,0.4);color:#35d4a4;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18"></path>
+              <path d="m19 9-5 5-4-4-3 3"></path>
+            </svg>
+            <span>Kiểm định RSI</span>
+          </a>
           <button class="wl-btn-delete" onclick="window._wlConfirmDelete('${escHtml(item.symbol)}')">Xóa</button>
         </div>
       </div>

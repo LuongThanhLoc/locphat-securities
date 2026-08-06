@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
-  <link rel="stylesheet" href="/static/watchlist.css?v=20260805_v2">
+  <link rel="stylesheet" href="/static/watchlist.css?v=20260806_align_v3">
 </head>
 <body>
   <div class="lp-page-nav-wrap" data-lp-site-nav></div>
@@ -25,6 +25,13 @@
         <span>Quản lý các cổ phiếu bạn đang quan tâm để xem lại nhanh.</span>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <a class="refresh-button accent" href="/backtest" title="Chạy kiểm định chiến lược phân kỳ RSI">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;flex-shrink:0;">
+            <path d="M3 3v18h18"></path>
+            <path d="m19 9-5 5-4-4-3 3"></path>
+          </svg>
+          <span>Kiểm định RSI</span>
+        </a>
         <button class="refresh-button" id="wlExportBtn" type="button" title="Xuất dữ liệu danh mục ra file JSON">Xuất dữ liệu</button>
         <button class="refresh-button" id="wlImportBtn" type="button" title="Nhập danh mục từ file JSON">Nhập dữ liệu</button>
         <input type="file" id="wlImportFile" accept=".json" style="display:none;">
