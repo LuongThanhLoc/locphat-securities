@@ -446,13 +446,14 @@ def _disclosure_event(item: Dict[str, Any], symbol_hint: str, start: date, end: 
 
     event_id = str(_clean(item.get("id")) or f"news-{symbol}-{event_date}-{clean_title.lower()}")
 
+    clean_title = re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", clean_title).strip()
     result = {
         "id": f"disclosure:{event_id}",
         "symbol": symbol,
         "event_date": event_date,
         "published_at": published_at,
         "type": kind or "financial_report",
-        "title": clean_title.strip(),
+        "title": clean_title,
         "status": "published",
         "date_role": "Ngày công bố",
         "record_date": None,
@@ -545,13 +546,20 @@ def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, A
     return events, health
 
 
+def _normalize_title_key(title: str) -> str:
+    cleaned = re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", str(title or ""))
+    return re.sub(r"\W+", "", cleaned.lower())
+
+
 def _deduplicate(events: Iterable[Dict[str, Any]]) -> list[Dict[str, Any]]:
     result: list[Dict[str, Any]] = []
     seen = set()
     for event in events:
         key = (
-            event.get("symbol"), event.get("type"), event.get("event_date"),
-            re.sub(r"\W+", "", str(event.get("title") or "").lower()),
+            event.get("symbol"),
+            event.get("type"),
+            event.get("event_date"),
+            _normalize_title_key(event.get("title")),
         )
         if key in seen:
             continue
