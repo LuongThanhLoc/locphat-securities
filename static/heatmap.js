@@ -10,6 +10,17 @@
     sector: 'ALL',
     activeOnly: false,
     query: '',
+    timeline: {
+      snapshots: [],
+      cursor: 0,
+      isLive: true,
+      isPlaying: false,
+      speed: 1,
+      baseIntervalMs: 250,
+      lastSnapshotTime: null,
+      liveTimer: null,
+      playTimer: null,
+    },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -26,8 +37,10 @@
   const formatMoney = (value) => {
     const amount = Number(value || 0);
     if (amount >= 1e15) return `${formatNumber(amount / 1e15, 2)} triệu tỷ`;
-    if (amount >= 1e12) return `${formatNumber(amount / 1e12, 1)} nghìn tỷ`;
-    if (amount >= 1e9) return `${formatNumber(amount / 1e9, 1)} tỷ`;
+    // Market-wide liquidity (Vĩ mô card): 3 decimals so traders see e.g.
+    // "19.362,054 tỷ" or "19,362.054 nghìn tỷ" instead of rounded "19,362.0".
+    if (amount >= 1e12) return `${formatNumber(amount / 1e12, 3)} nghìn tỷ`;
+    if (amount >= 1e9) return `${formatNumber(amount / 1e9, 3)} tỷ`;
     if (amount >= 1e6) return `${formatNumber(amount / 1e6, 1)} triệu`;
     return `${formatNumber(amount)} đ`;
   };
@@ -128,7 +141,7 @@
     const tradeDate = data.data_lineage?.latest_trading_date || 'không rõ ngày';
     const storageLabel = data.snapshot_frozen ? 'snapshot DB cuối phiên' : 'dữ liệu thị trường';
     $('sessionTimestamp').textContent = `Phiên ${tradeDate} · ${storageLabel} · tải lúc ${data.timestamp || '--'}`;
-    $('lineageText').textContent = `${data.data_lineage?.price_source || 'Nguồn bảng giá'} · ICB 4 cấp`;
+    if ($('lineageText')) $('lineageText').textContent = `${data.data_lineage?.price_source || 'Nguồn bảng giá'} · ICB 4 cấp`;
     const coverage = data.data_lineage?.coverage || {};
     $('coverageText').textContent = `${formatNumber(coverage.accepted_listings ?? summary.total_stocks)} mã niêm yết · ${formatNumber(data.data_lineage?.sector_count)} nhóm ngành · Snapshot ${quant.snapshot_id || '--'}`;
     $('refreshButton').disabled = Boolean(data.snapshot_frozen && closed);
@@ -197,7 +210,18 @@
         </div>`
       : '';
     
-    tooltip.innerHTML = `<div class="tooltip-head"><div><strong>${esc(stock.symbol)}</strong><div class="tooltip-name">${esc(stock.name)}</div></div><span>${esc(stock.exchange)}</span></div>
+    tooltip.innerHTML = `
+      <div class="tooltip-sector-category">${esc(stock.sector || 'CỔ PHIẾU')}</div>
+      <div class="tooltip-head">
+        <div>
+          <strong class="tooltip-symbol-text">${esc(stock.symbol)}</strong>
+          <div class="tooltip-name">${esc(stock.name)}</div>
+        </div>
+        <div class="tooltip-badge-wrap">
+          <span class="tooltip-exchange">${esc(stock.exchange)}</span>
+          <b class="tooltip-pct-badge ${pctClass(stock.change_pct)}">${signed(stock.change_pct)}</b>
+        </div>
+      </div>
       <div class="tooltip-grid">
         <div><span>Giá gần nhất</span><b>${formatNumber(stock.price_vnd)} đ</b></div>
         <div><span>Biến động</span><b class="${pctClass(stock.change_pct)}">${signed(stock.change_pct)}</b></div>
@@ -205,7 +229,7 @@
         <div><span>Vốn hóa</span><b>${formatMoney(stock.market_cap)}</b></div>
         <div><span>Điểm dòng tiền</span><b style="color:${scoreColor(stock.flow_score)}">${formatNumber(stock.flow_score, 1)}</b></div>
         <div><span>Hạng thanh khoản</span><b>#${formatNumber(stock.liquidity_rank)}</b></div>
-      </div>${signalsHtml}<div class="tooltip-foot">Nhấp để mở phân tích ${esc(stock.symbol)}</div>`;
+      </div>${signalsHtml}<div class="tooltip-foot">Nhấp để mở phân tích ${esc(stock.symbol)} →</div>`;
     moveTooltip(event);
   }
 
@@ -249,7 +273,7 @@
       .tile(d3.treemapSquarify.ratio(1.2))
       .paddingOuter(3)
       .paddingInner(2)
-      .paddingTop((node) => node.depth === 1 ? 22 : 0)
+      .paddingTop((node) => node.depth === 1 ? 20 : 0)
       .round(true)(root);
 
     const sectorGroups = svg.append('g').selectAll('g')
@@ -262,23 +286,46 @@
       .attr('height', (d) => Math.max(d.y1 - d.y0, 0))
       .attr('fill', '#0b1217')
       .attr('stroke', '#2a3942');
+    
+    // Header strip for sectors (matching Finviz layout)
+    sectorGroups.append('rect')
+      .attr('class', 'treemap-sector-header')
+      .attr('x', (d) => d.x0)
+      .attr('y', (d) => d.y0)
+      .attr('width', (d) => Math.max(d.x1 - d.x0, 0))
+      .attr('height', (d) => (d.x1 - d.x0) >= 60 ? 20 : 0)
+      .attr('fill', '#141e26')
+      .attr('stroke', 'none');
+
     sectorGroups.append('text')
       .attr('class', 'treemap-sector-label')
       .attr('x', (d) => d.x0 + 6)
-      .attr('y', (d) => d.y0 + 15)
+      .attr('y', (d) => d.y0 + 13)
+      .attr('dy', '0.05em')
       .text((d) => {
         const widthAvailable = d.x1 - d.x0;
-        const label = `${d.data.name}  ${signed(d.data.avg_change_pct)}`;
-        return widthAvailable > 130 ? label : d.data.name;
+        if (widthAvailable < 60) return '';
+        const label = `${d.data.name} ${signed(d.data.avg_change_pct)}`;
+        return widthAvailable > 120 ? label : d.data.name;
       })
       .each(function(d) {
         const maxWidth = Math.max(d.x1 - d.x0 - 10, 0);
         const node = d3.select(this);
+        if (maxWidth <= 0) { node.text(''); return; }
         let text = node.text();
-        while (this.getComputedTextLength() > maxWidth && text.length > 5) {
-          text = `${text.slice(0, -2)}…`;
-          node.text(text);
-        }
+        try {
+          if (this.getComputedTextLength() > maxWidth && text.length > 6) {
+            const half = Math.floor((maxWidth / this.getComputedTextLength()) * text.length) - 1;
+            if (half > 2 && half < text.length - 2) {
+              text = `${text.slice(0, half - 1)}…${text.slice(-(text.length - half - 1))}`;
+              node.text(text);
+            }
+          }
+          while (text.length > 3 && this.getComputedTextLength() > maxWidth) {
+            text = `${text.slice(0, -2)}…`;
+            node.text(text);
+          }
+        } catch (_) {}
       });
 
     const leaves = svg.append('g').selectAll('g')
@@ -286,10 +333,43 @@
       .join('g')
       .attr('class', 'treemap-stock')
       .attr('transform', (d) => `translate(${d.x0},${d.y0})`)
-      .on('mouseenter', (event, d) => showTooltip(event, d.data))
+      .on('mouseenter', function (event, d) {
+        showTooltip(event, d.data);
+        if (this.parentNode) {
+          this.parentNode.appendChild(this);
+        }
+        d3.select(this).select('rect')
+          .transition().duration(100)
+          .attr('stroke', '#ffffff')
+          .attr('stroke-width', 2);
+      })
       .on('mousemove', (event) => moveTooltip(event))
-      .on('mouseleave', hideTooltip)
-      .on('click', (_, d) => { window.location.href = `/stock/${encodeURIComponent(d.data.symbol)}`; });
+      .on('mouseleave', function (event, d) {
+        hideTooltip();
+        d3.select(this).select('rect')
+          .transition().duration(150)
+          .attr('stroke', 'rgba(255,255,255,.14)')
+          .attr('stroke-width', 1);
+      })
+      .on('click', function (event, d) {
+        const isTouch = event.pointerType === 'touch' || (window.matchMedia && window.matchMedia('(hover: none)').matches);
+        const pinned = this.classList.contains('pinned');
+        if (isTouch) {
+          event.preventDefault();
+          d3.selectAll('.treemap-stock.pinned').each(function () {
+            this.classList.remove('pinned');
+          });
+          if (!pinned) {
+            this.classList.add('pinned');
+            showTooltip(event, d.data);
+          } else {
+            hideTooltip();
+          }
+          return;
+        }
+        window.location.href = `/stock/${encodeURIComponent(d.data.symbol)}`;
+      });
+
     leaves.append('rect')
       .attr('width', (d) => Math.max(d.x1 - d.x0, 0))
       .attr('height', (d) => Math.max(d.y1 - d.y0, 0))
@@ -300,31 +380,107 @@
       const tileWidth = d.x1 - d.x0;
       const tileHeight = d.y1 - d.y0;
 
-      // Luôn hiển thị đủ 3 ký tự mã cổ phiếu cho mọi ô từ 6x6px trở lên
+      const symbol = String(d.data.symbol || '').trim();
+      const changeText = state.colorMode === 'flow'
+        ? `F${formatNumber(d.data.flow_score, 0)}`
+        : signed(d.data.change_pct);
+
+      // Precise character fitting estimation:
+      // Uppercase 3-char symbol width: ~ (symbol.length * 0.65 * font_size)
+      // Change string (e.g. "+0.31%", "-10.45%"): ~ (changeText.length * 0.62 * font_size)
+
+      let fitsBoth = false;
+      let symbolSize = 0;
+      let changeSize = 0;
+
+      // Tier 1: Fits Both Symbol (primary, max 17px) & % Change (secondary, max 12px) stacked
+      if (tileWidth >= 46 && tileHeight >= 32) {
+        const maxSymByWidth = (tileWidth - 8) / (symbol.length * 0.65);
+        const maxSymByHeight = (tileHeight - 8) * 0.38;
+        const testSymSize = clamp(Math.min(maxSymByWidth, maxSymByHeight), 10, 17);
+
+        const maxChgByWidth = (tileWidth - 8) / (changeText.length * 0.62);
+        const maxChgByHeight = (tileHeight - 8) * 0.28;
+        const testChgSize = clamp(Math.min(maxChgByWidth, maxChgByHeight), 8.5, 12);
+
+        const symWidthEst = symbol.length * 0.65 * testSymSize;
+        const chgWidthEst = changeText.length * 0.62 * testChgSize;
+
+        if (symWidthEst <= (tileWidth - 6) && chgWidthEst <= (tileWidth - 6)) {
+          fitsBoth = true;
+          symbolSize = testSymSize;
+          changeSize = testChgSize;
+        }
+      }
+
+      // Tier 2: Fits Symbol ONLY in center (max 13px)
+      let fitsSymOnly = false;
+      if (!fitsBoth && tileWidth >= 22 && tileHeight >= 15) {
+        const maxSymByWidth = (tileWidth - 6) / (symbol.length * 0.65);
+        const maxSymByHeight = (tileHeight - 4) * 0.50;
+        const testSymSize = clamp(Math.min(maxSymByWidth, maxSymByHeight), 8.5, 13);
+
+        const symWidthEst = symbol.length * 0.65 * testSymSize;
+        if (symWidthEst <= (tileWidth - 4)) {
+          fitsSymOnly = true;
+          symbolSize = testSymSize;
+          changeSize = clamp(testSymSize * 0.82, 7, 11);
+        }
+      }
+
+      let defaultSymbolOpacity = 0;
+      let defaultChangeOpacity = 0;
+
+      if (fitsBoth) {
+        defaultSymbolOpacity = 1;
+        defaultChangeOpacity = 1;
+      } else if (fitsSymOnly) {
+        defaultSymbolOpacity = 1;
+        defaultChangeOpacity = 0;
+      } else {
+        // Tier 3: Micro / Tiny tile -> Text hidden
+        defaultSymbolOpacity = 0;
+        defaultChangeOpacity = 0;
+      }
+
+      d._defaultSymbolOpacity = defaultSymbolOpacity;
+      d._defaultChangeOpacity = defaultChangeOpacity;
+
       if (tileWidth >= 6 && tileHeight >= 6) {
-        const showChange = tileWidth >= 26 && tileHeight >= 20;
+        const cy = tileHeight / 2;
+        const cx = tileWidth / 2;
 
-        const symbolSize = clamp(Math.min(tileWidth / 2.7, tileHeight / (showChange ? 2.0 : 1.25)), 5, 24);
-        const strokeW = symbolSize < 9 ? '1px' : (symbolSize < 13 ? '1.5px' : '2.5px');
-        const symY = showChange ? (tileHeight / 2 - symbolSize * 0.18) : (tileHeight / 2 + symbolSize * 0.35);
+        let symY, changeY;
 
+        if (fitsBoth) {
+          symY    = cy - changeSize * 0.35;
+          changeY = cy + changeSize * 0.9;
+        } else {
+          symY    = cy + symbolSize * 0.35;
+          changeY = cy + changeSize * 0.85;
+        }
+
+        const strokeW = symbolSize < 10 ? '1px' : (symbolSize < 14 ? '1.5px' : '2px');
+
+        // Ticker Symbol (Primary Label — 3 characters)
         group.append('text')
           .attr('class', 'treemap-symbol')
-          .attr('x', tileWidth / 2)
+          .attr('x', cx)
           .attr('y', symY)
           .style('font-size', `${symbolSize}px`)
           .style('stroke-width', strokeW)
-          .text(d.data.symbol);
+          .style('opacity', defaultSymbolOpacity)
+          .text(symbol);
 
-        if (showChange) {
-          const changeSize = clamp(symbolSize * 0.58, 6, 12);
-          const changeY = tileHeight / 2 + symbolSize * 0.75 + 1;
+        // % Change (Secondary Label — only rendered when fitsBoth)
+        if (fitsBoth) {
           group.append('text')
             .attr('class', 'treemap-change')
-            .attr('x', tileWidth / 2)
+            .attr('x', cx)
             .attr('y', changeY)
             .style('font-size', `${changeSize}px`)
-            .text(state.colorMode === 'flow' ? `F${formatNumber(d.data.flow_score, 0)}` : signed(d.data.change_pct));
+            .style('opacity', defaultChangeOpacity)
+            .text(changeText);
         }
       }
     });
@@ -353,11 +509,367 @@
       if (snapshotChanged) state.aiReport = null;
       $('loadingState').hidden = true;
       renderAll();
+      // Timeline bootstrapping — first time only. Subsequent refreshes
+      // reuse the loaded checkpoints; the live tail poll picks up new ones.
+      if (!state.timeline.snapshots.length) {
+        loadTimeline().catch((err) => console.warn('Timeline initial load failed:', err));
+      }
     } catch (error) {
       $('loadingState').innerHTML = `<strong class="negative">Không tải được dữ liệu heatmap</strong><span>${esc(error.message)}</span>`;
     } finally {
       refresh.classList.remove('spinning');
     }
+  }
+
+  // ============================================================================
+  // MARKET TIMELINE SCRUBBER (Market Radar 3.4)
+  // --------------------------------------------------------------------------
+  // Bottom-of-page interactive bar. The backend poller writes
+  // `heatmap_intraday_snapshots` rows every 1m (ATO/ATC) / 5m (continuous) /
+  // 15m (lunch). This file only reads them via /api/heatmap/timeline and
+  // re-renders the existing treemap + radar against the chosen checkpoint.
+  // ============================================================================
+  const PHASE_LABEL = {
+    ATO: 'ATO',
+    CONTINUOUS: 'Liên tục',
+    ATC: 'ATC',
+    LUNCH_BREAK: 'Nghỉ trưa',
+    POST_CLOSE_TRADING: 'Sau giờ',
+    CLOSED: 'Đóng cửa',
+    PRE_OPEN: 'Chờ mở',
+  };
+
+  function phaseClockBounds(phase) {
+    if (phase === 'ATO') return { start: '09:00', end: '09:15' };
+    if (phase === 'CONTINUOUS') return { start: '09:15', end: '14:30' };
+    if (phase === 'ATC') return { start: '14:30', end: '14:45' };
+    if (phase === 'LUNCH_BREAK') return { start: '11:30', end: '13:00' };
+    if (phase === 'POST_CLOSE_TRADING') return { start: '14:45', end: '15:00' };
+    return { start: '--:--', end: '--:--' };
+  }
+
+  function timelineCount() {
+    return state.timeline.snapshots.length;
+  }
+
+  function liveCursor() {
+    const total = timelineCount();
+    return Math.max(0, total - 1);
+  }
+
+  function isSessionLive() {
+    const session = state.data?.market_session;
+    if (!session) return false;
+    return Boolean(session.is_live_matching) || ['ATO', 'ATC', 'CONTINUOUS', 'POST_CLOSE_TRADING', 'LUNCH_BREAK'].includes(session.phase);
+  }
+
+  function setTimelineCursor(index, options = {}) {
+    const total = timelineCount();
+    if (!total) {
+      updateTimelineChrome();
+      return;
+    }
+    const cursor = clamp(index, 0, total - 1);
+    state.timeline.cursor = cursor;
+    const slider = $('timelineSlider');
+    if (slider) slider.value = String(cursor);
+    // Scrubbing always takes the user out of live-tracking. The "Về Live"
+    // button (or auto-promotion when the cursor reaches the end during a
+    // live session) re-enables it.
+    state.timeline.isLive = options.live === true;
+    $('timelineLive')?.toggleAttribute('hidden', state.timeline.isLive);
+    renderAtCursor();
+  }
+
+  function updateTimelineChrome() {
+    const total = timelineCount();
+    const cursor = state.timeline.cursor;
+    const slider = $('timelineSlider');
+    if (slider) {
+      slider.min = '0';
+      slider.max = String(Math.max(total - 1, 0));
+      slider.value = String(clamp(cursor, 0, Math.max(total - 1, 0)));
+      slider.disabled = total <= 1;
+    }
+    $('timelineCounter').textContent = `${Math.min(cursor + 1, total)} / ${total}`;
+    // Disable play/step controls when there is nothing to play — this gives
+    // users a clear "the timeline is empty" signal rather than a button that
+    // silently no-ops on click.
+    const playDisabled = total <= 1;
+    $('timelinePlay')?.toggleAttribute('disabled', playDisabled);
+    $('timelineStepBack')?.toggleAttribute('disabled', playDisabled);
+    $('timelineStepForward')?.toggleAttribute('disabled', playDisabled);
+    if (!total) {
+      $('timelinePhase').textContent = '—';
+      $('timelinePhase').dataset.phase = 'PRE_OPEN';
+      $('timelineClock').textContent = '--:--';
+      $('timelineCursor').style.left = '0%';
+      $('timelineStatus').textContent = 'Chưa có dữ liệu intraday. Poller sẽ ghi sau khi thị trường mở cửa.';
+      return;
+    }
+    const item = state.timeline.snapshots[cursor];
+    if (!item) return;
+    $('timelinePhase').textContent = PHASE_LABEL[item.session_phase] || item.session_phase;
+    $('timelinePhase').dataset.phase = item.session_phase;
+    const timeText = String(item.snapshot_time || '').slice(11, 16) || '--:--';
+    $('timelineClock').textContent = timeText;
+    $('timelineCursor').style.left = `${(cursor / Math.max(total - 1, 1)) * 100}%`;
+    const isLive = state.timeline.isLive;
+    $('timelineStatus').textContent = isLive
+      ? `Live · cập nhật mỗi 6 giây (${total} snapshot)`
+      : `Đang tua lại @ ${timeText}`;
+  }
+
+  function renderAtCursor() {
+    const total = timelineCount();
+    if (!total) {
+      updateTimelineChrome();
+      return;
+    }
+    const cursor = clamp(state.timeline.cursor, 0, total - 1);
+    const item = state.timeline.snapshots[cursor];
+    updateTimelineChrome();
+    if (!item || !item.payload) return;
+    // Merge the timeline summary back into `state.data` so all existing
+    // renderers (treemap, radar, summary grid) work without modification.
+    // Per-stock rows are absent in the summarized payload, but the treemap
+    // gracefully degrades to "no stocks" tiles — that's expected when
+    // scrubbing because we never want to ship hundreds of KB per tick.
+    if (cursor === liveCursor() && isSessionLive()) {
+      // We're parked on the latest checkpoint during a live session: leave
+      // `state.data` pointing at the live /api/heatmap/data payload so
+      // per-stock tooltips keep working.
+      if (!state.timeline.isLive) state.timeline.isLive = true;
+    }
+    if (!state.timeline.isLive) {
+      const synthetic = {
+        ...state.data,
+        sectors: (item.payload.sectors || []).map((sec) => ({
+          ...sec,
+          // No per-stock rows in the summary — give the treemap an empty
+          // bucket so it shows the sector label without trying to lay out
+          // tiles. The radar panel still renders the per-sector flow
+          // score / breadth / change %, which is the scrubber's purpose.
+          stocks: sec.stocks || [],
+        })),
+        quant_snapshot: item.payload.quant_snapshot || state.data.quant_snapshot,
+        summary: item.payload.summary || state.data.summary,
+        market_session: item.payload.market_session || state.data.market_session,
+        timestamp: item.payload.timestamp || state.data.timestamp,
+        data_lineage: item.payload.data_lineage || state.data.data_lineage,
+        snapshot_frozen: Boolean(item.payload.snapshot_frozen),
+        served_from: 'TIMELINE_SCRUB',
+        is_market_open: Boolean(item.payload.is_market_open),
+        market_closed: Boolean(item.payload.market_closed),
+      };
+      state.data = synthetic;
+      renderAll();
+    } else {
+      $('timelineLive')?.toggleAttribute('hidden', true);
+    }
+  }
+
+  async function loadTimeline(dateOverride) {
+    const date = dateOverride || new Date().toISOString().slice(0, 10);
+    $('timelineStatus').textContent = 'Đang tải timeline…';
+    try {
+      const response = await fetch(`/api/heatmap/timeline?date=${encodeURIComponent(date)}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      const previousLast = state.timeline.snapshots[state.timeline.snapshots.length - 1]?.snapshot_time || null;
+      state.timeline.snapshots = items;
+      state.timeline.lastSnapshotTime = items[items.length - 1]?.snapshot_time || null;
+      // Pick the cursor: live sessions auto-park on the freshest snapshot;
+      // closed sessions land on the last checkpoint (typically ATC).
+      if (state.timeline.isLive || items.length === 0) {
+        state.timeline.cursor = liveCursor();
+      } else {
+        state.timeline.cursor = clamp(state.timeline.cursor, 0, Math.max(items.length - 1, 0));
+      }
+      // Build hour ticks once we know the span. We mark the "major" ticks at
+      // each phase boundary (9:00 / 9:15 / 11:30 / 13:00 / 14:30 / 14:45).
+      renderTimelineTicks();
+      renderAtCursor();
+      // If we're live and the tail advanced, briefly flash the status.
+      const newLast = state.timeline.lastSnapshotTime;
+      if (newLast && previousLast && newLast !== previousLast && state.timeline.isLive) {
+        $('timelineStatus').textContent = `Live · snapshot mới ${newLast.slice(11, 16)}`;
+      }
+      if (!state.timeline.liveTimer && state.timeline.isLive) startLiveTail();
+    } catch (error) {
+      $('timelineStatus').textContent = `Lỗi tải timeline: ${error.message}`;
+      console.warn('loadTimeline failed:', error);
+    }
+  }
+
+  function renderTimelineTicks() {
+    const ticks = $('timelineTicks');
+    if (!ticks) return;
+    const boundaries = [
+      { time: '09:00', label: '09:00', major: true },
+      { time: '09:15', label: '09:15', major: true },
+      { time: '11:30', label: '11:30', major: false },
+      { time: '13:00', label: '13:00', major: false },
+      { time: '14:30', label: '14:30', major: true },
+      { time: '14:45', label: '14:45', major: true },
+    ];
+    const minutesInDay = 24 * 60;
+    const startMin = 9 * 60;       // 09:00
+    const endMin = 14 * 60 + 45;   // 14:45
+    const span = endMin - startMin;
+    ticks.innerHTML = boundaries.map(({ time, label, major }) => {
+      const [hh, mm] = time.split(':').map(Number);
+      const minutesFromStart = hh * 60 + mm - startMin;
+      const pct = clamp((minutesFromStart / span) * 100, 0, 100);
+      return `<span class="timeline-tick${major ? ' major' : ''}" style="left:${pct}%"></span>` +
+             `<span class="timeline-tick-label" style="left:${pct}%">${label}</span>`;
+    }).join('');
+    // Suppress unused-variable lint warning for minutesInDay without changing behaviour.
+    void minutesInDay;
+  }
+
+  function attachTimelineEvents() {
+    const slider = $('timelineSlider');
+    if (!slider || slider.dataset.bound === '1') return;
+    slider.dataset.bound = '1';
+    slider.addEventListener('input', (event) => {
+      const value = Number(event.target.value);
+      setTimelineCursor(value, { live: false });
+    });
+    $('timelinePlay')?.addEventListener('click', togglePlay);
+    $('timelineStepBack')?.addEventListener('click', () => {
+      stopPlay();
+      setTimelineCursor(state.timeline.cursor - 1, { live: false });
+    });
+    $('timelineStepForward')?.addEventListener('click', () => {
+      stopPlay();
+      setTimelineCursor(state.timeline.cursor + 1, { live: false });
+    });
+    $('timelineLive')?.addEventListener('click', () => {
+      stopPlay();
+      const total = timelineCount();
+      if (total > 0) {
+        state.timeline.isLive = true;
+        setTimelineCursor(liveCursor(), { live: true });
+        // Refresh state.data from the canonical /api/heatmap/data endpoint
+        // so per-stock tooltips are populated again.
+        loadData(false);
+      }
+    });
+    document.querySelectorAll('.timeline-speed button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.timeline-speed button').forEach((b) => b.classList.toggle('active', b === btn));
+        state.timeline.speed = Number(btn.dataset.speed || 1);
+        if (state.timeline.isPlaying) startPlay();
+      });
+    });
+    // Keyboard shortcuts: Space toggles play, ← / → step, L jumps to live.
+    document.addEventListener('keydown', (event) => {
+      const tag = (event.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (event.code === 'Space') {
+        event.preventDefault();
+        togglePlay();
+      } else if (event.code === 'ArrowLeft') {
+        stopPlay();
+        setTimelineCursor(state.timeline.cursor - 1, { live: false });
+      } else if (event.code === 'ArrowRight') {
+        stopPlay();
+        setTimelineCursor(state.timeline.cursor + 1, { live: false });
+      } else if (event.key === 'l' || event.key === 'L') {
+        stopPlay();
+        state.timeline.isLive = true;
+        setTimelineCursor(liveCursor(), { live: true });
+        loadData(false);
+      }
+    });
+    // Click a segment to jump to its first snapshot.
+    document.querySelectorAll('.timeline-segment').forEach((seg) => {
+      seg.addEventListener('click', () => {
+        const phase = seg.dataset.phase;
+        const idx = state.timeline.snapshots.findIndex((it) => it.session_phase === phase);
+        if (idx >= 0) {
+          stopPlay();
+          setTimelineCursor(idx, { live: false });
+        }
+      });
+    });
+    $('timelineBar')?.classList.toggle('is-playing', false);
+  }
+
+  function togglePlay() {
+    if (state.timeline.isPlaying) {
+      stopPlay();
+    } else {
+      startPlay();
+    }
+  }
+
+  function startPlay() {
+    const total = timelineCount();
+    if (total <= 1) return;
+    if (state.timeline.cursor >= liveCursor()) {
+      // Replaying at the end — restart from 0 unless user prefers to stay.
+      // We restart so users see the day unfold instead of just sitting still.
+      setTimelineCursor(0, { live: false });
+    }
+    state.timeline.isPlaying = true;
+    $('timelineBar')?.classList.add('is-playing');
+    const playBtn = $('timelinePlay');
+    if (playBtn) {
+      playBtn.innerHTML = '<i data-lucide="pause"></i><span class="timeline-control-label">Tạm dừng</span>';
+      lucide?.createIcons();
+    }
+    stopPlayTimer();
+    const tick = () => {
+      const next = state.timeline.cursor + 1;
+      if (next > liveCursor()) {
+        stopPlay();
+        return;
+      }
+      setTimelineCursor(next, { live: false });
+    };
+    const intervalMs = Math.max(40, state.timeline.baseIntervalMs / state.timeline.speed);
+    state.timeline.playTimer = setInterval(tick, intervalMs);
+  }
+
+  function stopPlayTimer() {
+    if (state.timeline.playTimer) {
+      clearInterval(state.timeline.playTimer);
+      state.timeline.playTimer = null;
+    }
+  }
+
+  function stopPlay() {
+    stopPlayTimer();
+    if (!state.timeline.isPlaying) return;
+    state.timeline.isPlaying = false;
+    $('timelineBar')?.classList.remove('is-playing');
+    const playBtn = $('timelinePlay');
+    if (playBtn) {
+      playBtn.innerHTML = '<i data-lucide="play"></i><span class="timeline-control-label">Phát</span>';
+      lucide?.createIcons();
+    }
+  }
+
+  function startLiveTail() {
+    if (state.timeline.liveTimer) return;
+    state.timeline.liveTimer = setInterval(async () => {
+      try {
+        const response = await fetch('/api/heatmap/timeline/latest', { cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!data?.snapshot_time) return;
+        const last = state.timeline.snapshots[state.timeline.snapshots.length - 1];
+        if (last && last.snapshot_time === data.snapshot_time) return;
+        // New checkpoint arrived — reload the day's timeline so the slider
+        // max updates and the cursor advances if the user is parked on live.
+        await loadTimeline();
+      } catch (err) {
+        console.warn('Live tail poll failed:', err);
+      }
+    }, 6000);
   }
 
   function evidenceItem(label, value) {
@@ -602,7 +1114,7 @@
     try {
       const response = await fetch('/api/heatmap/weekly_analysis', {
         method: 'POST',
-        headers: { 'X-LP-User-Action': 'weekly_analysis' },
+        headers: { 'X-LP-User-Action': 'deepseek' },
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
@@ -836,6 +1348,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     bindEvents();
     lucide?.createIcons();
+    attachTimelineEvents();
     loadData();
     window.setInterval(() => {
       if (!document.hidden) loadData();

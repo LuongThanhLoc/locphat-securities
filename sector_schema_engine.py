@@ -131,7 +131,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Vướng mắc pháp lý phê duyệt dự án & áp lực đáo hạn trái phiếu doanh nghiệp."
 
-    # 4. ARCHETYPE: STEEL (THÉP)
+    # 4. ARCHETYPE: STEEL (Thép)
     elif archetype == "STEEL":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -148,7 +148,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Biến động giá quặng sắt thế giới, than củi/coke & chính sách thuế chống bán phá giá HRC."
 
-    # 5. ARCHETYPE: INSURANCE (BẢO HIỂM)
+    # 5. ARCHETYPE: INSURANCE (Bảo hiểm)
     elif archetype == "INSURANCE":
         premium_rev = abs(get_is_item(['Doanh thu phí bảo hiểm', 'Doanh thu thuần hoạt động kinh doanh bảo hiểm', 'Doanh thu thuần']))
         claims = abs(get_is_item(['Chi phí bồi thường bảo hiểm', 'Chi bồi thường bảo hiểm']))
@@ -170,7 +170,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Rủi ro thiên tai/dịch bệnh tăng chi phí bồi thường bất thường & biến động danh mục đầu tư."
 
-    # 6. ARCHETYPE: INDUSTRIAL_PARK (BĐS KHU CÔNG NGHIỆP)
+    # 6. ARCHETYPE: INDUSTRIAL_PARK (BĐS Khu công nghiệp)
     elif archetype == "INDUSTRIAL_PARK":
         unearned = get_bs_item(['Người mua trả tiền trước', 'Người mua trả tiền trước ngắn hạn']) + get_bs_item(['Doanh thu chưa thực hiện dài hạn', 'Người mua trả tiền trước dài hạn'])
         rental_rev = abs(get_is_item(['Doanh thu cho thuê', 'Doanh thu thuần']))
@@ -189,7 +189,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Phụ thuộc vào dòng vốn FDI & chính sách thuế ưu đãi đầu tư."
 
-    # 7. ARCHETYPE: OIL_GAS (DẦU KHÍ)
+    # 7. ARCHETYPE: OIL_GAS (Dầu khí)
     elif archetype == "OIL_GAS":
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
         capex = abs(get_cf_item(['Tiền chi mua sắm, xây dựng TSCĐ', 'Tiền chi đầu tư mua sắm TSCĐ', 'Chi mua sắm TSCĐ']))
@@ -209,7 +209,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Biến động giá dầu thô thế giới & rủi ro địa chính trị ảnh hưởng trực tiếp biên lợi nhuận."
 
-    # 8. ARCHETYPE: POWER_ENERGY (ĐIỆN - NĂNG LƯỢNG)
+    # 8. ARCHETYPE: POWER_ENERGY (Điện - Năng lượng)
     elif archetype == "POWER_ENERGY":
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
         fixed_assets = abs(get_bs_item(['Tài sản cố định', 'Tài sản cố định hữu hình']))
@@ -228,7 +228,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Phụ thuộc vào giá bán điện EVN, thủy văn/gió/bức xạ & cơ chế DPPA."
 
-    # 9. ARCHETYPE: MINING (KHOÁNG SẢN)
+    # 9. ARCHETYPE: MINING (Khoáng sản)
     elif archetype == "MINING":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -245,7 +245,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Biến động giá hàng hóa thế giới, chi phí khai thác tăng & rủi ro môi trường."
 
-    # 10. ARCHETYPE: CHEMICALS_FERTILIZERS (HÓA CHẤT - PHÂN BÓN)
+    # 10. ARCHETYPE: CHEMICALS_FERTILIZERS (Hóa chất - Phân bón)
     elif archetype == "CHEMICALS_FERTILIZERS":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -262,7 +262,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Biến động giá khí đầu vào, rủi ro thời vụ nông nghiệp & cạnh tranh giá nhập khẩu."
 
-    # 11. ARCHETYPE: CONSTRUCTION (XÂY DỰNG - ĐẦU TƯ CÔNG)
+    # 11. ARCHETYPE: CONSTRUCTION (Đầu tư công)
     elif archetype == "CONSTRUCTION":
         backlog = get_bs_item(['Người mua trả tiền trước', 'Người mua trả tiền trước ngắn hạn', 'Doanh thu chưa thực hiện ngắn hạn']) + get_bs_item(['Doanh thu chưa thực hiện dài hạn', 'Người mua trả tiền trước dài hạn'])
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -279,7 +279,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Rủi ro chậm giải ngân đầu tư công, phải thu xấu từ chủ đầu tư & biến động giá VLXD."
 
-    # 12. ARCHETYPE: BUILDING_MATERIALS (VẬT LIỆU XÂY DỰNG)
+    # 12. ARCHETYPE: BUILDING_MATERIALS (VLXD)
     elif archetype == "BUILDING_MATERIALS":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -296,7 +296,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Cung vượt cầu ngành xi măng, chi phí vận chuyển & phụ thuộc chu kỳ BĐS."
 
-    # 13. ARCHETYPE: AUTOMOTIVE (Ô TÔ - PHỤ TÙNG)
+    # 13. ARCHETYPE: AUTOMOTIVE (Ô tô - Phụ tùng)
     elif archetype == "AUTOMOTIVE":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -313,7 +313,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Rủi ro thay đổi thuế tiêu thụ đặc biệt, cạnh tranh giá & xu hướng xe điện."
 
-    # 14. ARCHETYPE: TEXTILE (DỆT MAY)
+    # 14. ARCHETYPE: TEXTILE (Dệt may)
     elif archetype == "TEXTILE":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -330,7 +330,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Biến động tỷ giá USD/VND, đơn hàng xuất khẩu suy giảm & cạnh tranh từ Bangladesh."
 
-    # 15. ARCHETYPE: SEAFOOD (THỦY SẢN)
+    # 15. ARCHETYPE: SEAFOOD (Thủy sản)
     elif archetype == "SEAFOOD":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -347,7 +347,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Rủi ro thuế chống bán phá giá Mỹ/EU, giá nguyên liệu thức ăn & thời tiết nuôi trồng."
 
-    # 16. ARCHETYPE: FOOD_BEVERAGE (THỰC PHẨM & ĐỒ UỐNG)
+    # 16. ARCHETYPE: FOOD_BEVERAGE (Thực phẩm)
     elif archetype == "FOOD_BEVERAGE":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         roe = safe_div(npat, equity, 100.0)
@@ -364,7 +364,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Cạnh tranh thương hiệu, biến động giá nguyên liệu đầu vào & sức mua người tiêu dùng."
 
-    # 17. ARCHETYPE: RETAIL (BÁN LẺ)
+    # 17. ARCHETYPE: RETAIL (Bán lẻ)
     elif archetype == "RETAIL":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         payables = abs(get_bs_item(['Phải trả người bán ngắn hạn', 'Phải trả người bán']))
@@ -383,7 +383,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Cạnh tranh kênh online, chi phí mặt bằng & sức mua tiêu dùng suy giảm."
 
-    # 18. ARCHETYPE: PHARMA_HEALTHCARE (DƯỢC - Y TẾ)
+    # 18. ARCHETYPE: PHARMA_HEALTHCARE (Dược - Y tế)
     elif archetype == "PHARMA_HEALTHCARE":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         roe = safe_div(npat, equity, 100.0)
@@ -400,7 +400,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Rủi ro thay đổi chính sách đấu thầu thuốc, cạnh tranh thuốc generic & quản lý chất lượng."
 
-    # 19. ARCHETYPE: TECH_TELECOM (CÔNG NGHỆ - TRUYỀN THÔNG)
+    # 19. ARCHETYPE: TECH_TELECOM (Công nghệ - Truyền thông)
     elif archetype == "TECH_TELECOM":
         roe = safe_div(npat, equity, 100.0)
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -417,7 +417,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Cạnh tranh nhân sự CNTT, rủi ro chậm thu tiền dự án & phụ thuộc vào ngân sách IT khách hàng."
 
-    # 20. ARCHETYPE: AVIATION_TOURISM (HÀNG KHÔNG - DU LỊCH)
+    # 20. ARCHETYPE: AVIATION_TOURISM (Hàng không - Du lịch)
     elif archetype == "AVIATION_TOURISM":
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
         fixed_assets = abs(get_bs_item(['Tài sản cố định', 'Tài sản cố định hữu hình']))
@@ -434,7 +434,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Biến động giá nhiên liệu Jet-A1, tỷ giá thuê máy bay USD & rủi ro dịch bệnh/thiên tai."
 
-    # 21. ARCHETYPE: PORTS_LOGISTICS (CẢNG BIỂN - VẬN TẢI)
+    # 21. ARCHETYPE: PORTS_LOGISTICS (Cảng biển - Vận tải)
     elif archetype == "PORTS_LOGISTICS":
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
         fixed_assets = abs(get_bs_item(['Tài sản cố định', 'Tài sản cố định hữu hình']))
@@ -452,7 +452,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Phụ thuộc vào sản lượng xuất nhập khẩu, cạnh tranh cảng & chi phí đầu tư hạ tầng."
 
-    # 22. ARCHETYPE: RUBBER (CAO SU)
+    # 22. ARCHETYPE: RUBBER (Cao su)
     elif archetype == "RUBBER":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -469,7 +469,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Biến động giá cao su thế giới, thời tiết mùa vụ & chuyển đổi quỹ đất BĐS KCN."
 
-    # 23. ARCHETYPE: WATER_PLASTICS (NƯỚC - NHỰA)
+    # 23. ARCHETYPE: WATER_PLASTICS (Nước - Nhựa)
     elif archetype == "WATER_PLASTICS":
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
         roe = safe_div(npat, equity, 100.0)
@@ -486,7 +486,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Rủi ro giá nguyên liệu nhựa (giá dầu), chính sách giá nước & cạnh tranh ngành."
 
-    # 24. ARCHETYPE: SUGAR_WOOD_PAPER (ĐƯỜNG - GỖ - GIẤY)
+    # 24. ARCHETYPE: SUGAR_WOOD_PAPER (Đường - Gỗ - Giấy)
     elif archetype == "SUGAR_WOOD_PAPER":
         dsi = safe_div(inventory, cogs, 365.0) if cogs > 0 else 0.0
         cfo = get_cf_item(['Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh', 'Dòng tiền thuần từ hoạt động kinh doanh', 'Lưu chuyển tiền thuần từ hoạt động kinh doanh'])
@@ -503,7 +503,7 @@ def build_sector_financial_health(symbol: str, get_bs_item, get_is_item, get_rat
         ]
         risk_warning = "⚠️ Cạnh tranh đường nhập khẩu, giá gỗ biến động & nhu cầu giấy giảm do số hóa."
 
-    # 25. ARCHETYPE: FINANCIAL_SERVICES (DỊCH VỤ TÀI CHÍNH / TÀI CHÍNH TIÊU DÙNG / CẦM ĐỒ)
+    # 25. ARCHETYPE: FINANCIAL_SERVICES (Dịch vụ tài chính / Tài chính tiêu dùng / Cầm đồ)
     elif archetype == "FINANCIAL_SERVICES":
         loans = get_bs_item(['Cho vay khách hàng', 'Các khoản cho vay', 'Phải thu về cho vay ngắn hạn', 'Phải thu về cho vay', 'Phải thu cho vay'])
         borrowings = total_borrowing or get_bs_item(['Vay ngắn hạn', 'Vay dài hạn', 'Trái phiếu phát hành', 'Vay và nợ thuê tài chính ngắn hạn', 'Vay và nợ thuê tài chính dài hạn'])

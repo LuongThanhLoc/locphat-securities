@@ -110,7 +110,7 @@ class RevenueStructureTests(unittest.TestCase):
         )
         quality = result["quality_assessment"]
         values = {item["key"]: item["value"] for item in quality["metrics"]}
-        self.assertEqual(result["industry_profile"]["sector_name"], "BẤT ĐỘNG SẢN")
+        self.assertEqual(result["industry_profile"]["sector_name"], "Bất động sản")
         self.assertEqual(values["core_income_share"], 90.0)
         self.assertEqual(values["prepayments_to_revenue"], 50.0)
         self.assertEqual(values["cfo_to_npat"], -0.2)

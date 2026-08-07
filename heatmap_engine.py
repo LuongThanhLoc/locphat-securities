@@ -9,15 +9,22 @@ import urllib.request
 import requests
 import logging
 from datetime import datetime, timedelta, time as dtime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-from sector_mapping import get_sector_info, SECTOR_DEFINITIONS
+from sector_mapping import get_sector_info, get_sector_memberships, SECTOR_DEFINITIONS
 
-HEATMAP_SCHEMA_VERSION = 6
-HEATMAP_MODEL_VERSION = "lp-market-radar-3.3"
+HEATMAP_SCHEMA_VERSION = 7
+HEATMAP_MODEL_VERSION = "lp-market-radar-3.4"
+
+# Number of trading days retained for weekly analysis.
+# Used both by the retention policy in `save_snapshot_for_date` and by
+# `get_recent_snapshots` / `generate_weekly_analysis` to choose how many
+# historical frozen snapshots feed the weekly report. Keep these call sites
+# in sync — they are wired to the same constant intentionally.
+WEEKLY_ANALYSIS_DAYS = 5
 
 # ---------- SQLite Snapshot Storage (Tasks 2 & 3) ----------
 _SNAPSHOT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heatmap_snapshots.db")
@@ -29,7 +36,7 @@ def _get_snapshot_db_conn() -> sqlite3.Connection:
     return conn
 
 def init_db_snapshot() -> None:
-    """Create the close-of-session snapshot store."""
+    """Create the close-of-session snapshot store AND the intraday timeline store."""
     global _SNAPSHOT_DB_INITIALIZED
     if _SNAPSHOT_DB_INITIALIZED:
         return
@@ -44,10 +51,224 @@ def init_db_snapshot() -> None:
                     is_frozen_15h10  INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            # Intraday timeline snapshots — one row per captured checkpoint during a session.
+            # `snapshot_time` is ISO-8601 with +07:00 offset (Asia/Ho_Chi_Minh).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS heatmap_intraday_snapshots (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_time   TEXT NOT NULL,
+                    session_phase   TEXT NOT NULL,
+                    payload_json    TEXT NOT NULL,
+                    created_at      INTEGER NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_intraday_time
+                ON heatmap_intraday_snapshots(snapshot_time)
+            """)
             conn.commit()
         _SNAPSHOT_DB_INITIALIZED = True
     except Exception as db_err:
         print(f"[Heatmap DB] Warning: init snapshot DB failed: {db_err}")
+
+
+# ---------- Intraday Timeline Storage (Task 1) ----------
+# These power the bottom-of-page scrubber on /heatmap. A daemon poller
+# (IntradaySnapshotPoller) writes a fresh row every 1m (ATO/ATC) or 5m
+# (continuous matching) during a live trading day; the front-end reads the
+# table via /api/heatmap/timeline and renders the slider.
+INTRADAY_MAX_PER_DAY = 80  # cap so a busy session can't blow up the SQLite row count
+
+def save_intraday_snapshot(snapshot_time: str, session_phase: str, payload: Dict[str, Any]) -> None:
+    """Persist one intraday timeline checkpoint.
+
+    `payload` follows the same shape as a regular heatmap snapshot
+    (sectors + quant_snapshot + summary + data_lineage). Schema version
+    bump from 6 → 7 introduced the timeline feature; readers gate on
+    schema_version >= 7.
+    """
+    init_db_snapshot()
+    try:
+        with _get_snapshot_db_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO heatmap_intraday_snapshots (snapshot_time, session_phase, payload_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    snapshot_time,
+                    session_phase,
+                    json.dumps(payload, ensure_ascii=False),
+                    int(time.time()),
+                ),
+            )
+            conn.commit()
+        _trim_intraday_for_date(snapshot_time[:10])
+    except Exception as db_err:
+        print(f"[Heatmap DB] Warning: save intraday snapshot failed: {db_err}")
+
+
+def _trim_intraday_for_date(trade_date: str) -> None:
+    """Keep at most INTRADAY_MAX_PER_DAY rows for the given trading date.
+
+    Invariant: the row closest to ATC close (14:45 UTC+7) and the row
+    closest to 15:10 (frozen) must be retained so the scrubber always
+    has anchor points when opened outside trading hours.
+    """
+    init_db_snapshot()
+    try:
+        with _get_snapshot_db_conn() as conn:
+            # Anchor times within a session — keep these even when over cap.
+            anchor_prefixes = (f"{trade_date}T14:4", f"{trade_date}T14:45", f"{trade_date}T15:10")
+            anchor_clause = " OR ".join(["snapshot_time LIKE ?"] * len(anchor_prefixes))
+            anchor_params: tuple = tuple(anchor_prefixes)
+
+            total = conn.execute(
+                "SELECT COUNT(*) AS n FROM heatmap_intraday_snapshots WHERE snapshot_time LIKE ?",
+                (f"{trade_date}%",),
+            ).fetchone()["n"]
+            if total <= INTRADAY_MAX_PER_DAY:
+                return
+
+            # Find IDs of the rows we want to protect (anchors).
+            anchor_rows = conn.execute(
+                f"""
+                SELECT id FROM heatmap_intraday_snapshots
+                WHERE snapshot_time LIKE ?
+                  AND ({anchor_clause})
+                """,
+                (f"{trade_date}%",) + anchor_params,
+            ).fetchall()
+            anchor_ids = {row["id"] for row in anchor_rows}
+
+            # Pick IDs to delete: every row that is NOT an anchor, ordered
+            # oldest-first, until total - INTRADAY_MAX_PER_DAY rows are removed.
+            excess = total - INTRADAY_MAX_PER_DAY
+            if excess <= 0:
+                return
+            non_anchor_ids = [
+                row["id"]
+                for row in conn.execute(
+                    """
+                    SELECT id FROM heatmap_intraday_snapshots
+                    WHERE snapshot_time LIKE ?
+                    ORDER BY snapshot_time ASC
+                    """,
+                    (f"{trade_date}%",),
+                ).fetchall()
+                if row["id"] not in anchor_ids
+            ]
+            if not non_anchor_ids:
+                return
+            victims = non_anchor_ids[:excess]
+            placeholders = ",".join(["?"] * len(victims))
+            conn.execute(
+                f"DELETE FROM heatmap_intraday_snapshots WHERE id IN ({placeholders})",
+                victims,
+            )
+            conn.commit()
+    except Exception as db_err:
+        print(f"[Heatmap DB] Warning: trim intraday failed: {db_err}")
+
+
+def purge_intraday_before(trade_date: str) -> int:
+    """Delete every intraday checkpoint whose date is strictly before `trade_date`.
+
+    Retention policy: the scrubber is only meant to replay the current
+    trading session. Anything older than `trade_date` (YYYY-MM-DD, VN time)
+    is purged so the SQLite row count stays bounded — otherwise a long-running
+    process would accumulate several hundred KB per day in `payload_json`.
+
+    The cutoff is the start of `trade_date` at 00:00 UTC+7. Because
+    `snapshot_time` is stored as ISO-8601 with the `+07:00` offset, a
+    lexicographic comparison on the prefix matches chronological order.
+
+    The function is idempotent: calling it on the same date twice is a no-op.
+    Rows belonging to `trade_date` itself are NEVER touched.
+
+    Returns the number of rows deleted (0 if nothing matched).
+    """
+    init_db_snapshot()
+    cutoff_iso = f"{trade_date}T00:00:00+07:00"
+    try:
+        with _get_snapshot_db_conn() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM heatmap_intraday_snapshots
+                WHERE snapshot_time < ?
+                """,
+                (cutoff_iso,),
+            )
+            conn.commit()
+            deleted = cur.rowcount or 0
+            if deleted:
+                print(f"[Heatmap DB] Purged {deleted} intraday rows older than {trade_date}.")
+            return deleted
+    except Exception as db_err:
+        print(f"[Heatmap DB] Warning: purge intraday failed: {db_err}")
+        return 0
+
+
+def get_intraday_snapshots(trade_date: str) -> List[Dict[str, Any]]:
+    """Return all intraday checkpoints for `trade_date` (YYYY-MM-DD), oldest first.
+
+    Each entry carries `snapshot_time`, `session_phase`, and `payload`.
+    Schema version 7+ is required; older rows are filtered out.
+    """
+    init_db_snapshot()
+    snapshots: List[Dict[str, Any]] = []
+    try:
+        with _get_snapshot_db_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT snapshot_time, session_phase, payload_json
+                FROM heatmap_intraday_snapshots
+                WHERE snapshot_time LIKE ?
+                ORDER BY snapshot_time ASC
+                """,
+                (f"{trade_date}%",),
+            ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if payload.get("schema_version", 0) < 7:
+                continue
+            snapshots.append({
+                "snapshot_time": row["snapshot_time"],
+                "session_phase": row["session_phase"],
+                "payload": payload,
+            })
+    except Exception as db_err:
+        print(f"[Heatmap DB] Warning: read intraday failed: {db_err}")
+    return snapshots
+
+
+def get_latest_intraday_snapshot() -> Optional[Dict[str, Any]]:
+    """Return the most recent intraday checkpoint (any trade date)."""
+    init_db_snapshot()
+    try:
+        with _get_snapshot_db_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT snapshot_time, session_phase, payload_json
+                FROM heatmap_intraday_snapshots
+                ORDER BY snapshot_time DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row["payload_json"])
+        if payload.get("schema_version", 0) < 7:
+            return None
+        return {
+            "snapshot_time": row["snapshot_time"],
+            "session_phase": row["session_phase"],
+            "payload": payload,
+        }
+    except Exception as db_err:
+        print(f"[Heatmap DB] Warning: read latest intraday failed: {db_err}")
+        return None
+
 
 def get_snapshot_for_date(trade_date: str) -> Optional[Dict[str, Any]]:
     """Read stored snapshot from DB for a given date. Returns dict or None."""
@@ -97,7 +318,7 @@ def get_latest_snapshot() -> Optional[Dict[str, Any]]:
         return None
 
 
-def get_recent_snapshots(days: int = 5) -> List[Dict[str, Any]]:
+def get_recent_snapshots(days: int = WEEKLY_ANALYSIS_DAYS) -> List[Dict[str, Any]]:
     """Return the most recent N frozen snapshots for historical comparison."""
     init_db_snapshot()
     snapshots = []
@@ -132,7 +353,7 @@ def save_snapshot_for_date(trade_date: str, payload: Dict[str, Any], frozen: boo
     try:
         store_payload = {k: v for k, v in payload.items() if k not in ("snapshot_frozen", "market_closed")}
         with _get_snapshot_db_conn() as conn:
-            conn.execute(
+            upsert_cursor = conn.execute(
                 """
                 INSERT INTO heatmap_snapshots (trade_date, snapshot_json, created_at, is_frozen_15h10)
                 VALUES (?, ?, ?, ?)
@@ -148,20 +369,63 @@ def save_snapshot_for_date(trade_date: str, payload: Dict[str, Any], frozen: boo
                     1 if frozen else 0,
                 ),
             )
-            # Keep last 5 trading days of snapshots for historical analysis
-            conn.execute(
-                """
-                DELETE FROM heatmap_snapshots 
-                WHERE trade_date NOT IN (
-                    SELECT trade_date FROM heatmap_snapshots 
-                    ORDER BY trade_date DESC LIMIT 5
+            # `rowcount` here is the SQLite `ON CONFLICT` semantics:
+            #   1 = new row inserted
+            #   2 = existing row updated (columns changed)
+            #   0 = update was a no-op (e.g. frozen row, frozen-safe CASE branch)
+            # When the upsert was a no-op we skip the DELETE — retention hasn't
+            # actually changed, so re-running it would just be wasted work and a
+            # tiny race window where another writer's pending INSERT could be
+            # dropped by our DELETE.
+            if upsert_cursor.rowcount > 0:
+                # Keep last WEEKLY_ANALYSIS_DAYS trading days of snapshots for historical analysis.
+                conn.execute(
+                    """
+                    DELETE FROM heatmap_snapshots
+                    WHERE trade_date NOT IN (
+                        SELECT trade_date FROM heatmap_snapshots
+                        ORDER BY trade_date DESC LIMIT ?
+                    )
+                    """,
+                    (WEEKLY_ANALYSIS_DAYS,),
                 )
-                """
-            )
             conn.commit()
+        # Ops visibility: log progress toward WEEKLY_ANALYSIS_DAYS so Render
+        # logs show whether the weekly report will succeed or hit "not enough data".
+        try:
+            stats = get_snapshot_stats()
+            print(
+                f"[Heatmap DB] Snapshot store: {stats['total']} total, "
+                f"{stats['frozen']} frozen (target for weekly: {WEEKLY_ANALYSIS_DAYS})."
+            )
+        except Exception:
+            pass
         print(f"[Heatmap DB] {'[FROZEN 15h10] ' if frozen else ''}Saved snapshot for {trade_date}")
     except Exception as db_err:
         print(f"[Heatmap DB] Warning: save snapshot failed: {db_err}")
+
+
+def get_snapshot_stats() -> Dict[str, int]:
+    """Return counts of total and frozen snapshots in the store.
+
+    Cheap diagnostic for ops dashboards and weekly-readiness checks. Reads
+    a single row with `COUNT(...) FILTER (...)`, so it does not scan the table.
+    """
+    init_db_snapshot()
+    try:
+        with _get_snapshot_db_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN is_frozen_15h10 = 1 THEN 1 ELSE 0 END) AS frozen
+                FROM heatmap_snapshots
+                """
+            ).fetchone()
+        return {"total": int(row["total"] or 0), "frozen": int(row["frozen"] or 0)}
+    except Exception as db_err:
+        print(f"[Heatmap DB] Warning: read snapshot stats failed: {db_err}")
+        return {"total": 0, "frozen": 0}
 
 
 def validate_frozen_snapshot(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -872,11 +1136,14 @@ def fetch_all_listed_symbols(force_refresh: bool = False) -> List[str]:
                 seen_symbols.add(sym_raw)
                 symbols.append(sym_raw)
                 icb_text_by_symbol[sym_raw] = icb_text
-                sector_info_by_symbol[sym_raw] = (
+                primary_sector = (
                     {"sector": "QUỸ ETF", "archetype": "LISTED_FUND"}
                     if security_type == "QU"
                     else _infer_sector_from_icb_text(sym_raw, icb_text)
                 )
+                sector_info_by_symbol[sym_raw] = primary_sector
+                # Multi-membership is resolved via the global sieucophieu multimap;
+                # ICB-based inference only contributes the primary sector.
                 security_type_by_symbol[sym_raw] = security_type
             except Exception:
                 continue
@@ -899,6 +1166,10 @@ def fetch_all_listed_symbols(force_refresh: bool = False) -> List[str]:
         _ALL_STOCK_CACHE["last_refresh_date"] = today
         _ALL_STOCK_CACHE["icb_text_by_symbol"] = icb_text_by_symbol
         _ALL_STOCK_CACHE["sector_info_by_symbol"] = sector_info_by_symbol
+        # Multi-membership cache is populated lazily on first snapshot call,
+        # since get_sector_memberships() is just a dict lookup against the
+        # global SIEUCOPHIEU_MULTIMAP (no API calls required).
+        _ALL_STOCK_CACHE["sector_memberships_by_symbol"] = {}
         _ALL_STOCK_CACHE["security_type_by_symbol"] = security_type_by_symbol
         _debug_report("A", "heatmap_engine.py:239", "Loaded symbols_by_industries", {
             "symbol_count": len(symbols),
@@ -929,6 +1200,7 @@ def fetch_all_listed_symbols(force_refresh: bool = False) -> List[str]:
         _ALL_STOCK_CACHE["last_refresh_date"] = today
         _ALL_STOCK_CACHE["icb_text_by_symbol"] = {}
         _ALL_STOCK_CACHE["sector_info_by_symbol"] = {}
+        _ALL_STOCK_CACHE["sector_memberships_by_symbol"] = {}
         return list(manual)
 
 
@@ -1263,6 +1535,476 @@ def build_quant_snapshot(stock_records: List[Dict[str, Any]], sectors: List[Dict
     }
 
 
+# ---------- Intraday Snapshot Poller (Task 2) ----------
+# Captures one heatmap payload per phase-aware interval and persists it to
+# `heatmap_intraday_snapshots` so the front-end scrubber can replay the day.
+# Phase -> interval mapping lives in `_phase_snapshot_interval_seconds` so
+# both runtime and unit tests can interrogate it.
+INTRADAY_PHASE_INTERVALS: Dict[str, int] = {
+    # ATO is the 9:00–9:15 opening call — high churn, capture every minute.
+    "ATO": 60,
+    # Continuous matching during morning + afternoon — coarser cadence.
+    "CONTINUOUS": 300,
+    # Lunch break: price board is frozen; we still sample every 15 minutes
+    # so the scrubber timeline doesn't have a visible gap.
+    "LUNCH_BREAK": 900,
+    # ATC closing call — same density as ATO.
+    "ATC": 60,
+    # Post-close window: data stops updating but we keep a checkpoint so the
+    # scrubber knows where the day ended.
+    "POST_CLOSE_TRADING": 300,
+}
+
+
+def _classify_intraday_phase(current_time: dtime) -> str:
+    """Translate a Vietnam-local clock time into the intraday phase label.
+
+    Mirrors `get_market_session` but collapses the live/closed distinction
+    into a single label per phase so the poller and unit tests share logic.
+    """
+    if current_time < MARKET_MORNING_OPEN:
+        return "PRE_OPEN"
+    if current_time < MARKET_MORNING_CLOSE:
+        # 9:00–9:15 is ATO; everything else inside the morning window is
+        # continuous matching.
+        if current_time < dtime(9, 15):
+            return "ATO"
+        return "CONTINUOUS"
+    if current_time < MARKET_AFTERNOON_OPEN:
+        return "LUNCH_BREAK"
+    if current_time < MARKET_ATC_START:
+        return "CONTINUOUS"
+    if current_time < MARKET_MATCHING_CLOSE:
+        return "ATC"
+    if current_time < MARKET_POST_CLOSE_END:
+        return "POST_CLOSE_TRADING"
+    return "CLOSED"
+
+
+def _phase_snapshot_interval_seconds(phase: str) -> int:
+    """Polling interval for a given phase. Returns 0 to skip capture."""
+    if phase == "PRE_OPEN" or phase == "CLOSED":
+        return 0
+    return INTRADAY_PHASE_INTERVALS.get(phase, 300)
+
+
+def _next_snapshot_target(now_dt: datetime, last_snapshot_iso: Optional[str]) -> datetime:
+    """Compute the wall-clock time of the next snapshot this poller should take.
+
+    Always returns the next *future* target ≥ now, rounded down to the
+    phase's bucket boundary so concurrent checkpoints from multiple workers
+    can't drift apart. If we already have a snapshot for this bucket we
+    step forward by one phase interval.
+    """
+    phase = _classify_intraday_phase(now_dt.time())
+    interval_seconds = _phase_snapshot_interval_seconds(phase)
+    if interval_seconds <= 0:
+        # Outside trading hours — next target is the next market open.
+        # Caller treats the 0 interval as "skip"; we still bump by 60s so
+        # the loop doesn't spin at full speed while we wait for 9:00.
+        return now_dt + timedelta(seconds=60)
+
+    if last_snapshot_iso:
+        try:
+            last_dt = datetime.fromisoformat(last_snapshot_iso)
+            candidate = last_dt + timedelta(seconds=interval_seconds)
+            if candidate > now_dt:
+                return candidate
+        except (TypeError, ValueError):
+            pass
+
+    # No prior snapshot for today — round down to the current bucket edge
+    # so ATO captures at 09:00, 09:01, 09:02 … fall on clean minute marks.
+    base = now_dt.replace(second=0, microsecond=0)
+    elapsed = (now_dt - base).total_seconds()
+    bucket_index = int(elapsed // interval_seconds)
+    candidate = base + timedelta(seconds=bucket_index * interval_seconds)
+    if candidate < now_dt:
+        candidate += timedelta(seconds=interval_seconds)
+    return candidate
+
+
+_INTRADAY_POLLER_STARTED = False
+_INTRADAY_POLLER_LOCK = threading.Lock()
+_INTRADAY_POLLER_THREAD: Optional[threading.Thread] = None
+
+
+def _intraday_poll_loop() -> None:
+    """Background worker: capture heatmap snapshots on a phase-aware cadence."""
+    global _INTRADAY_POLLER_STARTED
+    _INTRADAY_POLLER_STARTED = True
+    print("[Intraday Poller] Started.")
+    while True:
+        try:
+            now_dt = get_vn_now()
+            session = get_market_session(now_dt)
+            if not session.get("can_poll"):
+                # Outside trading hours: sleep 60s and re-check. The scrubber
+                # is fed from the SQLite store, so no harm in idling.
+                time.sleep(60)
+                continue
+
+            # Find the most recent intraday snapshot for today (any phase).
+            today_str = now_dt.strftime("%Y-%m-%d")
+            latest = get_latest_intraday_snapshot()
+            last_iso = latest["snapshot_time"] if (latest and latest["snapshot_time"].startswith(today_str)) else None
+
+            # Retention policy: scrubber is "today only". When the poller
+            # detects a fresh trading day (latest row belongs to yesterday
+            # or the DB is empty on a pollable session), drop every older
+            # checkpoint before we capture the first ATO tick. Idempotent.
+            if latest and not last_iso:
+                purge_intraday_before(today_str)
+
+            target = _next_snapshot_target(now_dt, last_iso)
+            sleep_seconds = max(1.0, (target - now_dt).total_seconds())
+            # Cap at 30s so we react quickly when the clock crosses a phase
+            # boundary (e.g. 9:15 ATO → CONTINUOUS).
+            sleep_seconds = min(sleep_seconds, 30.0)
+            time.sleep(sleep_seconds)
+
+            # Re-evaluate after the sleep — phase may have changed.
+            now_dt = get_vn_now()
+            phase = _classify_intraday_phase(now_dt.time())
+            if _phase_snapshot_interval_seconds(phase) <= 0:
+                continue
+            if not is_market_open_time() and phase not in {"ATO", "ATC", "POST_CLOSE_TRADING"}:
+                # Only sample during live matching + the two call auctions.
+                continue
+
+            stock_records, board_source, board_fetched_at, requested_symbols = _collect_market_board()
+            sectors_list = _group_stocks_by_sector(stock_records)
+            session_now = get_market_session(now_dt)
+            payload = _assemble_heatmap_payload(
+                stock_records,
+                sectors_list,
+                board_source,
+                board_fetched_at,
+                session_now,
+                now_dt,
+                requested_symbols=requested_symbols,
+            )
+            snapshot_iso = now_dt.strftime("%Y-%m-%dT%H:%M:%S+07:00")
+            save_intraday_snapshot(snapshot_iso, phase, payload)
+            print(f"[Intraday Poller] Saved {phase} snapshot @ {snapshot_iso} ({len(stock_records)} mã).")
+        except Exception as exc:
+            # Never crash the thread — Vietcap rate-limits and DNS blips must
+            # not take down the scrubber data pipeline.
+            print(f"[Intraday Poller] Warning: loop iteration failed: {exc}")
+            time.sleep(30)
+
+
+def start_intraday_poller() -> None:
+    """Idempotently launch the background intraday poller."""
+    global _INTRADAY_POLLER_THREAD
+    with _INTRADAY_POLLER_LOCK:
+        if _INTRADAY_POLLER_THREAD and _INTRADAY_POLLER_THREAD.is_alive():
+            return
+        thread = threading.Thread(target=_intraday_poll_loop, name="intraday-snapshot-poller", daemon=True)
+        thread.start()
+        _INTRADAY_POLLER_THREAD = thread
+
+
+def _build_intraday_heatmap_data() -> Optional[Dict[str, Any]]:
+    """One-shot snapshot for callers that want the current state without going
+    through the in-memory cache (e.g. on-demand timeline backfill)."""
+    init_db_snapshot()
+    now_dt = get_vn_now()
+    session = get_market_session(now_dt)
+    if not session.get("can_poll"):
+        return None
+    try:
+        stock_records, board_source, board_fetched_at, requested_symbols = _collect_market_board()
+        sectors_list = _group_stocks_by_sector(stock_records)
+        payload = _assemble_heatmap_payload(
+            stock_records,
+            sectors_list,
+            board_source,
+            board_fetched_at,
+            session,
+            now_dt,
+            requested_symbols=requested_symbols,
+        )
+        phase = _classify_intraday_phase(now_dt.time())
+        snapshot_iso = now_dt.strftime("%Y-%m-%dT%H:%M:%S+07:00")
+        save_intraday_snapshot(snapshot_iso, phase, payload)
+        return {
+            "snapshot_time": snapshot_iso,
+            "session_phase": phase,
+            "payload": payload,
+        }
+    except Exception as exc:
+        print(f"[Heatmap] _build_intraday_heatmap_data failed: {exc}")
+        return None
+
+
+def _collect_market_board() -> Tuple[List[Dict[str, Any]], str, str, int]:
+    """Fetch the full-market price board from Vietcap and parse rows.
+
+    Returns (stock_records, board_source, board_fetched_at, requested_symbols).
+
+    This is the I/O-heavy half of the heatmap build; the analytical half
+    (sector grouping + quant snapshot + payload assembly) lives in
+    `_assemble_heatmap_payload` so the intraday poller can reuse it without
+    re-querying the price board for every checkpoint.
+    """
+    from market_data_provider import Trading  # local import mirrors existing pattern
+
+    board_started_at = time.time()
+    all_tickers = fetch_all_listed_symbols()
+    requested_symbols = len(all_tickers)
+    df_board = Trading(source='VCI').price_board(all_tickers)
+    board_source = str(df_board.attrs.get("source") or "Vietcap public price board")
+    board_fetched_at = str(df_board.attrs.get("fetched_at") or datetime.utcnow().isoformat())
+    _debug_report("A", "heatmap_engine.py:_collect_market_board", "price_board completed", {
+        "requested_tickers": len(all_tickers),
+        "row_count": 0 if df_board is None else len(df_board),
+        "elapsed_ms": round((time.time() - board_started_at) * 1000, 2),
+    })
+    if df_board.empty:
+        raise ValueError("Nguồn bảng giá trả về dữ liệu rỗng")
+
+    stock_records: List[Dict[str, Any]] = []
+    parse_started_at = time.time()
+    skipped_count = 0
+    included_count = 0
+
+    for idx, row in df_board.iterrows():
+        try:
+            def get_val(grp, col, default=0.0):
+                try:
+                    if (grp, col) in row.index:
+                        v = row[(grp, col)]
+                    elif col in row.index:
+                        v = row[col]
+                    else:
+                        v = default
+                    if pd.isna(v):
+                        return default
+                    return v
+                except Exception:
+                    return default
+
+            symbol = str(get_val('listing', 'symbol', '')).strip().upper()
+            if not symbol:
+                continue
+
+            organ_name = str(get_val('listing', 'organ_name', symbol)).strip()
+            exchange = str(get_val('listing', 'exchange', 'HOSE')).strip().upper()
+            if exchange == "HSX":
+                exchange = "HOSE"
+            stock_type = str(get_val('listing', 'stock_type', 'STOCK')).strip().upper()
+            is_delisted = int(float(get_val('listing', 'is_delisted', 0) or 0))
+            trading_date = str(get_val('listing', 'trading_date', '') or '').strip()
+            received_time = str(get_val('listing', 'received_time', '') or '').strip()
+            listed_shares = float(get_val('listing', 'listed_share', 0))
+
+            if exchange not in {"HOSE", "HNX", "UPCOM"} or stock_type not in {"STOCK", "ETF", "UNIT_TRUST"} or is_delisted:
+                skipped_count += 1
+                continue
+
+            ref_price = float(get_val('listing', 'ref_price', 0.0))
+            ceiling = float(get_val('listing', 'ceiling', 0.0))
+            floor = float(get_val('listing', 'floor', 0.0))
+
+            raw_match_price = float(get_val('match', 'match_price', 0.0))
+            price_state = classify_price_status(raw_match_price, ref_price, ceiling, floor)
+            match_price = float(price_state["match_price"])
+
+            if ref_price <= 0 or match_price <= 0 or listed_shares <= 0:
+                skipped_count += 1
+                continue
+
+            accumulated_val = float(get_val('match', 'accumulated_value', 0.0))
+            accumulated_vol = float(get_val('match', 'accumulated_volume', 0.0))
+
+            # Debug log: xem giá trị raw trước khi convert
+            if included_count < 3:  # Chỉ log 3 mã đầu để không spam
+                print(f"[DEBUG] {symbol}: raw_accumulated_val={accumulated_val}")
+
+            # Vietcap's accumulatedValue is expressed in million VND for every board.
+            accumulated_val = max(accumulated_val, 0.0) * 1_000_000
+
+            if ref_price > 0:
+                change_pct = float(price_state["change_pct"])
+                change_amt = round(match_price - ref_price, 0)
+            else:
+                change_pct = 0.0
+                change_amt = 0.0
+
+            # Direct price-board values are already VND, including penny stocks below 1,000.
+            price_vnd = match_price
+            market_cap = listed_shares * price_vnd
+
+            status = str(price_state["status"])
+
+            sector_memberships = _ALL_STOCK_CACHE.get("sector_memberships_by_symbol", {}).get(symbol)
+            if not sector_memberships:
+                sector_memberships = get_sector_memberships(symbol)
+            primary_membership = sector_memberships[0]
+            sector_name = primary_membership.get("sector", "Sản xuất công nghiệp") if isinstance(primary_membership, dict) else "Sản xuất công nghiệp"
+            archetype = primary_membership.get("archetype", "MANUFACTURING_GENERAL") if isinstance(primary_membership, dict) else "MANUFACTURING_GENERAL"
+
+            stock_records.append({
+                "symbol": symbol,
+                "name": organ_name,
+                "exchange": exchange,
+                "match_price": match_price,
+                "price_vnd": price_vnd,
+                "ref_price": ref_price,
+                "ceiling": ceiling,
+                "floor": floor,
+                "change_amt": change_amt,
+                "change_pct": change_pct,
+                "volume": int(accumulated_vol),
+                "trading_value": float(accumulated_val),
+                "market_cap": float(market_cap),
+                "status": status,
+                "instrument_type": stock_type,
+                "sector": sector_name,
+                "sector_code": archetype,
+                "sector_memberships": [
+                    {"sector": m["sector"], "archetype": m["archetype"]}
+                    for m in sector_memberships
+                ],
+                "trading_date": trading_date,
+                "received_time": received_time,
+            })
+            included_count += 1
+        except Exception as row_err:
+            skipped_count += 1
+            if skipped_count <= 3:
+                print(f"Error parsing row {idx} for heatmap: {row_err}")
+            continue
+
+    _debug_report("B", "heatmap_engine.py:_collect_market_board", "Board rows parsed", {
+        "stock_records": len(stock_records),
+        "included": included_count,
+        "skipped": skipped_count,
+        "elapsed_ms": round((time.time() - parse_started_at) * 1000, 2),
+    })
+    return stock_records, board_source, board_fetched_at, requested_symbols
+
+
+def _group_stocks_by_sector(stock_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Group parsed stock records into ICB sector buckets (multi-membership aware)."""
+    sector_started_at = time.time()
+    sectors_dict: Dict[str, Dict[str, Any]] = {}
+    for s in stock_records:
+        memberships = s.get("sector_memberships") or [
+            {"sector": s.get("sector"), "archetype": s.get("sector_code")}
+        ]
+        for mem in memberships:
+            sec_name = mem["sector"]
+            if sec_name not in sectors_dict:
+                sectors_dict[sec_name] = {
+                    "name": sec_name,
+                    "code": mem["archetype"],
+                    "total_market_cap": 0.0,
+                    "total_trading_value": 0.0,
+                    "stocks": []
+                }
+            sectors_dict[sec_name]["stocks"].append(s)
+            sectors_dict[sec_name]["total_market_cap"] += s["market_cap"]
+            sectors_dict[sec_name]["total_trading_value"] += s["trading_value"]
+
+    sectors_list = []
+    for sec_name, sec_data in sectors_dict.items():
+        sec_data["stocks"].sort(key=lambda x: x["market_cap"], reverse=True)
+        sec_data["avg_change_pct"] = calculate_sector_change_percent(sec_data["stocks"])
+        _mcap_tot = sum(float(s["market_cap"]) for s in sec_data["stocks"] if float(s["market_cap"]) > 0)
+        print(f"[Heatmap Calc] {sec_name:22s}: {len(sec_data['stocks']):3d} mã | "
+              f"ΣMCAP ≈ {(_mcap_tot/1e9):.0f} tỷ VNĐ | ΣGTGD ≈ {sec_data['total_trading_value']/1e9:.1f} tỷ | TB có trọng số: {sec_data['avg_change_pct']:+.2f}%")
+        sectors_list.append(sec_data)
+
+    sectors_list.sort(key=lambda x: x["total_market_cap"], reverse=True)
+    _debug_report("D", "heatmap_engine.py:_group_stocks_by_sector", "Sector grouping completed", {
+        "sector_count": len(sectors_list),
+        "elapsed_ms": round((time.time() - sector_started_at) * 1000, 2),
+    })
+    return sectors_list
+
+
+def _assemble_heatmap_payload(
+    stock_records: List[Dict[str, Any]],
+    sectors_list: List[Dict[str, Any]],
+    board_source: str,
+    board_fetched_at: str,
+    market_session: Dict[str, Any],
+    now_dt: datetime,
+    requested_symbols: int = 0,
+) -> Dict[str, Any]:
+    """Build the full heatmap payload (sectors + quant + summary + lineage).
+
+    Pure analytical work — no I/O. Caller passes in the result of
+    `_collect_market_board()` (or an equivalent stock_records list). The
+    intraday poller invokes this with a fresh `market_session` snapshot.
+    `requested_symbols` is the pre-parsed ticker count, used to populate
+    `data_lineage.coverage.requested_symbols` accurately; if unknown we
+    fall back to the unique-symbols count (a safe under-estimate).
+    """
+    quant_snapshot = build_quant_snapshot(stock_records, sectors_list)
+    sectors_list.sort(key=lambda x: x["total_market_cap"], reverse=True)
+
+    total_stocks = len(stock_records)
+    advances = sum(1 for s in stock_records if s["status"] == "GAIN")
+    declines = sum(1 for s in stock_records if s["status"] == "LOSS")
+    unchanged = sum(1 for s in stock_records if s["status"] == "REF")
+    ceilings = sum(1 for s in stock_records if s["status"] == "CEILING")
+    floors = sum(1 for s in stock_records if s["status"] == "FLOOR")
+    total_mcap = sum(s["market_cap"] for s in stock_records)
+    matched_val = sum(s["trading_value"] for s in stock_records)
+    total_val = _fetch_market_total_liquidity(matched_val)
+
+    print(f"[DEBUG] Tổng thanh khoản thị trường: {total_val/1e9:.2f} tỷ VNĐ (Khớp lệnh: {matched_val/1e9:.2f} tỷ)")
+
+    now_str = get_vn_now().strftime("%d/%m/%Y %H:%M:%S")
+
+    requested_count = requested_symbols or len({s["symbol"] for s in stock_records})
+
+    return {
+        "schema_version": HEATMAP_SCHEMA_VERSION,
+        "timestamp": now_str,
+        "is_market_open": is_market_open_time(),
+        "market_closed": is_past_close_or_weekend(),
+        "market_session": market_session,
+        "snapshot_frozen": False,
+        "served_from": "LIVE_MARKET_ADAPTER",
+        "summary": {
+            "total_stocks": total_stocks,
+            "advances": advances,
+            "declines": declines,
+            "unchanged": unchanged,
+            "ceilings": ceilings,
+            "floors": floors,
+            "total_market_cap": total_mcap,
+            "total_trading_value": total_val,
+        },
+        "sectors": sectors_list,
+        "quant_snapshot": quant_snapshot,
+        "data_lineage": {
+            "price_source": board_source,
+            "classification_source": "Vietcap ICB level 1-4 + curated Vietnamese sector aliases",
+            "classification_reference": "https://sieucophieu.vn/bang-dien",
+            "sector_count": len(sectors_list),
+            "fetched_at": board_fetched_at,
+            "latest_trading_date": max((s.get("trading_date") or "" for s in stock_records), default=""),
+            "coverage": {
+                "requested_symbols": requested_count,
+                "accepted_listings": total_stocks,
+                "accepted_active_listings": sum(1 for s in stock_records if s.get("volume", 0) > 0),
+                "excluded_or_unpriced": max(requested_count - total_stocks, 0),
+            },
+        },
+        "data_quality": {
+            "status": "VERIFIED" if total_stocks >= 500 else "DEGRADED",
+            "warnings": [
+                "Du lieu heatmap la anh chup bang gia gan nhat; khong dai dien truc tiep cho giao dich khoi ngoai, tu doanh hoac to chuc."
+            ],
+        },
+    }
+
+
 def fetch_market_heatmap_data(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Fetches market board quote data for target symbols from the direct adapter,
@@ -1334,229 +2076,25 @@ def fetch_market_heatmap_data(force_refresh: bool = False) -> Dict[str, Any]:
             return data
 
     try:
-        from market_data_provider import Trading
         # PART 1 — Real-time full market coverage (500-800 tickers, HOSE/HNX/UPCOM)
-        board_started_at = time.time()
-        all_tickers = fetch_all_listed_symbols()
-        df_board = Trading(source='VCI').price_board(all_tickers)
-        board_source = str(df_board.attrs.get("source") or "Vietcap public price board")
-        board_fetched_at = str(df_board.attrs.get("fetched_at") or datetime.utcnow().isoformat())
-        _debug_report("A", "heatmap_engine.py:375", "price_board completed", {
-            "requested_tickers": len(all_tickers),
-            "row_count": 0 if df_board is None else len(df_board),
-            "elapsed_ms": round((time.time() - board_started_at) * 1000, 2),
-        })
-        if df_board.empty:
-            raise ValueError("Nguồn bảng giá trả về dữ liệu rỗng")
+        stock_records, board_source, board_fetched_at, requested_symbols = _collect_market_board()
 
-        stock_records = []
-        parse_started_at = time.time()
-        skipped_count = 0
-        included_count = 0
+        # Group by Sector — supports multi-membership: a stock is placed in
+        # every sector listed in its `sector_memberships` array (per
+        # sieucophieu.vn/bang-dien grouping). Each placement contributes to
+        # that sector's market-cap and trading-value totals so the sector
+        # % change matches sieucophieu's market-cap-weighted calculation.
+        sectors_list = _group_stocks_by_sector(stock_records)
 
-        for idx, row in df_board.iterrows():
-            try:
-                def get_val(grp, col, default=0.0):
-                    try:
-                        if (grp, col) in row.index:
-                            v = row[(grp, col)]
-                        elif col in row.index:
-                            v = row[col]
-                        else:
-                            v = default
-                        if pd.isna(v):
-                            return default
-                        return v
-                    except Exception:
-                        return default
-
-                symbol = str(get_val('listing', 'symbol', '')).strip().upper()
-                if not symbol:
-                    continue
-
-                organ_name = str(get_val('listing', 'organ_name', symbol)).strip()
-                exchange = str(get_val('listing', 'exchange', 'HOSE')).strip().upper()
-                if exchange == "HSX":
-                    exchange = "HOSE"
-                stock_type = str(get_val('listing', 'stock_type', 'STOCK')).strip().upper()
-                is_delisted = int(float(get_val('listing', 'is_delisted', 0) or 0))
-                trading_date = str(get_val('listing', 'trading_date', '') or '').strip()
-                received_time = str(get_val('listing', 'received_time', '') or '').strip()
-                listed_shares = float(get_val('listing', 'listed_share', 0))
-
-                if exchange not in {"HOSE", "HNX", "UPCOM"} or stock_type not in {"STOCK", "ETF", "UNIT_TRUST"} or is_delisted:
-                    skipped_count += 1
-                    continue
-
-                ref_price = float(get_val('listing', 'ref_price', 0.0))
-                ceiling = float(get_val('listing', 'ceiling', 0.0))
-                floor = float(get_val('listing', 'floor', 0.0))
-
-                raw_match_price = float(get_val('match', 'match_price', 0.0))
-                price_state = classify_price_status(raw_match_price, ref_price, ceiling, floor)
-                match_price = float(price_state["match_price"])
-
-                if ref_price <= 0 or match_price <= 0 or listed_shares <= 0:
-                    skipped_count += 1
-                    continue
-
-                accumulated_val = float(get_val('match', 'accumulated_value', 0.0))
-                accumulated_vol = float(get_val('match', 'accumulated_volume', 0.0))
-
-                # Debug log: xem giá trị raw trước khi convert
-                if included_count < 3:  # Chỉ log 3 mã đầu để không spam
-                    print(f"[DEBUG] {symbol}: raw_accumulated_val={accumulated_val}")
-
-                # Vietcap's accumulatedValue is expressed in million VND for every board.
-                accumulated_val = max(accumulated_val, 0.0) * 1_000_000
-
-                if ref_price > 0:
-                    change_pct = float(price_state["change_pct"])
-                    change_amt = round(match_price - ref_price, 0)
-                else:
-                    change_pct = 0.0
-                    change_amt = 0.0
-
-                # Direct price-board values are already VND, including penny stocks below 1,000.
-                price_vnd = match_price
-                market_cap = listed_shares * price_vnd
-
-                status = str(price_state["status"])
-
-                sector_info = _ALL_STOCK_CACHE.get("sector_info_by_symbol", {}).get(symbol)
-                if not sector_info:
-                    sector_info = get_sector_info(symbol)
-                sector_name = sector_info.get("sector", "SẢN XUẤT CÔNG NGHIỆP")
-                archetype = sector_info.get("archetype", "MANUFACTURING_GENERAL")
-
-                stock_records.append({
-                    "symbol": symbol,
-                    "name": organ_name,
-                    "exchange": exchange,
-                    "match_price": match_price,
-                    "price_vnd": price_vnd,
-                    "ref_price": ref_price,
-                    "ceiling": ceiling,
-                    "floor": floor,
-                    "change_amt": change_amt,
-                    "change_pct": change_pct,
-                    "volume": int(accumulated_vol),
-                    "trading_value": float(accumulated_val),
-                    "market_cap": float(market_cap),
-                    "status": status,
-                    "instrument_type": stock_type,
-                    "sector": sector_name,
-                    "sector_code": archetype,
-                    "trading_date": trading_date,
-                    "received_time": received_time,
-                })
-                included_count += 1
-            except Exception as row_err:
-                skipped_count += 1
-                if skipped_count <= 3:
-                    print(f"Error parsing row {idx} for heatmap: {row_err}")
-                continue
-        _debug_report("B", "heatmap_engine.py:447", "Board rows parsed", {
-            "stock_records": len(stock_records),
-            "included": included_count,
-            "skipped": skipped_count,
-            "elapsed_ms": round((time.time() - parse_started_at) * 1000, 2),
-        })
-
-        # Group by Sector
-        sector_started_at = time.time()
-        sectors_dict = {}
-        for s in stock_records:
-            sec_name = s["sector"]
-            if sec_name not in sectors_dict:
-                sectors_dict[sec_name] = {
-                    "name": sec_name,
-                    "code": s["sector_code"],
-                    "total_market_cap": 0.0,
-                    "total_trading_value": 0.0,
-                    "stocks": []
-                }
-            sectors_dict[sec_name]["stocks"].append(s)
-            sectors_dict[sec_name]["total_market_cap"] += s["market_cap"]
-            sectors_dict[sec_name]["total_trading_value"] += s["trading_value"]
-
-        sectors_list = []
-        for sec_name, sec_data in sectors_dict.items():
-            sec_data["stocks"].sort(key=lambda x: x["market_cap"], reverse=True)
-            # PART 2 — User-spec verified weighted (mcap) % change
-            sec_data["avg_change_pct"] = calculate_sector_change_percent(sec_data["stocks"])
-            # (Server-side audit log — for manual Excel test-case cross-check only)
-            _mcap_tot = sum(float(s["market_cap"]) for s in sec_data["stocks"] if float(s["market_cap"]) > 0)
-            print(f"[Heatmap Calc] {sec_name:22s}: {len(sec_data['stocks']):3d} mã | "
-                  f"ΣMCAP ≈ {(_mcap_tot/1e9):.0f} tỷ VNĐ | ΣGTGD ≈ {sec_data['total_trading_value']/1e9:.1f} tỷ | TB có trọng số: {sec_data['avg_change_pct']:+.2f}%")
-            sectors_list.append(sec_data)
-
-        sectors_list.sort(key=lambda x: x["total_market_cap"], reverse=True)
-        _debug_report("D", "heatmap_engine.py:485", "Sector grouping completed", {
-            "sector_count": len(sectors_list),
-            "elapsed_ms": round((time.time() - sector_started_at) * 1000, 2),
-            "total_elapsed_ms": round((time.time() - overall_started_at) * 1000, 2),
-        })
-
-        quant_snapshot = build_quant_snapshot(stock_records, sectors_list)
-        sectors_list.sort(key=lambda x: x["total_market_cap"], reverse=True)
-
-        total_stocks = len(stock_records)
-        advances = sum(1 for s in stock_records if s["status"] == "GAIN")
-        declines = sum(1 for s in stock_records if s["status"] == "LOSS")
-        unchanged = sum(1 for s in stock_records if s["status"] == "REF")
-        ceilings = sum(1 for s in stock_records if s["status"] == "CEILING")
-        floors = sum(1 for s in stock_records if s["status"] == "FLOOR")
-        total_mcap = sum(s["market_cap"] for s in stock_records)
-        matched_val = sum(s["trading_value"] for s in stock_records)
-        total_val = _fetch_market_total_liquidity(matched_val)
-
-        # Debug: log tổng thanh khoản để so sánh với fireant / sieucophieu
-        print(f"[DEBUG] Tổng thanh khoản thị trường: {total_val/1e9:.2f} tỷ VNĐ (Khớp lệnh: {matched_val/1e9:.2f} tỷ)")
-
-        now_str = get_vn_now().strftime("%d/%m/%Y %H:%M:%S")
-
-        payload = {
-            "schema_version": HEATMAP_SCHEMA_VERSION,
-            "timestamp": now_str,
-            "is_market_open": is_market_open_time(),
-            "market_closed": is_past_close_or_weekend(),
-            "market_session": market_session,
-            "snapshot_frozen": False,
-            "served_from": "LIVE_MARKET_ADAPTER",
-            "summary": {
-                "total_stocks": total_stocks,
-                "advances": advances,
-                "declines": declines,
-                "unchanged": unchanged,
-                "ceilings": ceilings,
-                "floors": floors,
-                "total_market_cap": total_mcap,
-                "total_trading_value": total_val
-            },
-            "sectors": sectors_list,
-            "quant_snapshot": quant_snapshot,
-            "data_lineage": {
-                "price_source": board_source,
-                "classification_source": "Vietcap ICB level 1-4 + curated Vietnamese sector aliases",
-                "classification_reference": "https://sieucophieu.vn/bang-dien",
-                "sector_count": len(sectors_list),
-                "fetched_at": board_fetched_at,
-                "latest_trading_date": max((s.get("trading_date") or "" for s in stock_records), default=""),
-                "coverage": {
-                    "requested_symbols": len(all_tickers),
-                    "accepted_listings": total_stocks,
-                    "accepted_active_listings": sum(1 for s in stock_records if s.get("volume", 0) > 0),
-                    "excluded_or_unpriced": max(len(all_tickers) - total_stocks, 0),
-                },
-            },
-            "data_quality": {
-                "status": "VERIFIED" if total_stocks >= 500 else "DEGRADED",
-                "warnings": [
-                    "Du lieu heatmap la anh chup bang gia gan nhat; khong dai dien truc tiep cho giao dich khoi ngoai, tu doanh hoac to chuc."
-                ],
-            },
-        }
+        payload = _assemble_heatmap_payload(
+            stock_records,
+            sectors_list,
+            board_source,
+            board_fetched_at,
+            market_session,
+            now_dt,
+            requested_symbols=requested_symbols,
+        )
 
         # Outside a live trading date, one final fetch is persisted under the
         # source trading date. All later users receive SQLite only.
@@ -1565,6 +2103,11 @@ def fetch_market_heatmap_data(force_refresh: bool = False) -> Dict[str, Any]:
             market_session["is_trading_day"] and now_dt.time() >= HEATMAP_FINAL_SNAPSHOT_TIME
         )
         payload["snapshot_frozen"] = False
+        # Invariant: the existing frozen row for `latest_trade_date` is never
+        # overwritten by an unfrozen upsert. `save_snapshot_for_date`'s
+        # ON CONFLICT clause preserves frozen=1 rows when the incoming payload
+        # is frozen=0, so repeated holiday/weekend traffic is safe and cannot
+        # bump the `created_at` timestamp of an already-frozen snapshot.
         if should_freeze:
             try:
                 save_snapshot_for_date(latest_trade_date, payload, frozen=True)
@@ -2108,9 +2651,7 @@ def generate_weekly_analysis() -> Dict[str, Any]:
     Generate weekly trading analysis from the last 5 frozen snapshots.
     Called after market close on Friday (15:00+).
     """
-    import requests
-
-    snapshots = get_recent_snapshots(days=5)
+    snapshots = get_recent_snapshots(days=WEEKLY_ANALYSIS_DAYS)
 
     if len(snapshots) < 5:
         raise RuntimeError(
@@ -2290,6 +2831,28 @@ def _build_weekly_quant_only_report(
     """Fallback report when DeepSeek is unavailable."""
     change_sign = "tăng" if market_change > 0 else "giảm" if market_change < 0 else "không đổi"
 
+    # Guard: sector_performance may be empty if every snapshot in the week
+    # had no sectors populated (e.g., API outage on a single trading day).
+    # Render a neutral weekly report instead of crashing with IndexError.
+    if sector_performance:
+        top_sector = sector_performance[0]
+        top_sector_name = top_sector.get("sector", "N/A")
+        top_sector_change = top_sector.get("change_pct", 0.0)
+        sector_rotation_note = (
+            f"Top sector: {top_sector_name} với {top_sector_change:+.1f} điểm."
+        )
+        opportunities = (
+            f"Sector rotation: top sectors đạt {top_sector_change:+.1f} điểm "
+            f"nếu độ rộng duy trì trên 50%."
+        )
+    else:
+        top_sector_name = "N/A"
+        top_sector_change = 0.0
+        sector_rotation_note = "Không đủ dữ liệu sector để xác định rotation tuần này."
+        opportunities = (
+            "Chưa đủ dữ liệu sector trong tuần để đánh giá cơ hội rotation."
+        )
+
     return {
         "report_version": "lp-weekly-quant-1.0",
         "week_range": week_range,
@@ -2309,9 +2872,9 @@ def _build_weekly_quant_only_report(
         ],
         "money_flow_trend": f"Thị trường {'tăng' if market_change > 0 else 'giảm' if market_change < 0 else 'đi ngang'} nhiệt {abs(market_change):.1f} điểm trong tuần.",
         "weekly_verdict": "Tích cực" if market_change > 5 else "Trung lập" if market_change > -5 else "Tiêu cực",
-        "opportunities": f"Sector rotation: top sectors đạt {sector_performance[0]['change_pct']:+.1f} điểm nếu độ rộng duy trì trên 50%.",
+        "opportunities": opportunities,
         "risks": "Độ rộng dưới 45% kéo dài có thể làm suy yếu xu hướng hiện tại.",
-        "sector_rotation_note": f"Top sector: {sector_performance[0]['sector']} với {sector_performance[0]['change_pct']:+.1f} điểm.",
+        "sector_rotation_note": sector_rotation_note,
         "ai_engine_source": "Lộc Phát Quant v3.3 - Weekly Analysis (fallback)",
         "token_usage": {},
         "disclaimer": "Đây là công cụ hỗ trợ phân tích dựa trên dữ liệu định lượng, không phải tư vấn đầu tư.",

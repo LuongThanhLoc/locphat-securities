@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 import uvicorn
 from ctck_analyzer import analyze_security_stock, CTCK_STOCKS
 from peer_comparison_engine import get_peer_comparison
-from typing import Optional
+from typing import Optional, Dict, Any
 from dnse_realtime import get_dnse_realtime_snapshot
 from market_data_provider import Quote
 from quant_engine import build_quant_framework
@@ -40,6 +40,17 @@ def get_heatmap_js():
     raise HTTPException(status_code=404, detail="File not found")
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Boot the background intraday snapshot poller so the bottom-of-page
+# timeline scrubber has fresh checkpoints while the market is live.
+# Idempotent — `start_intraday_poller()` short-circuits if a worker is
+# already alive.
+try:
+    from heatmap_engine import init_db_snapshot, start_intraday_poller
+    init_db_snapshot()
+    start_intraday_poller()
+except Exception as boot_err:
+    print(f"[Heatmap] Warning: failed to start intraday poller: {boot_err}")
 
 
 def _build_quant_decision(symbol: str, stock_data: dict) -> dict:
@@ -424,6 +435,108 @@ def get_heatmap_data(response: Response, refresh: bool = False):
         return fetch_market_heatmap_data(force_refresh=refresh)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi lấy dữ liệu bản đồ nhiệt: {str(e)}")
+
+
+def _summarize_intraday_for_timeline(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip per-stock rows from a full heatmap payload so timeline responses
+    stay small. Keeps only the top-level summary, market_session, quant
+    snapshot, and per-sector summary fields. The UI only needs aggregate
+    metrics to drive the slider and tooltip; drilling into a stock still
+    uses the latest live snapshot from /api/heatmap/data."""
+    summary_sectors = []
+    for sec in payload.get("sectors", []) or []:
+        if not isinstance(sec, dict):
+            continue
+        summary_sectors.append({
+            "name": sec.get("name"),
+            "code": sec.get("code"),
+            "avg_change_pct": sec.get("avg_change_pct"),
+            "flow_score": sec.get("flow_score"),
+            "breadth_pct": sec.get("breadth_pct"),
+            "liquidity_share_pct": sec.get("liquidity_share_pct"),
+            "total_market_cap": sec.get("total_market_cap"),
+            "total_trading_value": sec.get("total_trading_value"),
+            "stock_count": len(sec.get("stocks", []) or []),
+        })
+    quant = payload.get("quant_snapshot") or {}
+    return {
+        "schema_version": payload.get("schema_version"),
+        "timestamp": payload.get("timestamp"),
+        "is_market_open": payload.get("is_market_open"),
+        "market_closed": payload.get("market_closed"),
+        "market_session": payload.get("market_session"),
+        "snapshot_frozen": payload.get("snapshot_frozen", False),
+        "summary": payload.get("summary"),
+        "quant_snapshot": {
+            "market_temperature": quant.get("market_temperature"),
+            "market_regime": quant.get("market_regime"),
+            "breadth_pct": quant.get("breadth_pct"),
+            "advance_decline_ratio": quant.get("advance_decline_ratio"),
+            "active_ratio_pct": quant.get("active_ratio_pct"),
+            "top10_liquidity_share_pct": quant.get("top10_liquidity_share_pct"),
+            "breadth_stability_pct": quant.get("breadth_stability_pct"),
+            "snapshot_id": quant.get("snapshot_id"),
+        },
+        "data_lineage": payload.get("data_lineage"),
+        "sectors": summary_sectors,
+    }
+
+
+@app.get("/api/heatmap/timeline")
+def get_heatmap_timeline(response: Response, date: Optional[str] = None):
+    """Return all intraday timeline checkpoints for `date` (default today UTC+7).
+
+    Response is bounded to INTRADAY_MAX_PER_DAY items (~80). Each entry is
+    `summarized` — no per-stock arrays — so the scrubber can replay the day
+    without shipping the full heatmap payload across the wire for every tick.
+    Cache 5s so repeated scrub events don't hammer the server.
+    """
+    try:
+        from heatmap_engine import (
+            get_intraday_snapshots,
+            get_vn_now,
+            init_db_snapshot,
+        )
+        init_db_snapshot()
+        target_date = date or get_vn_now().strftime("%Y-%m-%d")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", target_date):
+            raise HTTPException(status_code=400, detail="date không hợp lệ (YYYY-MM-DD)")
+        items = get_intraday_snapshots(target_date)
+        items = [
+            {
+                "snapshot_time": entry["snapshot_time"],
+                "session_phase": entry["session_phase"],
+                "payload": _summarize_intraday_for_timeline(entry["payload"]),
+            }
+            for entry in items
+        ]
+        response.headers["Cache-Control"] = "public, max-age=5"
+        return {
+            "date": target_date,
+            "count": len(items),
+            "items": items,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi tải timeline: {str(e)}")
+
+
+@app.get("/api/heatmap/timeline/latest")
+def get_heatmap_timeline_latest(response: Response):
+    """Return the freshest intraday checkpoint (any trade date)."""
+    try:
+        from heatmap_engine import get_latest_intraday_snapshot
+        entry = get_latest_intraday_snapshot()
+        if not entry:
+            return {"snapshot_time": None, "session_phase": None, "payload": None}
+        return {
+            "snapshot_time": entry["snapshot_time"],
+            "session_phase": entry["session_phase"],
+            "payload": _summarize_intraday_for_timeline(entry["payload"]),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi tải snapshot timeline: {str(e)}")
 
 @app.get("/api/heatmap/ai_insight")
 @app.post("/api/heatmap/ai_insight")

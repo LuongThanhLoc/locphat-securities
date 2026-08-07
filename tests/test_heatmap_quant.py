@@ -45,7 +45,7 @@ class HeatmapQuantTests(unittest.TestCase):
 
         self.assertEqual(result["breadth_pct"], 66.7)
         self.assertEqual(result["top10_liquidity_share_pct"], 100.0)
-        self.assertEqual(result["model_version"], "lp-market-radar-3.3")
+        self.assertEqual(result["model_version"], "lp-market-radar-3.4")
         self.assertEqual(len(result["snapshot_id"]), 16)
         self.assertGreater(stocks[0]["flow_score"], stocks[2]["flow_score"])
         self.assertEqual(sectors[0]["advances"], 2)

@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/heatmap.css?v=20260805_fix_symbol">
+  <link rel="stylesheet" href="/static/heatmap.css?v=20260807_timeline">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
   <link rel="stylesheet" href="/static/site-nav-ai.css?v=20260804_mobile_nav_v1">
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -50,7 +50,6 @@
         <span id="sessionTimestamp">Chờ dữ liệu...</span>
       </div>
       <div style="display:flex;align-items:center;gap:12px;">
-        <div class="lineage" id="lineageText">Nguồn đang được xác minh</div>
         <button class="ai-button" id="aiButton" type="button" title="Mở nhận định AI thị trường">
           <i data-lucide="sparkles"></i>
           <span>Nhận định AI</span>
@@ -167,6 +166,42 @@
       <span id="coverageText">Đang kiểm tra độ phủ...</span>
       <button id="methodButton" type="button"><i data-lucide="info"></i> Phương pháp tính</button>
     </footer>
+
+    <section class="timeline-bar" id="timelineBar" aria-label="Trình phát lại phiên giao dịch">
+      <div class="timeline-header">
+        <div>
+          <p>Dòng thời gian phiên</p>
+          <h2>Trình phát lại biến động &amp; sector rotation</h2>
+        </div>
+        <div class="timeline-meta">
+          <div class="timeline-phase" id="timelinePhase" data-phase="ATO">ATO</div>
+          <div class="timeline-clock" id="timelineClock">--:--</div>
+          <div class="timeline-status" id="timelineStatus">Đang tải timeline…</div>
+        </div>
+      </div>
+      <div class="timeline-track" id="timelineTrack">
+        <div class="timeline-segment segment-ato"          data-phase="ATO"        data-label="ATO"               title="Phiên ATO (9:00 – 9:15)"></div>
+        <div class="timeline-segment segment-open-morning" data-phase="CONTINUOUS" data-label="Khớp lệnh liên tục" title="Khớp lệnh liên tục (9:15 – 11:30)"></div>
+        <div class="timeline-segment segment-lunch"        data-phase="LUNCH_BREAK" data-label="Giờ nghỉ trưa"     title="Giờ nghỉ trưa (11:30 – 13:00)"></div>
+        <div class="timeline-segment segment-open-afternoon" data-phase="CONTINUOUS" data-label="Khớp lệnh liên tục" title="Khớp lệnh liên tục (13:00 – 14:30)"></div>
+        <div class="timeline-segment segment-atc"          data-phase="ATC"        data-label="ATC"               title="Phiên ATC (14:30 – 14:45)"></div>
+        <div class="timeline-ticks" id="timelineTicks"></div>
+        <input type="range" id="timelineSlider" min="0" max="0" value="0" step="1" aria-label="Vị trí snapshot">
+        <div class="timeline-cursor" id="timelineCursor" style="left:0%"></div>
+      </div>
+      <div class="timeline-controls">
+        <button id="timelinePlay" type="button" title="Phát lại (Space)"><i data-lucide="play"></i><span class="timeline-control-label">Phát</span></button>
+        <button id="timelineStepBack" type="button" title="Lùi 1 snapshot (←)"><i data-lucide="skip-back"></i></button>
+        <button id="timelineStepForward" type="button" title="Tiến 1 snapshot (→)"><i data-lucide="skip-forward"></i></button>
+        <div class="timeline-speed" role="group" aria-label="Tốc độ phát">
+          <button class="active" data-speed="1" type="button">1×</button>
+          <button data-speed="4" type="button">4×</button>
+          <button data-speed="16" type="button">16×</button>
+        </div>
+        <div class="timeline-counter" id="timelineCounter">0 / 0</div>
+        <button id="timelineLive" type="button" hidden><i data-lucide="radio"></i> Về Live</button>
+      </div>
+    </section>
   </div>
 
   <dialog class="ai-dialog" id="aiDialog">
@@ -208,6 +243,6 @@
   </dialog>
 
   <script src="/static/site-nav.js?v=20260804_mobile_nav_v1"></script>
-  <script src="/static/heatmap.js?v=20260806_no_rsi_v2" defer></script>
+  <script src="/static/heatmap.js?v=20260807_remove_lineage_v1" defer></script>
 </body>
 </html>
