@@ -198,7 +198,9 @@
 
   function showTooltip(event, stock) {
     const tooltip = $('stockTooltip');
+    if (!tooltip) return;
     tooltip.hidden = false;
+    tooltip.style.display = 'block';
     
     // Extract signals if available
     const signals = stock._signals || {};
@@ -235,6 +237,7 @@
 
   function moveTooltip(event) {
     const tooltip = $('stockTooltip');
+    if (!tooltip) return;
     const pad = 12;
     const rect = tooltip.getBoundingClientRect();
     tooltip.style.left = `${Math.min(event.clientX + 14, window.innerWidth - rect.width - pad)}px`;
@@ -242,7 +245,11 @@
   }
 
   function hideTooltip() {
-    $('stockTooltip').hidden = true;
+    const tooltip = $('stockTooltip');
+    if (tooltip) {
+      tooltip.hidden = true;
+      tooltip.style.display = 'none';
+    }
   }
 
   function renderTreemap() {
@@ -328,6 +335,9 @@
         } catch (_) {}
       });
 
+    svg.on('mouseleave', hideTooltip);
+    d3.select('#mapStage').on('mouseleave', hideTooltip);
+
     const leaves = svg.append('g').selectAll('g')
       .data(root.leaves())
       .join('g')
@@ -335,11 +345,8 @@
       .attr('transform', (d) => `translate(${d.x0},${d.y0})`)
       .on('mouseenter', function (event, d) {
         showTooltip(event, d.data);
-        if (this.parentNode) {
-          this.parentNode.appendChild(this);
-        }
         d3.select(this).select('rect')
-          .transition().duration(100)
+          .transition().duration(60)
           .attr('stroke', '#ffffff')
           .attr('stroke-width', 2);
       })
@@ -347,7 +354,7 @@
       .on('mouseleave', function (event, d) {
         hideTooltip();
         d3.select(this).select('rect')
-          .transition().duration(150)
+          .transition().duration(60)
           .attr('stroke', 'rgba(255,255,255,.14)')
           .attr('stroke-width', 1);
       })
@@ -1343,6 +1350,18 @@
         resizeTimer = setTimeout(renderTreemap, 80);
       }).observe($('mapStage'));
     }
+
+    // Global mousemove guard: instantly hide tooltip if mouse leaves all treemap stock tiles
+    document.addEventListener('mousemove', (event) => {
+      const tooltip = $('stockTooltip');
+      if (tooltip && !tooltip.hidden && tooltip.style.display !== 'none') {
+        if (document.querySelector('.treemap-stock.pinned')) return;
+        const stockTile = event.target.closest('.treemap-stock');
+        if (!stockTile) {
+          hideTooltip();
+        }
+      }
+    });
   }
 
   document.addEventListener('DOMContentLoaded', () => {
