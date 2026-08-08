@@ -3,24 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#071015">
+  <meta name="theme-color" content="#f4f0e6">
   <title>Market Radar - Lộc Phát Securities</title>
   <link rel="icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/heatmap.css?v=20260807_timeline">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
+  <link rel="stylesheet" href="/static/heatmap.css?v=20260808_light_v1">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
   <link rel="stylesheet" href="/static/site-nav-ai.css?v=20260804_mobile_nav_v1">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
 </head>
-<body>
+<body class="lp-editorial lp-page-heatmap">
   <div class="lp-page-nav-wrap" data-lp-site-nav></div>
   <div class="app-shell">
     <header class="topbar" hidden>
       <a class="brand" href="/" aria-label="Về trang phân tích cổ phiếu">
-        <img src="/static/brand-logo.png" alt="Lộc Phát Securities">
+        <img src="/static/brand-logo.png?v=20260808_logo_fix" alt="Lộc Phát Securities">
         <span class="brand-copy">
           <strong>Lộc Phát Securities</strong>
           <small>Market Radar</small>
@@ -87,7 +88,12 @@
       </article>
     </section>
 
-    <section class="controlbar" aria-label="Bộ lọc heatmap">
+    <button class="heatmap-filter-toggle" id="heatmapFilterToggle" type="button" aria-expanded="false" aria-controls="heatmapControlbar">
+      <span><i data-lucide="sliders-horizontal"></i> Bộ lọc bản đồ</span>
+      <i data-lucide="chevron-down" aria-hidden="true"></i>
+    </button>
+
+    <section class="controlbar" id="heatmapControlbar" aria-label="Bộ lọc heatmap">
       <div class="segmented" id="colorMode" role="group" aria-label="Chế độ màu">
         <button class="active" data-mode="performance" type="button">Biến động</button>
         <button data-mode="flow" type="button">Dòng tiền</button>
@@ -242,7 +248,7 @@
     </div>
   </dialog>
 
-  <script src="/static/site-nav.js?v=20260804_mobile_nav_v1"></script>
+  <script src="/static/site-nav.js?v=20260808_light_v2"></script>
   <script src="/static/heatmap.js?v=20260807_tooltip_fix_v2" defer></script>
 </body>
 </html>

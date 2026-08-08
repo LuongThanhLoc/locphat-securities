@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="vi" class="dark">
+<html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f4f0e6">
   <title>Công ty Chứng Khoán Lộc Phát Securities - Hệ Thống Phân Tích Cổ Phiếu</title>
 
   <!-- Favicon Icons -->
@@ -14,14 +15,13 @@
   <!-- Google Fonts & Tailwind CSS v3 & ApexCharts & FontAwesome -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
   <!-- Tailwind CSS v3 CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      darkMode: 'class',
       theme: {
         extend: {
           fontFamily: {
@@ -42,11 +42,13 @@
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
   <link rel="stylesheet" href="/static/style.css?v=20260805_trend_table_v3">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_search_icon_v5">
   <link rel="stylesheet" href="/static/watchlist-shared.css?v=20260804_v6">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
 </head>
-<body class="is-welcome-page bg-[#0b0f19] text-slate-100 font-sans antialiased min-h-screen selection:bg-emerald-500 selection:text-slate-900">
+<body class="lp-editorial lp-page-analysis is-welcome-page font-sans antialiased min-h-screen">
 
   <!-- Loading Overlay -->
   <div id="loading" class="loading-overlay">
@@ -60,7 +62,7 @@
   <div class="container w-full px-2 md:px-4 py-2">
     <header class="navbar" hidden>
       <div class="brand flex items-center gap-3 cursor-pointer group" onclick="showWelcomeHome()" title="Quay về Trang chủ Lộc Phát Securities">
-        <img src="/static/brand-logo.png?v=20260728_v1" alt="Lộc Phát Securities Logo" class="brand-logo-img h-10 md:h-12 w-auto object-contain transition-all group-hover:scale-105 filter drop-shadow-[0_4px_12px_rgba(16,185,129,0.25)]">
+        <img src="/static/brand-logo.png?v=20260808_logo_fix" alt="Lộc Phát Securities Logo" class="brand-logo-img h-10 md:h-12 w-auto object-contain transition-all group-hover:scale-105 filter drop-shadow-[0_4px_12px_rgba(16,185,129,0.25)]">
         <div>
           <div class="brand-title text-lg font-bold text-white tracking-wide group-hover:text-emerald-400 transition-colors">Lộc Phát Securities</div>
           <div class="brand-sub text-xs text-slate-400">Công ty Chứng Khoán Lộc Phát Securities</div>
@@ -570,7 +572,7 @@
               </button>
             </div>
 
-            <!-- Timeframe Selector Switcher (ONLY VISIBLE WHEN TAB 1: CHART IS ACTIVE) -->
+            <!-- Timeframe Selector Switcher (ACTIVE FOR BOTH ENGINES) -->
             <div id="chartTimeframeToolbar" class="mode-toggle-group flex items-center gap-1">
               <button class="toggle-btn" id="btnTf1D" onclick="setTimeframeMode('1D')">1D</button>
               <button class="toggle-btn" id="btnTf3D" onclick="setTimeframeMode('3D')">3D</button>
@@ -584,11 +586,33 @@
 
           <!-- TAB 1 CONTENT: Biểu Đồ Nến (Chart) -->
           <div id="dashTabContentChart" class="glass-card p-4" style="margin-bottom: 0;">
-            <div class="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+            <div class="flex flex-wrap items-center justify-between mb-3 border-b border-slate-800 pb-2.5 gap-2">
               <div class="card-title text-sm font-bold text-slate-100 flex items-center gap-2">
-                <i class="fa-solid fa-chart-candlestick text-emerald-400"></i> Diễn Biến Giá & Khối Lượng Giao Dịch (DNSE / Market Data)
+                <i class="fa-solid fa-chart-candlestick text-emerald-400"></i> Diễn Biến Giá & Khối Lượng Giao Dịch
+              </div>
+
+              <div class="chart-engine-actions flex items-center gap-2">
+                <!-- Engine Switcher Buttons -->
+                <div class="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800/80">
+                  <button id="btnChartEngineApex" onclick="switchChartEngine('apex')" class="px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm">
+                    <i class="fa-solid fa-chart-area text-xs"></i> Chart Nội Bộ
+                  </button>
+                  <button id="btnChartEngineTv" onclick="switchChartEngine('tradingview')" class="px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center gap-1.5">
+                    <i class="fa-solid fa-bolt text-xs"></i> TradingView Engine
+                  </button>
+                </div>
+
+                <!-- Direct link to full TradingView drawing canvas -->
+                <a id="tvExternalLink" href="https://www.tradingview.com" target="_blank" rel="noopener noreferrer" class="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold transition-colors bg-sky-500/10 px-2.5 py-1.5 rounded-xl border border-sky-500/20">
+                  <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i> TradingView.com ↗
+                </a>
               </div>
             </div>
+
+            <!-- TradingView Lightweight Chart Box -->
+            <div id="tradingviewChartContainer" class="chart-box rounded-xl overflow-hidden relative" style="display: none; height: 520px; width: 100%; background: #0b0f19;"></div>
+
+            <!-- ApexChart Box -->
             <div id="priceCandleChart" class="chart-box" style="min-height: 440px; width: 100%;"></div>
           </div>
 
@@ -882,15 +906,17 @@
         <!-- Post-Analysis Results View (Revealed after clicking button) -->
         <div id="peerResultsState" style="display: none;">
           <!-- Interactive Peer Ticker Input & Pills Bar -->
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 12px; background: rgba(15, 23, 42, 0.5); border: 1px solid var(--border-color); border-radius: var(--radius-md);">
-            <div style="font-size: 13px; font-weight: 700; color: #a855f7; display: flex; align-items: center; gap: 8px;">
+          <div class="peer-control-bar" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 12px 16px; background: var(--lp-paper-muted); border: 1px solid var(--lp-line); border-radius: var(--lp-radius);">
+            <div style="font-size: 13px; font-weight: 700; color: var(--lp-navy); display: flex; align-items: center; gap: 8px;">
               <i class="fa-solid fa-sliders"></i> Danh Sách Doanh Nghiệp So Sánh:
             </div>
             
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-              <div style="display: flex; gap: 6px; align-items: center;">
-                <input type="text" id="addPeerInput" class="search-input" placeholder="+ Thêm mã đối thủ (VD: VND)..." style="width: 190px; height: 32px; font-size: 12px; text-transform: uppercase;">
-                <button class="search-btn" style="padding: 6px 12px; font-size: 12px; background: linear-gradient(135deg, #a855f7, #7e22ce);" onclick="handleAddPeerSymbol()">+ Thêm</button>
+              <div class="peer-add-input-group" style="display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="addPeerInput" class="peer-input-field" placeholder="+ THÊM MÃ ĐỐI THỦ (VD: VND)..." style="width: 210px; height: 36px; padding: 0 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; background: var(--lp-paper); border: 1px solid var(--lp-line-strong); border-radius: 4px; color: var(--lp-ink);">
+                <button class="btn-peer-add" type="button" onclick="handleAddPeerSymbol()" style="height: 36px; padding: 0 16px; font-size: 12px; font-weight: 700; background: var(--lp-navy); color: #ffffff; border: 1px solid var(--lp-navy-deep); border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+                  <i class="fa-solid fa-plus"></i> Thêm
+                </button>
               </div>
               <div id="peerPillsContainer" style="display: flex; gap: 6px; flex-wrap: wrap;">
                 <!-- Injected dynamically via JS -->
@@ -1020,8 +1046,8 @@
     <span class="btn-label">Đầu Trang</span>
   </button>
 
-  <script src="/static/site-nav.js?v=20260805_search_icon_v5"></script>
-  <script src="/static/app.js?v=20260805_peer_clean_v3"></script>
+  <script src="/static/site-nav.js?v=20260808_light_v2"></script>
+  <script src="/static/app.js?v=20260808_light_v1"></script>
 
 </body>
 </html>

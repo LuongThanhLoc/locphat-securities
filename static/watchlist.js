@@ -356,7 +356,7 @@
       <tr data-symbol="${escHtml(item.symbol)}">
         <td>
           <a class="wl-sym" href="/stock/${encodeURIComponent(item.symbol)}" title="Xem phân tích ${escHtml(item.symbol)}">
-            <img class="wl-logo" src="https://cdn.simplize.vn/simplizevn/logo/${escHtml(item.symbol)}.jpeg" onerror="this.style.display='none'" alt="">
+            <img class="wl-logo" src="https://cdn.simplize.vn/simplizevn/logo/${escHtml(item.symbol)}.jpeg" onerror="window.handleLogoFallback(this, '${escHtml(item.symbol)}')" alt="">
             <strong>${escHtml(item.symbol)}</strong>
           </a>
         </td>
@@ -369,9 +369,9 @@
         <td>${renderPriceCell(item)}</td>
         <td>${renderChangeCell(item)}</td>
         <td>
-          <div style="font-size:11px;color:#74868e;">
+          <div class="wl-update-cell" style="font-size:11px;color:#74868e;">
             <div>${escHtml(formatTime(item.price_updated_at))}</div>
-            <small style="font-size:10px;color:#52646c;">${escHtml(item.price_source || 'Cache')}</small>
+            <small class="wl-update-source" style="font-size:10px;color:#52646c;">${escHtml(item.price_source || 'Cache')}</small>
           </div>
         </td>
         <td>${renderAiCell(item)}</td>
@@ -379,7 +379,7 @@
         <td>
           <div class="wl-actions">
             <a class="wl-btn-view" href="/stock/${encodeURIComponent(item.symbol)}">Xem</a>
-            <a class="wl-btn-view" href="/backtest?symbol=${encodeURIComponent(item.symbol)}" style="display:inline-flex;align-items:center;gap:4px;background:rgba(16,185,129,0.15);border-color:rgba(16,185,129,0.4);color:#35d4a4;" title="Kiểm định phân kỳ RSI">
+            <a class="wl-btn-view wl-btn-rsi" href="/backtest?symbol=${encodeURIComponent(item.symbol)}" style="display:inline-flex;align-items:center;gap:4px;" title="Kiểm định phân kỳ RSI">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 3v18h18"></path>
                 <path d="m19 9-5 5-4-4-3 3"></path>
@@ -397,7 +397,7 @@
       <div class="wl-card" data-symbol="${escHtml(item.symbol)}">
         <div class="wl-card-head">
           <a class="wl-sym" href="/stock/${encodeURIComponent(item.symbol)}">
-            <img class="wl-logo" src="https://cdn.simplize.vn/simplizevn/logo/${escHtml(item.symbol)}.jpeg" onerror="this.style.display='none'" alt="">
+            <img class="wl-logo" src="https://cdn.simplize.vn/simplizevn/logo/${escHtml(item.symbol)}.jpeg" onerror="window.handleLogoFallback(this, '${escHtml(item.symbol)}')" alt="">
             <strong>${escHtml(item.symbol)}</strong>
           </a>
           ${renderChangeCell(item)}
@@ -411,7 +411,7 @@
         <div style="margin-top:10px;">${renderNoteCell(item.symbol, item.note, 'mobile')}</div>
         <div class="wl-card-foot">
           <a class="wl-btn-view" href="/stock/${encodeURIComponent(item.symbol)}">Xem phân tích</a>
-          <a class="wl-btn-view" href="/backtest?symbol=${encodeURIComponent(item.symbol)}" style="display:inline-flex;align-items:center;gap:4px;background:rgba(16,185,129,0.15);border-color:rgba(16,185,129,0.4);color:#35d4a4;">
+          <a class="wl-btn-view wl-btn-rsi" href="/backtest?symbol=${encodeURIComponent(item.symbol)}" style="display:inline-flex;align-items:center;gap:4px;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 3v18h18"></path>
               <path d="m19 9-5 5-4-4-3 3"></path>

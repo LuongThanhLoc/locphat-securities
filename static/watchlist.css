@@ -265,6 +265,7 @@ img {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 10px 14px;
   cursor: pointer;
   border-bottom: 1px solid #162126;
@@ -275,14 +276,18 @@ img {
 }
 .wl-suggest-item strong {
   color: #35d2a0;
+  flex: none;
 }
 .wl-suggest-item span {
   color: #8c9aa1;
   font-size: 11px;
-  max-width: 180px;
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: right;
+  margin-left: 8px;
 }
 
 /* Table Wrapper */

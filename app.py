@@ -166,6 +166,95 @@ def read_backtest():
         detail="Trang Backtest chưa sẵn sàng",
     )
 
+@app.get("/rrg", response_class=HTMLResponse)
+def read_rrg():
+    rrg_path = os.path.join(static_dir, "rrg.html")
+    if os.path.exists(rrg_path):
+        return FileResponse(
+            rrg_path,
+            headers=_cache_busting_headers_for_file(rrg_path),
+        )
+    raise HTTPException(
+        status_code=404,
+        detail="Trang Biểu Đồ RRG chưa sẵn sàng",
+    )
+
+@app.get("/api/rrg/data")
+def get_rrg_data_api(
+    response: Response,
+    group: str = "SMC_TOP",
+    symbols: Optional[str] = None,
+    benchmark: str = "VNINDEX",
+    tail_length: int = 15,
+    period: int = 14,
+):
+    """Return an LP-RRG dataset for the requested group/benchmark.
+
+    Verified bars come from Vietcap -> KBS and are persisted in PostgreSQL.
+    The endpoint fails closed with HTTP 503 instead of returning a partial set.
+    """
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    from rrg_engine import RrgDataIncomplete, generate_rrg_dataset
+    try:
+        custom_list = None
+        if symbols:
+            raw_symbols = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+            if len(raw_symbols) > 30:
+                raise HTTPException(status_code=422, detail="Danh mục tùy chỉnh tối đa 30 mã")
+            invalid = [s for s in raw_symbols if not re.fullmatch(r"[A-Z0-9]{2,10}", s)]
+            if invalid:
+                raise HTTPException(status_code=422, detail=f"Mã cổ phiếu không hợp lệ: {invalid[0]}")
+            custom_list = list(dict.fromkeys(raw_symbols))
+        return generate_rrg_dataset(
+            group_key=group,
+            custom_symbols=custom_list,
+            benchmark_symbol=benchmark,
+            tail_length=tail_length,
+            period=period,
+        )
+    except RrgDataIncomplete as e:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": e.reason,
+                "message": "Dữ liệu RRG đang được đồng bộ; hệ thống không trả dataset thiếu.",
+                "missing_symbols": e.missing_symbols,
+            },
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi tính toán biểu đồ RRG: {str(e)}")
+
+
+@app.get("/api/rrg/health")
+def get_rrg_health_api(response: Response):
+    """Data-store health and freshness metadata; never exposes credentials."""
+    from rrg_data_gateway import rrg_data_health
+    payload = rrg_data_health()
+    response.headers["Cache-Control"] = "no-store"
+    if payload.get("status") == "error":
+        response.status_code = 503
+    return payload
+
+
+@app.on_event("startup")
+def initialise_rrg_data_store():
+    """Create the idempotent RRG schema before the first strict-mode request."""
+    try:
+        from rrg_data_gateway import init_rrg_store, strict_store_enabled
+        if strict_store_enabled():
+            init_rrg_store()
+            from rrg_sync import start_background_sync
+            start_background_sync()
+    except Exception as exc:
+        # Keep unrelated application pages available.  The RRG API itself is
+        # fail-closed and will return 503 until PostgreSQL recovers.
+        print(f"[RRG] PostgreSQL initialization failed: {exc}")
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     fav_path = os.path.join(static_dir, "favicon.ico")

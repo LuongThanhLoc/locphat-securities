@@ -1,20 +1,20 @@
 <!DOCTYPE html>
-<html lang="vi" class="dark">
+<html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f4f0e6">
   <title>Kiểm Định Phân Kỳ RSI - Lộc Phát Securities</title>
 
   <link rel="icon" type="image/x-icon" href="/favicon.ico?v=20260806_v1">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      darkMode: 'class',
       theme: {
         extend: {
           fontFamily: { sans: ['Inter', 'sans-serif'] },
@@ -127,8 +127,9 @@
     input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     input[type="number"] { -moz-appearance: textfield; }
   </style>
+  <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
 </head>
-<body class="bg-[#0b0f19] text-slate-100 font-sans antialiased min-h-screen selection:bg-emerald-500 selection:text-slate-900">
+<body class="lp-editorial lp-page-backtest font-sans antialiased min-h-screen">
 
   <!-- Loading Overlay -->
   <div id="loading" class="loading-overlay">
@@ -450,9 +451,9 @@
   </div>
 
   <!-- Site Navigation Script -->
-  <script src="/static/site-nav.js?v=20260806_nav_v1"></script>
+  <script src="/static/site-nav.js?v=20260808_light_v2"></script>
 
   <!-- Backtest Page Script -->
-  <script src="/static/backtest.js?v=20260806_backtest_v3"></script>
+  <script src="/static/backtest.js?v=20260808_light_v1"></script>
 </body>
 </html>

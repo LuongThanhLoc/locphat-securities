@@ -64,9 +64,10 @@ function showSymbolSuggestions(query) {
   ).slice(0, 8);
   if (matches.length === 0) { container.classList.add('hidden'); return; }
   container.innerHTML = matches.map(s => `
-    <div class="suggestion-item px-4 py-2.5 hover:bg-slate-700/80 cursor-pointer flex items-center justify-between border-b border-slate-700/30 last:border-0 transition-colors"
+    <div class="suggestion-item px-3 py-2.5 hover:bg-slate-700/80 cursor-pointer flex items-center justify-between border-b border-slate-700/30 last:border-0 transition-colors gap-3"
          onclick="selectSuggestion('${s.symbol}', '${s.name || s.symbol}')">
-      <div><span class="font-bold text-emerald-400 text-sm">${s.symbol}</span><span class="text-slate-400 text-xs ml-2">${s.name || ''}</span></div>
+      <span class="font-bold text-emerald-400 text-sm flex-none">${s.symbol}</span>
+      <span class="text-slate-400 text-xs flex-1 min-w-0 text-right truncate ml-2">${s.name || ''}</span>
     </div>
   `).join('');
   container.classList.remove('hidden');
@@ -105,6 +106,7 @@ function toggleAdvanced() {
     icon.style.transform = 'rotate(0deg)';
     chevron.style.transform = 'rotate(0deg)';
   }
+  window.setTimeout(() => window.dispatchEvent(new Event('resize')), 320);
 }
 
 function toggleSwitch(el) {
@@ -300,9 +302,9 @@ function renderEquityChart(equityCurve, trades) {
       axisBorder: { show: false }, axisTicks: { show: false }
     },
     yaxis: { labels: { style: { colors: '#64748b', fontSize: '11px' }, formatter: v => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(v) } },
-    legend: { show: true, position: 'top', horizontalAlign: 'right', labels: { colors: '#94a3b8' } },
-    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
-    tooltip: { theme: 'dark', x: { format: 'dd MMM yyyy' }, y: { formatter: v => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(v) } },
+    legend: { show: true, position: 'top', horizontalAlign: 'right', labels: { colors: '#59656b' } },
+    grid: { borderColor: '#ded9cc', strokeDashArray: 4 },
+    tooltip: { theme: 'light', x: { format: 'dd MMM yyyy' }, y: { formatter: v => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(v) } },
   };
 
   if (equityChart) {
@@ -338,7 +340,7 @@ function renderDistributionChart(trades) {
     series: [{ data: bins }],
     chart: { type: 'bar', height: 280, toolbar: { show: false }, animations: { enabled: true, speed: 300 } },
     plotOptions: { bar: { borderRadius: 4, columnWidth: '70%' } },
-    dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#94a3b8'] }, formatter: v => v > 0 ? v : '' },
+    dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#59656b'] }, formatter: v => v > 0 ? v : '' },
     legend: { show: false },
     xaxis: {
       type: 'numeric',
@@ -347,8 +349,8 @@ function renderDistributionChart(trades) {
       axisBorder: { show: false }, axisTicks: { show: false }
     },
     yaxis: { labels: { style: { colors: '#64748b', fontSize: '11px' } } },
-    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
-    tooltip: { theme: 'dark', x: { formatter: v => v.toFixed(0) + '%' }, y: { formatter: v => v + ' giao dịch' } }
+    grid: { borderColor: '#ded9cc', strokeDashArray: 4 },
+    tooltip: { theme: 'light', x: { formatter: v => v.toFixed(0) + '%' }, y: { formatter: v => v + ' giao dịch' } }
   };
 
   if (distributionChart) {

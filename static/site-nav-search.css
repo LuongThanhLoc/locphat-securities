@@ -1,182 +1,346 @@
+/* =========================================================
+   LỘC PHÁT SECURITIES — PREMIUM SEARCH OVERLAY
+   ========================================================= */
+
+@keyframes lpSearchFadeIn {
+  from { opacity: 0; backdrop-filter: blur(0px); }
+  to { opacity: 1; backdrop-filter: blur(8px); }
+}
+
+@keyframes lpSearchSlideDown {
+  from { opacity: 0; transform: scale(0.95) translateY(-20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Base Overlay */
 .lp-search-overlay-legacy {
-  padding-top: 10vh;
-  background: rgba(2, 7, 14, 0.9);
+  padding-top: 0 !important;
+  align-items: center !important;
+  background: rgba(226, 221, 207, 0.82) !important;
+  animation: lpSearchFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Dialog Container */
 .lp-search-overlay-legacy .lp-search-dialog {
-  width: min(760px, calc(100vw - 24px));
-  border-color: #324657;
-  background: #0e1929;
+  width: min(720px, calc(100vw - 32px)) !important;
+  border-radius: 20px !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(32px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(180%) !important;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+  color: #0f172a !important;
+  animation: lpSearchSlideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
+/* Header & Input */
 .lp-search-overlay-legacy .lp-search-head {
-  min-height: 72px;
-  padding: 16px 20px;
+  min-height: 76px !important;
+  padding: 16px 24px !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
+  background: transparent !important;
+  display: flex !important;
+  align-items: center !important;
 }
 
-.lp-search-icon {
-  color: #35d4a4;
-  font-size: 22px;
+.lp-search-overlay-legacy .lp-search-icon {
+  color: #08713c !important;
+  font-size: 24px !important;
+  margin-right: 14px !important;
 }
 
 .lp-search-overlay-legacy .lp-search-head input {
-  font-size: 16px;
-  text-transform: uppercase;
+  font-size: 20px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  color: #0f172a !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  flex: 1 !important;
 }
 
 .lp-search-overlay-legacy .lp-search-head input::placeholder {
-  color: #6f8090;
-  font-weight: 500;
-  text-transform: none;
+  color: #59656b !important;
+  font-weight: 400 !important;
+  text-transform: none !important;
 }
 
-.lp-search-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* Controls (Esc badge) */
+.lp-search-overlay-legacy .lp-search-controls {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
 }
 
-.lp-search-controls kbd {
-  padding: 4px 7px;
-  border: 1px solid #344655;
-  border-radius: 5px;
-  background: #172230;
-  color: #8fa0ad;
-  font-size: 10px;
-  font-weight: 800;
+.lp-search-overlay-legacy .lp-search-controls kbd {
+  padding: 4px 8px !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  border-radius: 6px !important;
+  background: rgba(0, 0, 0, 0.04) !important;
+  color: #64748b !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  box-shadow: 0 1px 1px rgba(0,0,0,0.05) !important;
 }
 
+/* Search Body */
 .lp-search-overlay-legacy .lp-search-body {
-  padding: 15px 18px 18px;
+  padding: 12px 12px 16px !important;
+  max-height: 60vh !important;
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.1) transparent;
 }
 
+/* Custom Scrollbar for Webkit */
+.lp-search-overlay-legacy .lp-search-body::-webkit-scrollbar {
+  width: 6px;
+}
+.lp-search-overlay-legacy .lp-search-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.lp-search-overlay-legacy .lp-search-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+}
+.lp-search-overlay-legacy .lp-search-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* Label & Clear Button */
 .lp-search-overlay-legacy .lp-search-label {
-  align-items: center;
-  padding: 8px 4px 12px;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 12px 12px 8px !important;
 }
 
-.lp-search-label-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.lp-search-overlay-legacy .lp-search-label-title {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
 }
 
-.lp-search-label-title i {
-  width: 3px;
-  height: 13px;
-  border-radius: 2px;
-  background: #35d4a4;
-  box-shadow: 0 0 8px rgba(53, 212, 164, 0.7);
+.lp-search-overlay-legacy .lp-search-label-title i {
+  width: 4px !important;
+  height: 14px !important;
+  border-radius: 2px !important;
+  background: #08713c !important;
+  box-shadow: 0 0 8px rgba(8, 113, 60, 0.24) !important;
 }
 
-.lp-search-label-title b {
-  color: #91a2ae;
-  font-size: 11px;
-  letter-spacing: 1px;
+.lp-search-overlay-legacy .lp-search-label-title b {
+  color: #64748b !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.5px !important;
+  text-transform: uppercase !important;
 }
 
-.lp-search-clear {
-  border: 0;
-  background: transparent;
-  color: #788b98;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
+.lp-search-overlay-legacy .lp-search-clear {
+  border: 0 !important;
+  background: transparent !important;
+  color: #59656b !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: color 0.2s !important;
 }
 
-.lp-search-clear:hover {
-  color: #ff6678;
+.lp-search-overlay-legacy .lp-search-clear:hover {
+  color: #b42318 !important;
 }
 
+/* Search Row Items */
 .lp-search-overlay-legacy .lp-search-row {
-  grid-template-columns: 24px 40px minmax(0, 1fr) auto 28px;
-  min-height: 66px;
-  padding: 10px 12px;
-  border-bottom: 1px solid #1f3140;
+  display: grid !important;
+  grid-template-columns: 28px 44px minmax(0, 1fr) auto 28px !important;
+  align-items: center !important;
+  gap: 12px !important;
+  min-height: 68px !important;
+  padding: 8px 16px !important;
+  border-radius: 12px !important;
+  border: none !important;
+  border-bottom: none !important;
+  cursor: pointer !important;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  margin-bottom: 4px !important;
+  background: transparent !important;
 }
 
-.lp-search-history-icon {
-  color: #647886;
-  font-size: 17px;
-  text-align: center;
+.lp-search-overlay-legacy .lp-search-row:hover,
+.lp-search-overlay-legacy .lp-search-row.selected {
+  background: rgba(241, 245, 249, 0.9) !important;
+  transform: translateX(4px) !important;
 }
 
-.lp-search-company {
-  min-width: 0;
+.lp-search-overlay-legacy .lp-search-history-icon {
+  color: #59656b !important;
+  font-size: 18px !important;
+  text-align: center !important;
+  transition: color 0.2s !important;
 }
 
-.lp-search-row-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.lp-search-overlay-legacy .lp-search-row:hover .lp-search-history-icon,
+.lp-search-overlay-legacy .lp-search-row.selected .lp-search-history-icon {
+  color: #08713c !important;
 }
 
-.lp-search-row-meta b {
-  padding: 3px 8px;
-  border: 1px solid rgba(53, 212, 164, 0.28);
-  border-radius: 5px;
-  background: rgba(53, 212, 164, 0.1);
-  color: #35d4a4;
-  font-size: 10px;
+/* Logo Wrapping */
+.lp-search-overlay-legacy .lp-logo-wrap {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(0, 0, 0, 0.05) !important;
+  background: #fff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
 
-.lp-search-row-meta time {
-  min-width: 48px;
-  color: #657986;
-  font-size: 11px;
-  text-align: right;
+.lp-search-overlay-legacy .lp-search-logo {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
 }
 
-.lp-search-remove {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: #6d808d;
-  font-size: 18px;
-  cursor: pointer;
+/* Search Company Details */
+.lp-search-overlay-legacy .lp-search-company {
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  gap: 2px !important;
 }
 
-.lp-search-remove:hover {
-  background: rgba(255, 83, 104, 0.15);
-  color: #ff6678;
+.lp-search-overlay-legacy .lp-search-company strong {
+  color: #0f172a !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
 }
 
+.lp-search-overlay-legacy .lp-search-company small {
+  color: #64748b !important;
+  font-size: 13px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* Row Meta (Tag & Time) */
+.lp-search-overlay-legacy .lp-search-row-meta {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+.lp-search-overlay-legacy .lp-search-row-meta b {
+  padding: 4px 10px !important;
+  border-radius: 6px !important;
+  border: 1px solid rgba(16, 185, 129, 0.2) !important;
+  background: rgba(16, 185, 129, 0.08) !important;
+  color: #08713c !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.5px !important;
+}
+
+.lp-search-overlay-legacy .lp-search-row-meta time {
+  min-width: 56px !important;
+  color: #59656b !important;
+  font-size: 12px !important;
+  text-align: right !important;
+  font-weight: 500 !important;
+}
+
+/* Remove Button */
+.lp-search-overlay-legacy .lp-search-remove {
+  width: 28px !important;
+  height: 28px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: #59656b !important;
+  font-size: 20px !important;
+  cursor: pointer !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.2s ease !important;
+  opacity: 0 !important;
+}
+
+.lp-search-overlay-legacy .lp-search-row:hover .lp-search-remove {
+  opacity: 1 !important;
+}
+
+.lp-search-overlay-legacy .lp-search-remove:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+  color: #b42318 !important;
+}
+
+/* Empty State */
+.lp-search-overlay-legacy .lp-search-empty {
+  padding: 32px 16px !important;
+  text-align: center !important;
+  color: #64748b !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+}
+
+/* Mobile Responsive */
 @media (max-width: 640px) {
   .lp-search-overlay-legacy {
-    align-items: flex-start;
-    padding: max(10px, env(safe-area-inset-top)) 10px 10px;
+    padding: 0 !important;
+    align-items: flex-start !important;
   }
 
   .lp-search-overlay-legacy .lp-search-dialog {
-    width: 100%;
-    max-height: calc(100dvh - env(safe-area-inset-top) - 20px);
-    display: flex;
-    flex-direction: column;
+    width: 100% !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    border: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    animation: none !important;
+  }
+
+  .lp-search-overlay-legacy .lp-search-head {
+    padding: 12px 16px !important;
   }
 
   .lp-search-overlay-legacy .lp-search-body {
-    max-height: calc(100dvh - 110px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    flex: 1 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
   }
 
   .lp-search-overlay-legacy .lp-search-row {
-    grid-template-columns: 34px minmax(0, 1fr) 28px;
+    grid-template-columns: 40px minmax(0, 1fr) 28px !important;
+    gap: 12px !important;
+    padding: 10px 12px !important;
   }
 
-  .lp-search-history-icon,
-  .lp-search-row-meta {
-    display: none;
+  .lp-search-overlay-legacy .lp-search-history-icon,
+  .lp-search-overlay-legacy .lp-search-row-meta {
+    display: none !important;
   }
 
   .lp-search-overlay-legacy .lp-search-logo {
-    width: 34px;
-    height: 34px;
+    width: 40px !important;
+    height: 40px !important;
   }
 
-  .lp-search-controls kbd {
-    display: none;
+  .lp-search-overlay-legacy .lp-search-controls kbd {
+    display: none !important;
+  }
+
+  .lp-search-overlay-legacy .lp-search-remove {
+    opacity: 1 !important;
   }
 }

@@ -42,3 +42,12 @@ Mỗi hồ sơ cần có:
 ## Mở rộng độ phủ
 
 Hồ sơ công bố được bổ sung có kiểm duyệt trong `COMPANY_DISCLOSURES` của `revenue_structure_engine.py`. Trước khi thêm mã mới, đối chiếu tổng phân khúc với tổng doanh thu cùng kỳ và kiểm tra các chiều phân loại không bị chồng lấn.
+
+## Hợp đồng dữ liệu LP-RRG
+
+- Lịch sử ngày đi theo chuỗi Vietcap → KBS → bản PostgreSQL đã kiểm định; không dùng tìm kiếm MSN không kèm sàn.
+- DNSE chỉ bổ sung giá realtime, không được tạo chuỗi OHLC lịch sử từ một điểm giá.
+- Mã đủ chuẩn phải có ít nhất 252 phiên thật khớp benchmark. Mã mới được hiển thị tiến độ nhưng không có tọa độ giả.
+- Bản PostgreSQL tốt gần nhất chỉ được phục vụ tối đa ba phiên benchmark và phải gắn trạng thái `stale_valid`.
+- Dataset chỉ được trả khi coverage của mã đủ chuẩn bằng 100%; nếu không, API trả `503 data_incomplete`.
+- Khởi tạo/backfill bằng `python rrg_sync.py backfill`; kiểm tra độ phủ bằng `python rrg_sync.py audit` sau khi cấu hình `DATABASE_URL`.

@@ -3,8 +3,8 @@
     {
       "id": "test:event",
       "symbol": "FPT",
-      "event_date": "2026-08-07",
-      "published_at": "2026-08-07",
+      "event_date": "2026-08-08",
+      "published_at": "2026-08-08",
       "type": "financial_report",
       "title": "Công bố BCTC quý",
       "status": "published",

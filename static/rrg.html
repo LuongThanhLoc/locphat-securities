@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f4f0e6">
+  <title>Biểu Đồ Sức Mạnh Giá LP‑RRG - Lộc Phát Securities</title>
+
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=20260808_rrg">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese"
+    rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: {
+            brand: { dark: '#0b0f19', card: '#0f172a', emerald: '#10b981', cyan: '#38bdf8', purple: '#a855f7' }
+          }
+        }
+      }
+    }
+  </script>
+
+  <link rel="stylesheet" href="/static/style.css?v=20260808_rrg">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260808_nav_v2">
+  <style>
+    body {
+      background-color: #ebe6da;
+      color: #151817;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .rrg-canvas-container {
+      position: relative;
+      width: 100%;
+      height: 600px;
+      background: #fbfaf5;
+      border: 1px solid #1b211f;
+      border-radius: 0;
+      overflow: hidden;
+      box-shadow: 0 16px 44px rgba(35, 31, 24, .08);
+    }
+
+    #rrgCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+
+    .rrg-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(255, 253, 247, 0.98);
+      border: 1px solid #1b211f;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #151817;
+      box-shadow: 0 18px 44px rgba(35, 31, 24, .16);
+      display: none;
+      z-index: 30;
+      backdrop-filter: blur(10px);
+    }
+
+    /* Full-canvas loading overlay — sits between the canvas and the tooltip. */
+    .rrg-loading-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 25;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: radial-gradient(ellipse at center, rgba(255,253,247,.88) 0%, rgba(240,235,223,.97) 70%);
+      backdrop-filter: blur(4px);
+      color: #151817;
+      text-align: center;
+      padding: 16px;
+    }
+
+    .rrg-loading-overlay.is-hidden {
+      display: none;
+    }
+
+    .rrg-loading-spinner {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: 4px solid rgba(148, 163, 184, 0.18);
+      border-top-color: #10b981;
+      border-right-color: #38bdf8;
+      animation: rrg-spin 0.9s linear infinite;
+      box-shadow: 0 0 30px rgba(16, 185, 129, 0.25);
+    }
+
+    @keyframes rrg-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .rrg-loading-text {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #151817;
+      text-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);
+    }
+
+    .rrg-loading-sub {
+      font-size: 11px;
+      font-weight: 500;
+      color: #68727a;
+      max-width: 320px;
+      line-height: 1.4;
+    }
+
+    .rrg-loading-progress {
+      width: 200px;
+      height: 4px;
+      background: rgba(6, 74, 107, 0.10);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .rrg-loading-progress::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: -40%;
+      width: 40%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, #10b981, transparent);
+      animation: rrg-shimmer 1.4s ease-in-out infinite;
+    }
+
+    @keyframes rrg-shimmer {
+      to {
+        left: 100%;
+      }
+    }
+
+    .rrg-canvas-container.is-faded {
+      opacity: 0.55;
+    }
+
+    .rrg-sort-button { display:inline-flex; align-items:center; gap:6px; width:100%; font:inherit; color:inherit; }
+    .rrg-sort-button.is-right { justify-content:flex-end; }
+    .rrg-sort-indicator { min-width:24px; font-size:9px; opacity:.72; }
+    .rrg-radar-card { min-height:118px; }
+    .rrg-radar-symbol { min-height:34px !important; }
+    #btnToggleTails {
+      background: #173b53 !important;
+      border-color: #173b53 !important;
+      color: #ffffff !important;
+    }
+    #btnToggleTails * { color: inherit !important; }
+    #btnToggleTails.is-active {
+      background: rgba(37, 99, 235, 0.16) !important;
+      border-color: rgba(37, 99, 235, 0.48) !important;
+      color: #1d4ed8 !important;
+    }
+  </style>
+  <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
+</head>
+
+<body
+  class="lp-editorial lp-page-rrg min-h-screen flex flex-col antialiased">
+
+  <!-- Shared Global Site Navigation Header -->
+  <div data-lp-site-nav></div>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Page Header & Quadrant Filters -->
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-5 border-b border-slate-800/80 pb-5">
+      <div>
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-3 shadow-sm">
+          <i class="fa-solid fa-chart-line"></i> Technical Intelligence v3.2
+        </div>
+        <h1 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+          Biểu Đồ Sức Mạnh Giá LP‑RRG
+        </h1>
+        <p class="text-slate-400 text-sm mt-1">
+          Theo dõi chu kỳ xoay chiều và động lượng giá so với chỉ số tham chiếu
+        </p>
+      </div>
+
+      <!-- Quadrants Summary Badges -->
+      <div id="rrgSummaryBadges" class="flex flex-wrap items-center gap-2">
+        <button id="btnFilterLeading" type="button" data-quadrant="LEADING" class="px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-xs text-emerald-400 font-bold flex items-center gap-1.5 hover:bg-emerald-500/20 transition-all cursor-pointer shadow-sm">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></span> Dẫn Dắt: <b id="countLeading">0</b>
+        </button>
+        <button id="btnFilterWeakening" type="button" data-quadrant="WEAKENING" class="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-amber-400 font-bold flex items-center gap-1.5 hover:bg-amber-500/20 transition-all cursor-pointer shadow-sm">
+          <span class="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.6)]"></span> Suy Yếu: <b id="countWeakening">0</b>
+        </button>
+        <button id="btnFilterImproving" type="button" data-quadrant="IMPROVING" class="px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/25 text-xs text-blue-400 font-bold flex items-center gap-1.5 hover:bg-blue-500/20 transition-all cursor-pointer shadow-sm">
+          <span class="w-2 h-2 rounded-full bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.6)]"></span> Hồi Phục: <b id="countImproving">0</b>
+        </button>
+        <button id="btnFilterLagging" type="button" data-quadrant="LAGGING" class="px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/25 text-xs text-red-400 font-bold flex items-center gap-1.5 hover:bg-red-500/20 transition-all cursor-pointer shadow-sm">
+          <span class="w-2 h-2 rounded-full bg-red-400 shadow-[0_0_8px_rgba(239,68,68,0.6)]"></span> Tụt Hậu: <b id="countLagging">0</b>
+        </button>
+        <button id="btnFilterAll" type="button" data-quadrant="ALL" class="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-300 font-bold flex items-center gap-1.5 hover:bg-slate-700 transition-all cursor-pointer shadow-sm">
+          <i class="fa-solid fa-layer-group text-slate-400"></i> Tất cả
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter Toolbar -->
+    <div class="bg-slate-900/70 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-3 backdrop-blur-md shadow-lg">
+
+      <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+
+        <!-- Controls Group -->
+        <div class="flex flex-wrap items-center gap-3">
+
+          <div class="flex items-center bg-slate-950/60 border border-slate-800 rounded-lg overflow-hidden h-9">
+            <span class="text-[11px] font-semibold text-slate-400 px-3 border-r border-slate-800 bg-slate-900/50 flex items-center h-full">Danh mục</span>
+            <select id="selectGroup" class="bg-transparent text-slate-200 text-xs font-semibold px-3 focus:outline-none hover:text-emerald-400 transition-colors cursor-pointer h-full max-w-[180px]">
+              <option value="SMC_TOP">Cổ phiếu Tiêu Điểm</option>
+            </select>
+          </div>
+
+          <div class="flex items-center bg-slate-950/60 border border-slate-800 rounded-lg overflow-hidden h-9">
+            <span class="text-[11px] font-semibold text-slate-400 px-3 border-r border-slate-800 bg-slate-900/50 flex items-center h-full">Tham chiếu</span>
+            <select id="selectBenchmark" class="bg-transparent text-slate-200 text-xs font-semibold px-3 focus:outline-none hover:text-emerald-400 transition-colors cursor-pointer h-full">
+              <option value="VNINDEX">VN-Index</option>
+              <option value="VN30">VN30 Index</option>
+              <option value="HNXINDEX">HNX-Index</option>
+            </select>
+          </div>
+
+          <div class="flex items-center bg-slate-950/60 border border-slate-800 rounded-lg overflow-hidden h-9 hidden sm:flex">
+            <span class="text-[11px] font-semibold text-slate-400 px-3 border-r border-slate-800 bg-slate-900/50 flex items-center h-full"><i class="fa-solid fa-clock mr-1"></i> Period</span>
+            <select id="selectPeriod" class="bg-transparent text-slate-200 text-xs font-semibold px-3 focus:outline-none hover:text-emerald-400 transition-colors cursor-pointer h-full">
+              <option value="10">10</option>
+              <option value="14" selected>14</option>
+              <option value="20">20</option>
+            </select>
+          </div>
+
+          <div class="flex items-center bg-slate-950/60 border border-slate-800 rounded-lg overflow-hidden h-9 hidden sm:flex">
+            <span class="text-[11px] font-semibold text-slate-400 px-3 border-r border-slate-800 bg-slate-900/50 flex items-center h-full"><i class="fa-solid fa-route mr-1"></i> Đuôi</span>
+            <select id="selectTailLength" class="bg-transparent text-slate-200 text-xs font-semibold px-3 focus:outline-none hover:text-emerald-400 transition-colors cursor-pointer h-full">
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="15" selected>15</option>
+              <option value="20">20</option>
+            </select>
+          </div>
+
+          <!-- Search Box -->
+          <div class="relative h-9 flex items-center">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 text-[11px] text-slate-500"></i>
+            <input id="searchTickerInput" type="text" placeholder="TÌM MÃ..." class="h-full bg-slate-950/60 text-emerald-400 border border-slate-800 text-xs font-bold rounded-lg pl-8 pr-3 w-32 focus:outline-none focus:border-emerald-500 transition-colors placeholder:text-slate-600 uppercase" />
+          </div>
+
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2">
+          <button id="btnToggleTails" type="button" aria-pressed="false"
+            title="Bật hoặc tắt toàn bộ đường lịch sử của các cổ phiếu"
+            class="h-9 px-3 text-xs font-bold rounded-lg bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition-all flex items-center gap-2 shadow-sm whitespace-nowrap">
+            <i class="fa-solid fa-route opacity-70" aria-hidden="true"></i>
+            <span>Đường xoay</span>
+            <strong id="tailModeState" class="px-1.5 py-0.5 rounded bg-slate-900/50 text-[10px] uppercase flex items-center gap-1">
+              <i class="fa-solid fa-toggle-off text-[11px]"></i> OFF
+            </strong>
+          </button>
+          <button id="btnPlayAnimation" type="button" class="h-9 px-4 text-xs font-bold rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-all flex items-center gap-2 shadow-sm">
+            <i class="fa-solid fa-play" id="iconPlay"></i>
+            <span id="textPlay" class="hidden sm:inline">Mô phỏng</span>
+          </button>
+          <button id="btnRefreshRrg" type="button" class="h-9 px-3 text-xs font-bold rounded-lg bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition-all flex items-center gap-1.5">
+            <i class="fa-solid fa-arrows-rotate"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Custom-symbols panel (only shown when "Tùy chỉnh" is selected) -->
+      <div id="customSymbolsPanel" class="hidden border-t border-slate-800/70 pt-3 flex flex-col gap-2">
+        <div class="flex items-center justify-between gap-3">
+          <label for="customSymbolsInput" class="text-xs font-semibold text-slate-400">Danh mục tùy chỉnh (mã phân cách
+            bằng dấu phẩy hoặc khoảng trắng):</label>
+          <span id="customSymbolsCount" class="text-[10px] text-slate-500 font-mono"></span>
+        </div>
+        <div class="flex flex-col md:flex-row gap-2">
+          <input id="customSymbolsInput" type="text" placeholder="VD: FPT, MWG, VCB, HPG, TCB..."
+            class="flex-1 bg-slate-950 text-slate-200 border border-slate-700 text-xs rounded-lg px-3 py-2 font-mono focus:outline-none focus:border-emerald-500 transition-colors" />
+          <button id="btnApplyCustomSymbols" type="button"
+            class="px-3 py-2 text-xs font-bold rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-all flex items-center gap-1.5">
+            <i class="fa-solid fa-check"></i>
+            <span>Áp dụng</span>
+          </button>
+        </div>
+        <p class="text-[10px] text-slate-500">Tối đa 30 mã. Mã chưa đủ 252 phiên vẫn được hiển thị rõ tiến độ lịch sử.</p>
+      </div>
+    </div>
+
+    <div id="rrgDataAlert" class="hidden px-4 py-3 rounded-lg border text-[11px] font-semibold" role="status" aria-live="polite"></div>
+
+    <!-- RRG Canvas Chart Container -->
+    <div class="rrg-canvas-container" id="rrgChartWrap">
+      <canvas id="rrgCanvas"></canvas>
+      <div id="rrgTooltip" class="rrg-tooltip"></div>
+      <div id="rrgLoadingOverlay" class="rrg-loading-overlay" role="status" aria-live="polite">
+        <div class="rrg-loading-spinner" aria-hidden="true"></div>
+        <div class="rrg-loading-text">Đang Tải Dữ Liệu</div>
+        <div class="rrg-loading-progress" aria-hidden="true"></div>
+        <div id="rrgLoadingSub" class="rrg-loading-sub">Đang tải dữ liệu tham chiếu VN-Index từ vnstock…</div>
+      </div>
+    </div>
+
+    <!-- Rotation Radar -->
+    <section class="bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-lg" aria-labelledby="rotationRadarTitle">
+      <div class="px-5 py-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h3 id="rotationRadarTitle" class="font-bold text-white text-sm flex items-center gap-2">
+            <i class="fa-solid fa-satellite-dish text-emerald-400"></i> Rotation Radar
+          </h3>
+          <p class="text-[10px] text-slate-500 mt-1">Tín hiệu xoay vòng tương đối, không phải khuyến nghị mua/bán.</p>
+        </div>
+        <span id="pinnedCount" class="text-[10px] text-slate-500 font-semibold">Đã ghim 0/5 mã</span>
+      </div>
+      <div id="rrgRadarGrid" class="grid grid-cols-1 lg:grid-cols-3 gap-px bg-slate-800/60">
+        <div class="p-5 text-xs text-slate-500 bg-slate-900">Đang tải Rotation Radar…</div>
+      </div>
+    </section>
+
+    <!-- Stock Data Table Section -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-lg">
+      <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="font-bold text-white text-sm flex items-center gap-2">
+          <i class="fa-solid fa-list-numeric text-emerald-400"></i> Bảng Chi Tiết Chỉ Số RRG Cổ Phiếu
+        </h3>
+        <span id="tableUpdatedTime" class="text-xs text-slate-400"></span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[1080px] text-left text-xs text-slate-300">
+          <thead class="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800">
+            <tr>
+              <th class="px-4 py-3"><button class="rrg-sort-button" type="button" data-sort-key="symbol">Mã CP <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3"><button class="rrg-sort-button" type="button" data-sort-key="sector">Ngành ICB <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3"><button class="rrg-sort-button" type="button" data-sort-key="quadrant">Trạng Thái <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3 text-right" title="Điểm xoay tương đối 0–100, không phải điểm mua"><button class="rrg-sort-button is-right" type="button" data-sort-key="rotation_score">Điểm Xoay <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3 text-right"><button class="rrg-sort-button is-right" type="button" data-sort-key="rs_ratio">LP RS-Ratio <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3 text-right"><button class="rrg-sort-button is-right" type="button" data-sort-key="rs_momentum">LP RS-Momentum <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3 text-right"><button class="rrg-sort-button is-right" type="button" data-sort-key="heading_degrees">Hướng 5D <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3 text-right"><button class="rrg-sort-button is-right" type="button" data-sort-key="close">Giá Gần Nhất <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3 text-right"><button class="rrg-sort-button is-right" type="button" data-sort-key="change_5d_pct">Tăng/Giảm 5D <span class="rrg-sort-indicator"></span></button></th>
+              <th class="px-4 py-3 text-center">Thao Tác</th>
+            </tr>
+          </thead>
+          <tbody id="rrgTableBody" class="divide-y divide-slate-800/60">
+            <tr>
+              <td colspan="10" class="text-center py-8 text-slate-500">Đang tải dữ liệu biểu đồ LP‑RRG...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="/static/site-nav.js?v=20260808_light_v2"></script>
+  <script src="/static/rrg.js?v=20260808_light_v1"></script>
+</body>
+
+</html>

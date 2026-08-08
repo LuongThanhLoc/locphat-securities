@@ -20,3 +20,15 @@ services:
         sync: false
       - key: VNAI_API_KEY
         sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: locphats-rrg
+          property: connectionString
+      - key: RRG_DATA_V2_ENABLED
+        value: "true"
+
+databases:
+  - name: locphats-rrg
+    plan: basic-256mb
+    databaseName: locphats_rrg
+    user: locphats_rrg

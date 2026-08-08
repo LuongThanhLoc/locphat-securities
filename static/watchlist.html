@@ -3,17 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#090d10">
+  <meta name="theme-color" content="#f4f0e6">
   <meta name="description" content="Danh mục theo dõi cổ phiếu cá nhân - Lộc Phát Securities">
   <title>Theo Dõi Của Tôi - Lộc Phát Securities</title>
   <link rel="icon" type="image/x-icon" href="/favicon.ico?v=20260728_v1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
   <link rel="stylesheet" href="/static/watchlist.css?v=20260806_align_v3">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
 </head>
-<body>
+<body class="lp-editorial lp-page-watchlist">
   <div class="lp-page-nav-wrap" data-lp-site-nav></div>
 
   <main class="wl-shell">
@@ -74,10 +75,12 @@
       <div class="wl-add-group">
         <label class="symbol-filter">
           <span>Thêm mã</span>
-          <input id="wlAddInput" maxlength="6" autocomplete="off" placeholder="FPT, PNJ...">
+          <div style="position: relative; display: flex; flex: 1;">
+            <input id="wlAddInput" style="flex: 1; min-width: 0;" maxlength="6" autocomplete="off" placeholder="FPT, PNJ...">
+            <div class="wl-suggest-dropdown" id="wlSuggestDropdown" style="width: 100%; box-sizing: border-box;"></div>
+          </div>
         </label>
         <button class="wl-add-btn" id="wlAddBtn" type="button">Thêm</button>
-        <div class="wl-suggest-dropdown" id="wlSuggestDropdown"></div>
       </div>
 
       <div class="segmented" id="wlSegmentedFilter" aria-label="Bộ lọc AI">
@@ -156,7 +159,7 @@
   <!-- Toast Container -->
   <div class="wl-toast-container" id="wlToastContainer"></div>
 
-  <script src="/static/site-nav.js?v=20260804_mobile_nav_v1"></script>
-  <script src="/static/watchlist.js?v=20260805_v2"></script>
+  <script src="/static/site-nav.js?v=20260808_light_v2"></script>
+  <script src="/static/watchlist.js?v=20260808_contrast_v2"></script>
 </body>
 </html>

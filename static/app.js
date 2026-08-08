@@ -26,6 +26,8 @@ let ALL_TRACK_RECORDS = [];
 let dnseRealtimeAbortController = null;
 let dnseRealtimeTimer = null;
 let currentDashboardData = null;
+let currentChartEngine = 'apex';
+let tvWidgetInstance = null;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -212,6 +214,10 @@ function getLogoUrl(symbol, ext = 'jpeg') {
 }
 
 function handleLogoError(imgEl, symbol, fallbackElId) {
+  if (window.handleLogoFallback) {
+    window.handleLogoFallback(imgEl, symbol);
+    return;
+  }
   const sym = symbol.toUpperCase();
   const currentSrc = imgEl.src || '';
 
@@ -222,7 +228,6 @@ function handleLogoError(imgEl, symbol, fallbackElId) {
   } else if (currentSrc.includes('.jpg')) {
     imgEl.src = getLogoUrl(sym, 'webp');
   } else {
-    // All image formats exhausted, show fallback initials
     imgEl.style.display = 'none';
     if (fallbackElId) {
       const fb = document.getElementById(fallbackElId);
@@ -425,7 +430,7 @@ function handleSearchModalInput(query) {
           </div>
         </div>
         <div class="modal-item-right">
-          <span class="modal-item-tag" style="background: rgba(16, 185, 129, 0.15); color: #34d399;">${s.symbol}</span>
+          <span class="modal-item-tag" style="background: rgba(16, 185, 129, 0.15); color: #08713c;">${s.symbol}</span>
         </div>
       </div>
     `;
@@ -1073,9 +1078,9 @@ function renderDashboard(data) {
     // Render 2 Detail Metrics
     const detailEl = document.getElementById('sectorDetailMetricsRow');
     detailEl.innerHTML = sh.detail_metrics.map(d => `
-      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px;">
+      <div style="background: var(--lp-paper); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px;">
         <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">${d.label}</div>
-        <div style="font-size: 16px; font-weight: 800; color: #fff; margin: 2px 0;">${d.value}</div>
+        <div style="font-size: 16px; font-weight: 800; color: var(--text-main); margin: 2px 0;">${d.value}</div>
         <div style="font-size: 11px; color: var(--text-sub);">${d.desc}</div>
       </div>
     `).join('');
@@ -1123,7 +1128,8 @@ function renderDashboard(data) {
   if (preState) preState.style.display = 'flex';
   if (scanState) scanState.style.display = 'none';
   if (resState) resState.style.display = 'none';
-  // Render Candlestick Chart with Timeframe Switcher
+  // Render Candlestick Chart with Engine Switcher (TradingView Lightweight / Apex)
+  initTradingViewLightweightChart(data.price_history, data.symbol);
   initPriceCandleChart(data.price_history);
 
   // Auto-fetch & render the search-grounded hot-news widget
@@ -1228,12 +1234,12 @@ function renderTrendMetadata(trend) {
   element.innerHTML = `
     <div class="trend-source-panel">
       <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:space-between;">
-        <strong style="color:#7dd3fc;"><i class="fa-solid fa-database"></i> ${escapeHtml(meta.source || 'Nguồn BCTC chuẩn hóa')}</strong>
+        <strong style="color:#07577a;"><i class="fa-solid fa-database"></i> ${escapeHtml(meta.source || 'Nguồn BCTC chuẩn hóa')}</strong>
         <span class="industry-sector-label">${escapeHtml(meta.sector_name || '')}</span>
         <span>Kỳ có dữ liệu: ${escapeHtml((periods || []).join(', ') || 'N/A')}</span>
       </div>
       <div>${escapeHtml(meta.flow_definition || '')} ${escapeHtml(meta.stock_definition || '')}</div>
-      <div style="color:#94a3b8;">${escapeHtml(meta.comparison || '')}</div>
+      <div style="color:#59656b;">${escapeHtml(meta.comparison || '')}</div>
       ${selected ? `<div class="industry-chip-row"><strong>4 chỉ tiêu đang hiển thị:</strong>${selected}</div>` : ''}
       ${indicators ? `<details class="industry-details"><summary>Chỉ tiêu ngành nên theo dõi thêm</summary><div class="industry-chip-row">${indicators}</div></details>` : ''}
     </div>`;
@@ -1310,10 +1316,10 @@ function triggerRevenueAnalysis() {
             `).join('') : '';
 
             return `
-              <div style="background: rgba(15, 23, 42, 0.4); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 4px;">
+              <div style="background: var(--lp-paper); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 4px;">
                 <div class="accordion-header ${hasChildren ? 'open' : ''}" onclick="toggleAccordion(${idx})">
                 <span style="color: ${s.color};">${iconHtml} ${escapeHtml(s.name)}</span>
-                  <span style="color: var(--text-muted);">${s.percentage}% <strong style="color: #fff;">(${s.amount_billion.toLocaleString()} tỷ)</strong></span>
+                  <span style="color: var(--text-muted);">${s.percentage}% <strong style="color: var(--text-main);">(${s.amount_billion.toLocaleString()} tỷ)</strong></span>
                 </div>
                 ${hasChildren ? `
                   <div class="accordion-body open" id="accBody_${idx}" style="border-left: 2px solid ${s.color};">
@@ -1407,7 +1413,7 @@ function renderRevenueKpis(rev) {
       label: 'Tăng Trưởng Doanh Thu',
       value: 'N/A',
       trend: null,
-      color: '#94a3b8',
+      color: '#59656b',
       icon: 'fa-chart-line',
     });
   }
@@ -1426,19 +1432,19 @@ function renderRevenueKpis(rev) {
       label: 'Chất Lượng Thu Nhập',
       value: 'N/A',
       trend: null,
-      color: '#94a3b8',
+      color: '#59656b',
       icon: 'fa-shield-check',
     });
   }
 
   container.innerHTML = kpis.map(kpi => `
-    <div class="rev-kpi-card" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px;">
+    <div class="rev-kpi-card" style="background: var(--lp-paper); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px;">
       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
         <i class="fa-solid ${kpi.icon}" style="color: ${kpi.color}; font-size: 14px;"></i>
         <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase;">${kpi.label}</span>
       </div>
       <div style="display: flex; align-items: center; gap: 8px;">
-        <span style="font-size: 18px; font-weight: 700; color: #fff;">${kpi.value}</span>
+        <span style="font-size: 18px; font-weight: 700; color: var(--text-main);">${kpi.value}</span>
         ${kpi.trend === 'up' ? '<i class="fa-solid fa-arrow-up" style="color: #10b981; font-size: 12px;"></i>' :
           kpi.trend === 'down' ? '<i class="fa-solid fa-arrow-down" style="color: #ef4444; font-size: 12px;"></i>' : ''}
       </div>
@@ -1475,15 +1481,15 @@ function renderRevenueTrends(rev) {
   if (trendKpis) {
     const summary = historical.summary || {};
     const trendKpisData = [
-      { label: 'Doanh Thu Kỳ Trước', value: summary.previous_revenue ? `${summary.previous_revenue.toLocaleString()} Tỷ` : 'N/A', color: '#94a3b8' },
-      { label: 'YoY', value: summary.yoy_growth_pct !== undefined ? `${summary.yoy_growth_pct > 0 ? '+' : ''}${summary.yoy_growth_pct}%` : 'N/A', color: summary.yoy_growth_pct > 0 ? '#10b981' : '#ef4444' },
-      { label: 'CAGR', value: summary.cagr_pct !== undefined ? `${summary.cagr_pct > 0 ? '+' : ''}${summary.cagr_pct}%` : 'N/A', color: '#38bdf8' },
-      { label: 'Biên Lợi Nhuận Gộp TB', value: summary.avg_gross_margin_pct !== undefined ? `${summary.avg_gross_margin_pct}%` : 'N/A', color: '#f59e0b' },
+      { label: 'Doanh Thu Kỳ Trước', value: summary.previous_revenue ? `${summary.previous_revenue.toLocaleString('vi-VN')} Tỷ` : 'N/A', color: 'var(--lp-ink)' },
+      { label: 'YoY', value: summary.yoy_growth_pct !== undefined ? `${summary.yoy_growth_pct > 0 ? '+' : ''}${summary.yoy_growth_pct}%` : 'N/A', color: summary.yoy_growth_pct > 0 ? '#08713c' : '#9f2725' },
+      { label: 'CAGR', value: summary.cagr_pct !== undefined ? `${summary.cagr_pct > 0 ? '+' : ''}${summary.cagr_pct}%` : 'N/A', color: '#07577a' },
+      { label: 'Biên Lợi Nhuận Gộp TB', value: summary.avg_gross_margin_pct !== undefined ? `${summary.avg_gross_margin_pct}%` : 'N/A', color: '#805000' },
     ];
     trendKpis.innerHTML = trendKpisData.map(k => `
-      <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px; text-align: center;">
-        <div style="color: var(--text-muted); font-size: 9px; text-transform: uppercase; margin-bottom: 4px;">${k.label}</div>
-        <div style="font-size: 16px; font-weight: 700; color: ${k.color};">${k.value}</div>
+      <div style="background: var(--lp-paper); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px; text-align: center;">
+        <div style="color: var(--text-muted); font-size: 10px; font-weight: 600; text-transform: uppercase; margin-bottom: 4px;">${k.label}</div>
+        <div style="font-size: 17px; font-weight: 800; color: ${k.color};">${k.value}</div>
       </div>
     `).join('');
   }
@@ -1509,7 +1515,6 @@ function renderRevenueAreaChart(historical) {
   if (!container) return;
 
   const dataPoints = historical.data_points || [];
-  const config = historical.chart_config || {};
 
   // Prepare data for ApexCharts - filter out null/undefined
   const categories = dataPoints.map(p => p.period);
@@ -1531,7 +1536,7 @@ function renderRevenueAreaChart(historical) {
       { name: 'LNST', type: 'line', data: npatData },
     ],
     chart: {
-      height: 280,
+      height: 300,
       type: 'line',
       toolbar: { show: false },
       zoom: { enabled: false },
@@ -1539,49 +1544,84 @@ function renderRevenueAreaChart(historical) {
       background: 'transparent',
       parentHeightOffset: 0,
     },
-    colors: [config.colors?.revenue || '#10b981', config.colors?.gross_profit || '#38bdf8', config.colors?.npat || '#f59e0b'],
+    colors: ['#08713c', '#07577a', '#b45309'],
     stroke: {
       curve: 'smooth',
-      width: [2, 2, 2],
+      width: [3, 2.5, 2.5],
       dashArray: [0, 5, 5],
+    },
+    markers: {
+      size: [5, 4, 4],
+      strokeColors: '#ffffff',
+      strokeWidth: 2,
+      hover: { size: 7 }
     },
     fill: {
       type: ['gradient', 'solid', 'solid'],
       gradient: {
         shadeIntensity: 1,
-        opacityFrom: 0.3,
-        opacityTo: 0.05,
+        opacityFrom: 0.25,
+        opacityTo: 0.03,
         stops: [0, 90, 100],
       },
     },
     labels: categories,
     xaxis: {
       type: 'category',
-      labels: { style: { colors: '#94a3b8', fontSize: '10px' } },
-      axisBorder: { show: false },
-      axisTicks: { show: false },
+      labels: { style: { colors: '#374151', fontSize: '11px', fontWeight: '600' } },
+      axisBorder: { show: true, color: 'rgba(0, 0, 0, 0.1)' },
+      axisTicks: { show: true, color: 'rgba(0, 0, 0, 0.1)' },
     },
     yaxis: {
       labels: {
-        style: { colors: '#94a3b8', fontSize: '10px' },
-        formatter: v => `${v.toLocaleString()} Tỷ`,
+        style: { colors: '#374151', fontSize: '11px', fontWeight: '600' },
+        formatter: v => v >= 1000 ? `${(v/1000).toFixed(1).replace(/\.0$/, '')}k Tỷ` : `${v.toLocaleString('vi-VN')} Tỷ`,
       },
     },
     legend: {
       position: 'top',
       horizontalAlign: 'right',
-      labels: { colors: '#94a3b8' },
-      fontSize: '11px',
+      labels: { colors: '#1e293b' },
+      fontSize: '12px',
+      fontWeight: 600,
+      itemMargin: { horizontal: 10, vertical: 5 }
     },
     tooltip: {
-      theme: 'dark',
-      y: { formatter: v => `${v?.toLocaleString() || 0} Tỷ` },
+      theme: 'light',
+      style: { fontSize: '12px', fontFamily: 'Inter, sans-serif' },
+      y: { formatter: v => v !== null && v !== undefined ? `${v.toLocaleString('vi-VN')} Tỷ` : 'N/A' },
     },
     grid: {
-      borderColor: 'rgba(148, 163, 184, 0.1)',
+      borderColor: 'rgba(0, 0, 0, 0.08)',
       strokeDashArray: 3,
     },
-    dataLabels: { enabled: false },
+    dataLabels: {
+      enabled: true,
+      offsetY: -6,
+      style: {
+        fontSize: '10px',
+        fontFamily: 'Inter, sans-serif',
+        fontWeight: '700',
+        colors: ['#08713c', '#07577a', '#b45309']
+      },
+      background: {
+        enabled: true,
+        foreColor: '#ffffff',
+        padding: 3,
+        borderRadius: 3,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 0, 0, 0.1)',
+        opacity: 0.95,
+        dropShadow: { enabled: false }
+      },
+      formatter: function(val) {
+        if (val === null || val === undefined) return '';
+        if (Math.abs(val) >= 1000) {
+          return (val / 1000).toFixed(1).replace(/\.0$/, '') + 'k Tỷ';
+        }
+        return val.toLocaleString('vi-VN') + ' Tỷ';
+      }
+    },
   };
 
   revenueTrendChart = new ApexCharts(container, options);
@@ -1593,8 +1633,6 @@ function renderSegmentStackedChart(segmentTrends) {
   if (!container) return;
 
   const segments = segmentTrends.segments || {};
-  const config = segmentTrends.chart_config || {};
-  const colors = config.colors || {};
 
   // Get all unique periods
   const allPeriods = new Set();
@@ -1615,10 +1653,8 @@ function renderSegmentStackedChart(segmentTrends) {
     };
   });
 
-  // Default color palette
-  const defaultColors = ['#10b981', '#38bdf8', '#f59e0b', '#a855f7', '#94a3b8'];
-  const colorValues = Object.values(colors);
-  const chartColors = series.map((_, i) => colorValues[i] || defaultColors[i % defaultColors.length]);
+  // Color palette
+  const chartColors = ['#08713c', '#07577a', '#b45309', '#6366f1', '#475569'];
 
   // Destroy existing chart
   if (segmentStackedChart) {
@@ -1631,7 +1667,7 @@ function renderSegmentStackedChart(segmentTrends) {
     series: series,
     chart: {
       type: 'bar',
-      height: 240,
+      height: 250,
       stacked: true,
       toolbar: { show: false },
       zoom: { enabled: false },
@@ -1642,7 +1678,7 @@ function renderSegmentStackedChart(segmentTrends) {
     plotOptions: {
       bar: {
         horizontal: false,
-        columnWidth: '60%',
+        columnWidth: '55%',
         borderRadius: 2,
       },
     },
@@ -1650,31 +1686,41 @@ function renderSegmentStackedChart(segmentTrends) {
     labels: categories,
     xaxis: {
       type: 'category',
-      labels: { style: { colors: '#94a3b8', fontSize: '10px' } },
+      labels: { style: { colors: '#374151', fontSize: '11px', fontWeight: '600' } },
       axisBorder: { show: false },
       axisTicks: { show: false },
     },
     yaxis: {
       labels: {
-        style: { colors: '#94a3b8', fontSize: '10px' },
-        formatter: v => `${v.toLocaleString()} Tỷ`,
+        style: { colors: '#374151', fontSize: '11px', fontWeight: '600' },
+        formatter: v => v >= 1000 ? `${(v/1000).toFixed(1).replace(/\.0$/, '')}k Tỷ` : `${v.toLocaleString('vi-VN')} Tỷ`,
       },
     },
     legend: {
       position: 'top',
       horizontalAlign: 'right',
-      labels: { colors: '#94a3b8' },
-      fontSize: '10px',
+      labels: { colors: '#1e293b' },
+      fontSize: '11px',
+      fontWeight: 600,
     },
     tooltip: {
-      theme: 'dark',
-      y: { formatter: v => `${v?.toLocaleString() || 0} Tỷ` },
+      theme: 'light',
+      style: { fontSize: '12px', fontFamily: 'Inter, sans-serif' },
+      y: { formatter: v => v !== null && v !== undefined ? `${v.toLocaleString('vi-VN')} Tỷ` : 'N/A' },
     },
     grid: {
-      borderColor: 'rgba(148, 163, 184, 0.1)',
+      borderColor: 'rgba(0, 0, 0, 0.08)',
       strokeDashArray: 3,
     },
-    dataLabels: { enabled: false },
+    dataLabels: {
+      enabled: true,
+      formatter: v => v > 0 ? (v >= 1000 ? `${(v/1000).toFixed(1).replace(/\.0$/, '')}k` : `${v.toLocaleString('vi-VN')}`) : '',
+      style: {
+        fontSize: '10px',
+        fontWeight: '700',
+        colors: ['#ffffff']
+      }
+    }
   };
 
   segmentStackedChart = new ApexCharts(container, options);
@@ -1694,10 +1740,10 @@ function renderSectorContext(rev) {
 
   container.style.display = 'block';
   container.innerHTML = `
-    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; margin-top: 16px;">
+    <div style="background: var(--lp-paper); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; margin-top: 16px;">
       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
         <i class="fa-solid fa-industry" style="color: #38bdf8;"></i>
-        <strong style="color: #fff;">Ngành: ${escapeHtml(sectorInfo.name || 'N/A')}</strong>
+        <strong style="color: var(--text-main);">Ngành: ${escapeHtml(sectorInfo.name || 'N/A')}</strong>
       </div>
       ${sectorInfo.typical_sources ? `
         <div style="margin-bottom: 12px;">
@@ -1727,7 +1773,7 @@ function renderSectorContext(rev) {
           <div style="color: #ef4444; font-size: 10px; font-weight: 700; margin-bottom: 4px;">
             <i class="fa-solid fa-exclamation-triangle"></i> Cảnh báo đặc thù ngành:
           </div>
-          <ul style="margin: 0; padding-left: 16px; color: #fca5a5; font-size: 10px;">
+          <ul style="margin: 0; padding-left: 16px; color: #9f2725; font-size: 10px;">
             ${sectorInfo.red_flags.map(f => `<li>${escapeHtml(f)}</li>`).join('')}
           </ul>
         </div>
@@ -1784,34 +1830,34 @@ function renderRevenueMetadata(revenue) {
     const historical = revenue.historical_reference || {};
     element.innerHTML = `
       <div style="background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.3); padding:16px; border-radius:6px;">
-        <div style="font-weight:800; color:#fbbf24; margin-bottom:6px;"><i class="fa-solid fa-triangle-exclamation"></i> Không dựng cơ cấu khi thiếu bằng chứng</div>
-        <div style="color:#e2e8f0;">${escapeHtml(revenue.message || 'Chưa có dữ liệu phân khúc được kiểm chứng.')}</div>
-        ${revenue.target_period ? `<div style="margin-top:6px; color:#fcd34d;">Kỳ yêu cầu: <strong>${escapeHtml(revenue.target_period)}</strong>. Dữ liệu cũ không được dùng làm số hiện tại.</div>` : ''}
-        ${historical.period ? `<div style="margin-top:4px; color:#94a3b8;">Tham chiếu lịch sử gần nhất: ${escapeHtml(historical.period)} (chỉ ghi nguồn, không dựng biểu đồ).</div>` : ''}
-        ${limitations ? `<ul style="margin:8px 0 0 18px; color:#94a3b8; font-size:12px;">${limitations}</ul>` : ''}
+        <div style="font-weight:800; color:#805000; margin-bottom:6px;"><i class="fa-solid fa-triangle-exclamation"></i> Không dựng cơ cấu khi thiếu bằng chứng</div>
+        <div style="color:#151817;">${escapeHtml(revenue.message || 'Chưa có dữ liệu phân khúc được kiểm chứng.')}</div>
+        ${revenue.target_period ? `<div style="margin-top:6px; color:#805000;">Kỳ yêu cầu: <strong>${escapeHtml(revenue.target_period)}</strong>. Dữ liệu cũ không được dùng làm số hiện tại.</div>` : ''}
+        ${historical.period ? `<div style="margin-top:4px; color:#59656b;">Tham chiếu lịch sử gần nhất: ${escapeHtml(historical.period)} (chỉ ghi nguồn, không dựng biểu đồ).</div>` : ''}
+        ${limitations ? `<ul style="margin:8px 0 0 18px; color:#59656b; font-size:12px;">${limitations}</ul>` : ''}
       </div>
       ${profileHtml}`;
     return;
   }
   const sourceLink = source.url
-    ? `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" style="color:#7dd3fc; text-decoration:underline;">${escapeHtml(source.document || 'Mở nguồn')}</a>`
+    ? `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer" style="color:#07577a; text-decoration:underline;">${escapeHtml(source.document || 'Mở nguồn')}</a>`
     : escapeHtml(source.document || source.publisher || 'BCTC chuẩn hóa');
   const negative = (revenue.negative_components || []).map(item => `${escapeHtml(item.name)}: ${Number(item.amount_billion).toLocaleString()} tỷ`).join('; ');
   const fallbackNotice = revenue.fallback_used
-    ? `<div style="color:#fcd34d; font-weight:700;">Đang dùng kỳ gần nhất ${escapeHtml(revenue.period || 'N/A')} vì chưa có cơ cấu phù hợp cho ${escapeHtml(revenue.target_period || 'kỳ yêu cầu')}.</div>`
+    ? `<div style="color:#805000; font-weight:700;">Đang dùng kỳ gần nhất ${escapeHtml(revenue.period || 'N/A')} vì chưa có cơ cấu phù hợp cho ${escapeHtml(revenue.target_period || 'kỳ yêu cầu')}.</div>`
     : '';
   const qualityHtml = renderRevenueQuality(revenue.quality_assessment);
   element.innerHTML = `
-    <div style="background:${revenue.fallback_used ? 'rgba(245,158,11,.07)' : 'rgba(16,185,129,.07)'}; border:1px solid ${revenue.fallback_used ? 'rgba(245,158,11,.3)' : 'rgba(16,185,129,.26)'}; padding:12px; border-radius:6px; font-size:12px; line-height:1.6; color:#cbd5e1;">
+    <div style="background:${revenue.fallback_used ? 'rgba(245,158,11,.07)' : 'rgba(16,185,129,.07)'}; border:1px solid ${revenue.fallback_used ? 'rgba(245,158,11,.3)' : 'rgba(16,185,129,.26)'}; padding:12px; border-radius:6px; font-size:12px; line-height:1.6; color:#374047;">
       <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between;">
         <strong style="color:#6ee7b7;">${escapeHtml(revenue.title || 'Cơ cấu doanh thu')}</strong>
-        <span>Kỳ: <strong style="color:#fff;">${escapeHtml(revenue.period || 'N/A')}</strong> | Tin cậy: ${escapeHtml(revenue.confidence || 'N/A')}</span>
+        <span>Kỳ: <strong style="color:var(--text-main);">${escapeHtml(revenue.period || 'N/A')}</strong> | Tin cậy: ${escapeHtml(revenue.confidence || 'N/A')}</span>
       </div>
       ${fallbackNotice}
       <div>Nguồn: ${sourceLink}${source.publisher ? `, ${escapeHtml(source.publisher)}` : ''}</div>
-      ${source.evidence ? `<div style="color:#94a3b8;">Căn cứ: ${escapeHtml(source.evidence)}</div>` : ''}
-      ${negative ? `<div style="color:#fca5a5;">Khoản âm giữ nguyên dấu, không đưa vào donut: ${negative}</div>` : ''}
-      ${limitations ? `<ul style="margin:6px 0 0 18px; color:#94a3b8;">${limitations}</ul>` : ''}
+      ${source.evidence ? `<div style="color:#59656b;">Căn cứ: ${escapeHtml(source.evidence)}</div>` : ''}
+      ${negative ? `<div style="color:#9f2725;">Khoản âm giữ nguyên dấu, không đưa vào donut: ${negative}</div>` : ''}
+      ${limitations ? `<ul style="margin:6px 0 0 18px; color:#59656b;">${limitations}</ul>` : ''}
     </div>
     ${qualityHtml}
     ${profileHtml}`;
@@ -2178,7 +2224,7 @@ function switchDashboardTab(tabName) {
 
     if (contentChart) contentChart.style.display = 'block';
     if (contentAi) contentAi.style.display = 'none';
-    if (toolbar) toolbar.style.display = 'flex';
+    if (toolbar) toolbar.style.display = (currentChartEngine === 'apex') ? 'flex' : 'none';
 
     // Auto-resize chart on tab reveal
     setTimeout(() => {
@@ -2454,7 +2500,7 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
     markers: {
       size: isLineView ? 5 : series.map(s => s.type === 'line' ? 5 : 0),
       strokeWidth: 2,
-      strokeColors: '#0f172a',
+      strokeColors: '#fffdf7',
       hover: { size: 8 }
     },
     plotOptions: {
@@ -2467,11 +2513,11 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
     dataLabels: {
       enabled: false
     },
-    theme: { mode: 'dark' },
+    theme: { mode: 'light' },
     xaxis: {
       categories: categories,
       labels: {
-        style: { colors: '#94a3b8', fontWeight: 600, fontSize: '12px' }
+        style: { colors: '#59656b', fontWeight: 600, fontSize: '12px' }
       },
       axisBorder: { color: 'rgba(255, 255, 255, 0.1)' }
     },
@@ -2499,12 +2545,12 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
           axisBorder: { show: idx === 0, color: '#3b82f6' },
           labels: {
             show: idx === 0,
-            style: { colors: '#94a3b8' },
+            style: { colors: '#59656b' },
             formatter: (val) => (val >= 1000 || val <= -1000) ? `${(val/1000).toFixed(1)}k Tỷ` : `${val.toLocaleString()} Tỷ`
           },
           title: {
             text: idx === 0 && !compactChart ? "Giá trị (Tỷ VNĐ)" : undefined,
-            style: { color: '#94a3b8', fontSize: '11px', fontWeight: 600 }
+            style: { color: '#59656b', fontSize: '11px', fontWeight: 600 }
           }
         };
       }
@@ -2514,13 +2560,13 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
       horizontalAlign: 'left',
       fontSize: compactChart ? '10px' : '12px',
       itemMargin: { horizontal: compactChart ? 5 : 10, vertical: 3 },
-      labels: { colors: '#cbd5e1' }
+      labels: { colors: '#59656b' }
     },
     grid: {
-      borderColor: 'rgba(255, 255, 255, 0.08)'
+      borderColor: 'rgba(55, 64, 71, 0.14)'
     },
     tooltip: {
-      theme: 'dark',
+      theme: 'light',
       shared: true,
       intersect: false,
       custom: function({ series, seriesIndex, dataPointIndex, w }) {
@@ -2534,7 +2580,7 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
           const isPos = b.pct >= 0;
           const sign = isPos ? '+' : '';
           const bg = isPos ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)';
-          const color = isPos ? '#34d399' : '#f87171';
+          const color = isPos ? '#08713c' : '#f87171';
           const border = isPos ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)';
           badgeHtml = `<span style="background: ${bg}; color: ${color}; border: 1px solid ${border}; font-weight: 700; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 6px;">${sign}${b.pct}% ${escapeHtml(b.basis || 'YoY')}</span>`;
         }
@@ -2547,16 +2593,16 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
           const color = isLNST ? '#10b981' : '#38bdf8';
           return `
             <div style="display: flex; justify-content: space-between; gap: 16px; margin-top: 5px; font-size: 12px;">
-              <span style="color: #94a3b8;"><span style="color:${color}">■</span> ${c.label} <small>(${c.nature === 'stock' ? 'cuối kỳ' : 'trong kỳ'})</small>:</span>
-              <strong style="color: ${isLNST ? '#10b981' : '#fff'}; font-weight: 700;">${val} Tỷ ${isLNST ? badgeHtml : ''}</strong>
+              <span style="color: #59656b;"><span style="color:${color}">■</span> ${c.label} <small>(${c.nature === 'stock' ? 'cuối kỳ' : 'trong kỳ'})</small>:</span>
+              <strong style="color: ${isLNST ? '#08713c' : '#151817'}; font-weight: 700;">${val} Tỷ ${isLNST ? badgeHtml : ''}</strong>
             </div>
           `;
         }).join('');
 
         return `
-          <div style="background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 12px; backdrop-filter: blur(12px); box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-            <div style="font-weight: 800; color: #fff; border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding-bottom: 6px; margin-bottom: 6px; font-size: 13px;">
-              <i class="fa-solid fa-calendar-days" style="color: #38bdf8;"></i> Kỳ báo cáo: ${period}
+          <div style="background: #fffdf7; border: 1px solid #c9c5ba; border-radius: 6px; padding: 12px; box-shadow: 0 12px 28px rgba(35,31,24,0.16); color:#151817;">
+            <div style="font-weight: 800; color: #151817; border-bottom: 1px solid #ded9cc; padding-bottom: 6px; margin-bottom: 6px; font-size: 13px;">
+              <i class="fa-solid fa-calendar-days" style="color: #087d9c;"></i> Kỳ báo cáo: ${period}
             </div>
             ${itemsHtml}
           </div>
@@ -2633,10 +2679,27 @@ function renderDonutChart(seriesData, labelsData, colorsData) {
       height: 230,
       background: 'transparent'
     },
-    stroke: { width: 2, colors: ['#0f172a'] },
+    stroke: { width: 2, colors: ['#fffdf7'] },
     legend: { show: false },
-    dataLabels: { enabled: true, formatter: (val) => `${val.toFixed(1)}%` },
-    theme: { mode: 'dark' },
+    dataLabels: {
+      enabled: true,
+      formatter: (val) => `${val.toFixed(1)}%`,
+      style: {
+        fontSize: '11px',
+        fontFamily: 'Inter, sans-serif',
+        fontWeight: '700',
+        colors: ['#ffffff']
+      },
+      dropShadow: {
+        enabled: true,
+        top: 1,
+        left: 1,
+        blur: 2,
+        color: '#000000',
+        opacity: 0.8
+      }
+    },
+    theme: { mode: 'light' },
     plotOptions: {
       pie: {
         donut: {
@@ -2645,7 +2708,7 @@ function renderDonutChart(seriesData, labelsData, colorsData) {
       }
     },
     tooltip: {
-      theme: 'dark',
+      theme: 'light',
       y: {
         formatter: (val) => `${val.toLocaleString()} Tỷ VNĐ`
       }
@@ -2657,6 +2720,220 @@ function renderDonutChart(seriesData, labelsData, colorsData) {
   donutChart.render();
 }
 
+
+
+/* ==========================================================================
+   TRADINGVIEW & PRICE CANDLE CHART ENGINE
+   ========================================================================== */
+function switchChartEngine(engine) {
+  currentChartEngine = engine;
+  const tvBtn = document.getElementById('btnChartEngineTv');
+  const apexBtn = document.getElementById('btnChartEngineApex');
+  const tvContainer = document.getElementById('tradingviewChartContainer');
+  const apexContainer = document.getElementById('priceCandleChart');
+
+  if (engine === 'tradingview') {
+    if (tvBtn) {
+      tvBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm';
+    }
+    if (apexBtn) {
+      apexBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center gap-1.5';
+    }
+    if (tvContainer) tvContainer.style.display = 'block';
+    if (apexContainer) apexContainer.style.display = 'none';
+
+    initTradingViewLightweightChart(rawPriceHistory, currentStockSymbol);
+  } else {
+    if (apexBtn) {
+      apexBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm';
+    }
+    if (tvBtn) {
+      tvBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center gap-1.5';
+    }
+    if (tvContainer) tvContainer.style.display = 'none';
+    if (apexContainer) apexContainer.style.display = 'block';
+
+    if (rawPriceHistory && rawPriceHistory.length > 0) {
+      renderCandleChart(rawPriceHistory);
+    }
+  }
+}
+
+function initTradingViewLightweightChart(history, symbol) {
+  const container = document.getElementById('tradingviewChartContainer');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  const dataList = (history && history.length > 0) ? history : (rawPriceHistory || []);
+  const sym = (symbol || currentStockSymbol || 'TCB').toUpperCase().trim();
+  let exch = (currentDashboardData && currentDashboardData.exchange) ? currentDashboardData.exchange.toUpperCase().trim() : 'HOSE';
+  if (exch === 'HSX') exch = 'HOSE';
+  if (!['HOSE', 'HNX', 'UPCOM'].includes(exch)) exch = 'HOSE';
+
+  // Direct link to TradingView.com for full drawing features
+  const tvLinkEl = document.getElementById('tvExternalLink');
+  if (tvLinkEl) {
+    tvLinkEl.href = `https://www.tradingview.com/chart/?symbol=${exch}:${sym}`;
+  }
+
+  if (!dataList || dataList.length === 0) {
+    container.innerHTML = `
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:#59656b; text-align:center; padding: 20px;">
+        <i class="fa-solid fa-chart-candlestick" style="font-size: 44px; color: rgba(16, 185, 129, 0.4); margin-bottom: 14px;"></i>
+        <div style="font-weight: 700; color: #374047; font-size: 15px;">Đang nạp dữ liệu nến TradingView cho ${sym}...</div>
+      </div>`;
+    return;
+  }
+
+  if (typeof LightweightCharts === 'undefined') {
+    container.innerHTML = `<div style="padding:20px; color:#ef4444;">Đang kết nối thư viện TradingView Lightweight Charts...</div>`;
+    return;
+  }
+
+  // Floating Legend Info
+  const legendEl = document.createElement('div');
+  legendEl.className = 'tv-chart-legend';
+  legendEl.style.cssText = 'position: absolute; top: 12px; left: 16px; z-index: 10; font-family: Inter, sans-serif; font-size: 12px; color: #374047; pointer-events: none; background: rgba(255,253,247,.92); backdrop-filter: blur(8px); padding: 6px 14px; border-radius: 2px; border: 1px solid #c9c5ba; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; box-shadow: 0 8px 24px rgba(35,31,24,.12);';
+  container.appendChild(legendEl);
+
+  const chartWidth = container.clientWidth || 800;
+  const chartHeight = container.clientHeight || 520;
+
+  tvLightweightChartInstance = LightweightCharts.createChart(container, {
+    width: chartWidth,
+    height: chartHeight,
+    layout: {
+      background: { type: 'solid', color: '#fffdf7' },
+      textColor: '#68727a',
+    },
+    grid: {
+      vertLines: { color: 'rgba(55, 64, 71, 0.12)' },
+      horzLines: { color: 'rgba(55, 64, 71, 0.12)' },
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: '#38bdf8', width: 1, style: LightweightCharts.LineStyle.Dashed },
+      horzLine: { color: '#38bdf8', width: 1, style: LightweightCharts.LineStyle.Dashed },
+    },
+    rightPriceScale: {
+      borderColor: '#c9c5ba',
+      scaleMargins: { top: 0.1, bottom: 0.25 },
+    },
+    timeScale: {
+      borderColor: '#c9c5ba',
+      timeVisible: true,
+      secondsVisible: false,
+    },
+  });
+
+  const tvCandleSeries = tvLightweightChartInstance.addCandlestickSeries({
+    upColor: '#10b981',
+    downColor: '#ef4444',
+    borderUpColor: '#10b981',
+    borderDownColor: '#ef4444',
+    wickUpColor: '#10b981',
+    wickDownColor: '#ef4444',
+  });
+
+  const tvVolumeSeries = tvLightweightChartInstance.addHistogramSeries({
+    priceFormat: { type: 'volume' },
+    priceScaleId: '',
+    scaleMargins: { top: 0.78, bottom: 0 },
+  });
+
+  // Prepare & Sort Candles Data
+  const sortedHistory = [...dataList].sort((a, b) => {
+    const da = new Date(a.date || a.time || 0).getTime();
+    const db = new Date(b.date || b.time || 0).getTime();
+    return da - db;
+  });
+
+  const candles = [];
+  const volumes = [];
+
+  sortedHistory.forEach(item => {
+    let rawDate = item.date || item.time;
+    if (!rawDate) return;
+
+    let timeStr = '';
+    if (typeof rawDate === 'string') {
+      timeStr = rawDate.split('T')[0];
+    } else if (typeof rawDate === 'number') {
+      let d = new Date(rawDate > 1e11 ? rawDate : rawDate * 1000);
+      timeStr = d.toISOString().split('T')[0];
+    }
+
+    const open = Number(item.open) || 0;
+    const high = Number(item.high) || 0;
+    const low = Number(item.low) || 0;
+    const close = Number(item.close) || 0;
+    const volume = Number(item.volume) || 0;
+
+    if (open > 0 && close > 0 && timeStr) {
+      candles.push({ time: timeStr, open, high, low, close });
+      volumes.push({
+        time: timeStr,
+        value: volume,
+        color: close >= open ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)'
+      });
+    }
+  });
+
+  tvCandleSeries.setData(candles);
+  tvVolumeSeries.setData(volumes);
+
+  const lastCandle = candles[candles.length - 1] || {};
+  const lastVol = volumes[volumes.length - 1] || {};
+
+  function updateLegend(c, v) {
+    if (!c || !c.close) {
+      legendEl.innerHTML = `<span style="font-weight:700; color:#38bdf8;">${exch}:${sym}</span>`;
+      return;
+    }
+    const color = c.close >= c.open ? '#08713c' : '#f87171';
+    const diff = c.close - c.open;
+    const pct = c.open ? ((diff / c.open) * 100).toFixed(2) : '0.00';
+    const sign = diff >= 0 ? '+' : '';
+    legendEl.innerHTML = `
+      <span style="font-weight:700; color:#38bdf8;">${exch}:${sym}</span>
+      <span style="color:#59656b">${c.time}</span>
+      <span>Mở: <b style="color:${color}">${c.open.toLocaleString()}</b></span>
+      <span>Cao: <b style="color:${color}">${c.high.toLocaleString()}</b></span>
+      <span>Thấp: <b style="color:${color}">${c.low.toLocaleString()}</b></span>
+      <span>Đóng: <b style="color:${color}">${c.close.toLocaleString()} (${sign}${pct}%)</b></span>
+      ${v && v.value ? `<span style="color:#59656b">KL: <b style="color:#151817">${v.value.toLocaleString()}</b></span>` : ''}
+    `;
+  }
+
+  updateLegend(lastCandle, lastVol);
+
+  tvLightweightChartInstance.subscribeCrosshairMove(param => {
+    if (!param || !param.time || param.point === undefined || param.point.x < 0 || param.point.y < 0) {
+      updateLegend(lastCandle, lastVol);
+      return;
+    }
+    const candle = param.seriesData.get(tvCandleSeries);
+    const vol = param.seriesData.get(tvVolumeSeries);
+    if (candle) {
+      updateLegend({ ...candle, time: param.time }, vol);
+    }
+  });
+
+  tvLightweightChartInstance.timeScale().fitContent();
+
+  const resizeObserver = new ResizeObserver(entries => {
+    if (!entries || entries.length === 0) return;
+    const entry = entries[0];
+    if (tvLightweightChartInstance && entry.contentRect) {
+      tvLightweightChartInstance.applyOptions({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height
+      });
+    }
+  });
+  resizeObserver.observe(container);
+}
 
 function initPriceCandleChart(history) {
   rawPriceHistory = history || [];
@@ -2670,6 +2947,29 @@ function setTimeframeMode(tf) {
     const btn = document.getElementById(`btnTf${t}`);
     if (btn) btn.classList.toggle('active', t === tf);
   });
+
+  if (tvLightweightChartInstance) {
+    try {
+      const timeScale = tvLightweightChartInstance.timeScale();
+      if (tf === 'ALL') {
+        timeScale.fitContent();
+      } else {
+        let days = 250;
+        if (tf === '1D') days = 5;
+        else if (tf === '3D') days = 10;
+        else if (tf === '1W') days = 20;
+        else if (tf === '1M') days = 30;
+        else if (tf === '3M') days = 90;
+        else if (tf === '1Y') days = 365;
+
+        const totalCandles = rawPriceHistory ? rawPriceHistory.length : 100;
+        timeScale.setVisibleLogicalRange({
+          from: Math.max(0, totalCandles - days),
+          to: Math.max(0, totalCandles - 1)
+        });
+      }
+    } catch(e) {}
+  }
 
   if (!rawPriceHistory || rawPriceHistory.length === 0) return;
 
@@ -2694,11 +2994,11 @@ function renderCandleChart(history) {
       candleChart = null;
     }
     container.innerHTML = `
-      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:360px; color:#94a3b8; text-align:center; padding: 20px;">
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:360px; color:#59656b; text-align:center; padding: 20px;">
         <i class="fa-solid fa-chart-candlestick" style="font-size: 44px; color: rgba(16, 185, 129, 0.4); margin-bottom: 14px;"></i>
-        <div style="font-weight: 700; color: #cbd5e1; font-size: 15px; margin-bottom: 6px;">Đang cập nhật dữ liệu lịch sử giá</div>
+        <div style="font-weight: 700; color: #374047; font-size: 15px; margin-bottom: 6px;">Đang cập nhật dữ liệu lịch sử giá</div>
         <div style="font-size: 12px; color: #64748b; max-width: 400px; margin-bottom: 16px;">Nguồn dữ liệu nến giá đang tự động kết nối lại (KBS / MSN / VCI). Bấm bên dưới để tải lại.</div>
-        <button onclick="fetchStockData(currentStockSymbol)" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; font-weight: 700; padding: 8px 18px; border-radius: 9999px; font-size: 12px; cursor: pointer; transition: all 0.2s;">
+        <button onclick="fetchStockData(currentStockSymbol)" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #08713c; font-weight: 700; padding: 8px 18px; border-radius: 9999px; font-size: 12px; cursor: pointer; transition: all 0.2s;">
           <i class="fa-solid fa-rotate-right"></i> Tải lại dữ liệu biểu đồ
         </button>
       </div>
@@ -2747,15 +3047,15 @@ function renderCandleChart(history) {
       background: 'transparent',
       toolbar: { show: true }
     },
-    theme: { mode: 'dark' },
+    theme: { mode: 'light' },
     xaxis: {
       type: 'datetime',
-      labels: { style: { colors: '#94a3b8' } }
+      labels: { style: { colors: '#59656b' } }
     },
     yaxis: {
       tooltip: { enabled: true },
       labels: {
-        style: { colors: '#94a3b8' },
+        style: { colors: '#59656b' },
         formatter: (val) => val ? val.toLocaleString() : '0'
       }
     },
@@ -2767,7 +3067,7 @@ function renderCandleChart(history) {
         }
       }
     },
-    grid: { borderColor: 'rgba(255, 255, 255, 0.08)' }
+    grid: { borderColor: 'rgba(55, 64, 71, 0.14)' }
   };
 
   if (candleChart) {
@@ -2871,7 +3171,7 @@ function renderPeerPills(peers) {
   if (!container) return;
 
   if (!peers || peers.length === 0) {
-    container.innerHTML = `<span style="font-size: 11.5px; color: #94a3b8; font-style: italic; align-self: center;">(Chưa chọn mã đối thủ nào. Nhập mã và bấm + Thêm để so sánh)</span>`;
+    container.innerHTML = `<span style="font-size: 11.5px; color: #59656b; font-style: italic; align-self: center;">(Chưa chọn mã đối thủ nào. Nhập mã và bấm + Thêm để so sánh)</span>`;
     return;
   }
 
@@ -2932,21 +3232,21 @@ function renderPeerTable(data) {
     const summary = accuracy.store_summary || {};
     const storeCount = (summary.financial_snapshots || 0) + (summary.peer_metric_snapshots || 0);
     provenance.innerHTML = `
-      <div style="background:rgba(14,165,233,.06); border:1px solid rgba(56,189,248,.22); padding:10px 12px; border-radius:6px; color:#94a3b8; font-size:11px; line-height:1.55; margin-bottom:10px;">
-        <strong style="color:#7dd3fc;">Cách đọc dữ liệu:</strong>
+      <div style="background: var(--lp-paper-muted); border: 1px solid var(--lp-line); padding: 10px 14px; border-radius: 4px; color: #374047; font-size: 11.5px; line-height: 1.55; margin-bottom: 10px;">
+        <strong style="color: var(--lp-navy); font-weight: 700;">Cách đọc dữ liệu:</strong>
         ${policyLine}
         ${periodLine}
         Cột cuối dùng trung vị của nhóm và ghi rõ số mã đủ dữ liệu; N/A nghĩa là chỉ số không phù hợp hoặc không đủ căn cứ, không phải bằng 0.
       </div>
-      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:8px 12px; background:rgba(168,85,247,.06); border:1px solid rgba(168,85,247,.22); border-radius:6px; color:#94a3b8; font-size:11px;">
-        <span style="color:#c4b5fd; font-weight:700;"><i class="fa-solid fa-fingerprint"></i> Độ chính xác dữ liệu (Provenance 100%):</span>
-        <span style="color:#e2e8f0;">Chế độ: <code style="background:rgba(168,85,247,.18); padding:2px 6px; border-radius:4px;">${sourceMode}</code></span>
-        <span style="color:#e2e8f0;">BCTC snapshots: <strong>${summary.financial_snapshots || 0}</strong></span>
-        <span style="color:#e2e8f0;">Metric snapshots: <strong>${summary.peer_metric_snapshots || 0}</strong></span>
-        <span style="color:#94a3b8;">— mỗi ô có thể truy ngược về URL nguồn & hash SHA-256.</span>
-        <span style="margin-left:auto; display:flex; gap:6px;">
-          <button onclick="forceRefreshPeerMatrix()" style="background:linear-gradient(135deg,#a855f7,#7e22ce); color:#fff; border:none; padding:5px 12px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:700;">
-            <i class="fa-solid fa-arrows-rotate"></i> Force Refresh
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 14px; background: var(--lp-paper-muted); border: 1px solid var(--lp-line); border-radius: 4px; color: var(--lp-ink-soft); font-size: 11.5px;">
+        <span style="color: var(--lp-navy); font-weight: 700;"><i class="fa-solid fa-fingerprint"></i> Độ chính xác dữ liệu (Provenance 100%):</span>
+        <span style="color: var(--lp-ink);">Chế độ: <code style="background: var(--lp-navy-soft); color: var(--lp-navy); padding: 2px 8px; border-radius: 4px; font-weight: 700;">${sourceMode}</code></span>
+        <span style="color: var(--lp-ink);">BCTC snapshots: <strong>${summary.financial_snapshots || 0}</strong></span>
+        <span style="color: var(--lp-ink);">Metric snapshots: <strong>${summary.peer_metric_snapshots || 0}</strong></span>
+        <span style="color: var(--lp-muted);">— mỗi ô có thể truy ngược về URL nguồn & hash SHA-256.</span>
+        <span style="margin-left: auto; display: flex; gap: 6px;">
+          <button class="btn-force-refresh" type="button" onclick="forceRefreshPeerMatrix()">
+            <i class="fa-solid fa-arrows-rotate"></i> <span>Force Refresh</span>
           </button>
         </span>
       </div>
@@ -2955,8 +3255,8 @@ function renderPeerTable(data) {
 
   // Build Header Columns
   let headerHtml = `
-    <th style="width: 240px; text-align: left;">Nhóm Chỉ Số & Tên Chỉ Số (15 chỉ số)</th>
-    <th style="width: 80px; text-align: center;">Đơn vị</th>
+    <th style="width: 240px; text-align: left; color: var(--lp-ink); font-weight: 700;">Nhóm Chỉ Số & Tên Chỉ Số (15 chỉ số)</th>
+    <th style="width: 80px; text-align: center; color: var(--lp-ink); font-weight: 700;">Đơn vị</th>
   `;
 
   companies.forEach(comp => {
@@ -2965,21 +3265,21 @@ function renderPeerTable(data) {
     const hasProvenance = !!(prov && prov.snapshot_id);
     const provenanceBadge = hasProvenance
       ? `<div style="font-size: 9px; margin-top: 4px; display: flex; align-items: center; justify-content: center; gap: 4px;">
-           <span title="Có provenance BCTC trong store" style="background:rgba(16,185,129,.18); color:#6ee7b7; padding:2px 6px; border-radius:4px; cursor:pointer; font-weight:700;" onclick="openPeerProvenance('${escapeHtml(comp.symbol)}')">
+           <span title="Có provenance BCTC trong store" style="background: var(--lp-navy-soft); color: var(--lp-navy); border: 1px solid #a8c5d0; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-weight: 700;" onclick="openPeerProvenance('${escapeHtml(comp.symbol)}')">
              <i class="fa-solid fa-fingerprint"></i> #${escapeHtml(String(prov.snapshot_id))}
            </span>
          </div>`
       : '';
     headerHtml += `
       <th style="text-align: center;" class="${isTarget ? 'target-col-header' : ''}">
-        <div>${comp.symbol}</div>
-        <div style="font-size: 10px; font-weight: 500; opacity: 0.8;">${escapeHtml(comp.reported_period || 'Chưa có kỳ')}${isTarget ? ' · Mã phân tích' : ''}</div>
+        <div style="font-weight: 800; color: ${isTarget ? 'var(--lp-navy)' : 'var(--lp-ink)'};">${comp.symbol}</div>
+        <div style="font-size: 10px; font-weight: 600; color: var(--lp-ink-soft);">${escapeHtml(comp.reported_period || 'Chưa có kỳ')}${isTarget ? ' · Mã phân tích' : ''}</div>
         ${provenanceBadge}
       </th>
     `;
   });
 
-  headerHtml += `<th style="text-align: center; color: #38bdf8;" title="Ít bị sai lệch bởi ngoại lệ hơn trung bình cộng">${escapeHtml(data.aggregation_label || 'Trung vị nhóm')}</th>`;
+  headerHtml += `<th style="text-align: center; color: var(--lp-navy); font-weight: 800;" title="Ít bị sai lệch bởi ngoại lệ hơn trung bình cộng">${escapeHtml(data.aggregation_label || 'Trung vị nhóm')}</th>`;
   headerRow.innerHTML = headerHtml;
 
   // Group metrics by category
@@ -3017,8 +3317,8 @@ function renderPeerTable(data) {
 
       tbodyHtml += `<tr>`;
       tbodyHtml += `
-        <td style="font-weight: 600; color: #f1f5f9;" title="${escapeHtml(mdef.note || '')}">
-          <i class="fa-solid ${mdef.icon}" style="color: #94a3b8; margin-right: 6px;"></i> ${mdef.name}
+        <td style="font-weight: 600; color: #151817;" title="${escapeHtml(mdef.note || '')}">
+          <i class="fa-solid ${mdef.icon}" style="color: #59656b; margin-right: 6px;"></i> ${mdef.name}
         </td>
         <td style="text-align: center; color: var(--text-muted); font-size: 11px;">${mdef.unit}</td>
       `;
@@ -3101,60 +3401,60 @@ async function openPeerProvenance(symbol) {
     const priceAsOf = payload.price_as_of || 'Vừa cập nhật';
 
     const modalHtml = `
-      <div id="peerProvenanceModal" style="position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(6px); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px;">
-        <div style="background: #1e293b; border: 1px solid #334155; border-radius: 12px; max-width: 680px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 24px; color: #f8fafc; font-family: sans-serif; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
-          <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; padding-bottom: 14px; margin-bottom: 16px;">
+      <div id="peerProvenanceModal" style="position: fixed; inset: 0; background: rgba(21, 24, 23, 0.58); backdrop-filter: blur(6px); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 20px;">
+        <div style="background: #fffdf7; border: 1px solid #1b211f; border-radius: 6px; max-width: 680px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 24px; color: #151817; font-family: sans-serif; box-shadow: 0 28px 80px rgba(35,31,24,.18);">
+          <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #c9c5ba; padding-bottom: 14px; margin-bottom: 16px;">
             <div style="display: flex; align-items: center; gap: 10px;">
               <i class="fa-solid fa-fingerprint" style="color: #a855f7; font-size: 20px;"></i>
-              <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #f8fafc;">Kiểm Toán Dữ Liệu Provenance — ${escapeHtml(data.symbol)}</h3>
+              <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #151817;">Kiểm Toán Dữ Liệu Provenance — ${escapeHtml(data.symbol)}</h3>
             </div>
-            <button onclick="document.getElementById('peerProvenanceModal').remove()" style="background: transparent; border: none; color: #94a3b8; font-size: 20px; cursor: pointer;">&times;</button>
+            <button onclick="document.getElementById('peerProvenanceModal').remove()" style="background: transparent; border: none; color: #59656b; font-size: 20px; cursor: pointer;">&times;</button>
           </div>
 
           <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; line-height: 1.6;">
             <div style="color: #c4b5fd; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-shield-halved"></i> Xác thực Cryptographic SHA-256:</div>
-            <code style="background: rgba(0,0,0,0.3); padding: 4px 8px; border-radius: 4px; color: #38bdf8; font-family: monospace; word-break: break-all; display: block; font-size: 11px;">${escapeHtml(data.payload_hash || '')}</code>
+            <code style="background: #f0ebdf; padding: 4px 8px; border-radius: 4px; color: #07577a; font-family: monospace; word-break: break-all; display: block; font-size: 11px;">${escapeHtml(data.payload_hash || '')}</code>
           </div>
 
           <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px;">
-            <tr style="border-bottom: 1px solid #334155;">
-              <td style="padding: 8px 0; color: #94a3b8; width: 140px; font-weight: 600;">Snapshot ID:</td>
+            <tr style="border-bottom: 1px solid #ded9cc;">
+              <td style="padding: 8px 0; color: #59656b; width: 140px; font-weight: 600;">Snapshot ID:</td>
               <td style="padding: 8px 0; font-weight: 700; color: #a855f7;">#${data.id}</td>
             </tr>
-            <tr style="border-bottom: 1px solid #334155;">
-              <td style="padding: 8px 0; color: #94a3b8; font-weight: 600;">Nguồn Giá Live:</td>
-              <td style="padding: 8px 0; color: #34d399;">${escapeHtml(priceSource)} (${escapeHtml(priceAsOf)})</td>
+            <tr style="border-bottom: 1px solid #ded9cc;">
+              <td style="padding: 8px 0; color: #59656b; font-weight: 600;">Nguồn Giá Live:</td>
+              <td style="padding: 8px 0; color: #08713c;">${escapeHtml(priceSource)} (${escapeHtml(priceAsOf)})</td>
             </tr>
-            <tr style="border-bottom: 1px solid #334155;">
-              <td style="padding: 8px 0; color: #94a3b8; font-weight: 600;">Giá Khớp Lệnh:</td>
-              <td style="padding: 8px 0; font-weight: 700; color: #fbbf24;">${payload.current_price ? Number(payload.current_price).toLocaleString() + ' VNĐ' : 'N/A'}</td>
+            <tr style="border-bottom: 1px solid #ded9cc;">
+              <td style="padding: 8px 0; color: #59656b; font-weight: 600;">Giá Khớp Lệnh:</td>
+              <td style="padding: 8px 0; font-weight: 700; color: #805000;">${payload.current_price ? Number(payload.current_price).toLocaleString() + ' VNĐ' : 'N/A'}</td>
             </tr>
-            <tr style="border-bottom: 1px solid #334155;">
-              <td style="padding: 8px 0; color: #94a3b8; font-weight: 600;">Kỳ BCTC Báo Cáo:</td>
+            <tr style="border-bottom: 1px solid #ded9cc;">
+              <td style="padding: 8px 0; color: #59656b; font-weight: 600;">Kỳ BCTC Báo Cáo:</td>
               <td style="padding: 8px 0; color: #38bdf8; font-weight: 700;">${escapeHtml(data.period)}</td>
             </tr>
-            <tr style="border-bottom: 1px solid #334155;">
-              <td style="padding: 8px 0; color: #94a3b8; font-weight: 600;">URL Nguồn BCTC:</td>
-              <td style="padding: 8px 0; word-break: break-all; color: #94a3b8;"><a href="${escapeHtml(data.source_url)}" target="_blank" style="color: #60a5fa; text-decoration: underline;">${escapeHtml(data.source_url)}</a></td>
+            <tr style="border-bottom: 1px solid #ded9cc;">
+              <td style="padding: 8px 0; color: #59656b; font-weight: 600;">URL Nguồn BCTC:</td>
+              <td style="padding: 8px 0; word-break: break-all; color: #59656b;"><a href="${escapeHtml(data.source_url)}" target="_blank" style="color: #60a5fa; text-decoration: underline;">${escapeHtml(data.source_url)}</a></td>
             </tr>
-            <tr style="border-bottom: 1px solid #334155;">
-              <td style="padding: 8px 0; color: #94a3b8; font-weight: 600;">Thời Gian Thu Thập:</td>
-              <td style="padding: 8px 0; color: #cbd5e1;">${escapeHtml(data.fetched_at)}</td>
+            <tr style="border-bottom: 1px solid #ded9cc;">
+              <td style="padding: 8px 0; color: #59656b; font-weight: 600;">Thời Gian Thu Thập:</td>
+              <td style="padding: 8px 0; color: #374047;">${escapeHtml(data.fetched_at)}</td>
             </tr>
           </table>
 
-          <h4 style="margin: 16px 0 10px; font-size: 13px; color: #f1f5f9; border-bottom: 1px solid #334155; padding-bottom: 6px;">Chi Tiết 15 Chỉ Số Đã Tính</h4>
+          <h4 style="margin: 16px 0 10px; font-size: 13px; color: #151817; border-bottom: 1px solid #c9c5ba; padding-bottom: 6px;">Chi Tiết 15 Chỉ Số Đã Tính</h4>
           <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 11.5px;">
             ${Object.entries(metrics).map(([k, v]) => `
-              <div style="background: rgba(51, 65, 85, 0.4); padding: 8px 10px; border-radius: 6px; display: flex; justify-content: space-between;">
-                <span style="color: #94a3b8; font-weight: 500;">${escapeHtml(k)}:</span>
-                <span style="color: #f8fafc; font-weight: 700;">${v !== null && v !== undefined ? escapeHtml(String(v)) : 'N/A'}</span>
+              <div style="background: #f0ebdf; padding: 8px 10px; border-radius: 6px; display: flex; justify-content: space-between;">
+                <span style="color: #59656b; font-weight: 500;">${escapeHtml(k)}:</span>
+                <span style="color: #151817; font-weight: 700;">${v !== null && v !== undefined ? escapeHtml(String(v)) : 'N/A'}</span>
               </div>
             `).join('')}
           </div>
 
           <div style="margin-top: 20px; text-align: right;">
-            <button onclick="document.getElementById('peerProvenanceModal').remove()" style="background: #334155; color: #f8fafc; border: none; padding: 8px 18px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">Đóng</button>
+            <button onclick="document.getElementById('peerProvenanceModal').remove()" style="background: #064a6b; color: #fff; border: none; padding: 8px 18px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer;">Đóng</button>
           </div>
         </div>
       </div>

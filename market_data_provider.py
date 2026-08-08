@@ -233,32 +233,91 @@ class Company:
             return pd.DataFrame()
 
 
+def fetch_vci_history(symbol: str, start: str, end: Optional[str] = None) -> pd.DataFrame:
+    """Fetch Vietcap OHLC without an implicit cross-market fallback.
+
+    Callers such as LP-RRG need to know which provider produced a series so it
+    can be validated and persisted.  In particular, an unqualified MSN lookup
+    for ``SSI`` resolves to SSI Group (Philippines) before SSI Securities.
+    """
+    clean_symbol = symbol.upper().strip()
+    start_dt = datetime.strptime(start[:10], "%Y-%m-%d")
+    end_dt = datetime.strptime((end or datetime.now().strftime("%Y-%m-%d"))[:10], "%Y-%m-%d") + timedelta(days=1)
+    payload = {
+        "timeFrame": "ONE_DAY",
+        "symbols": [clean_symbol],
+        "to": int(end_dt.replace(tzinfo=timezone.utc).timestamp()),
+        "countBack": max((end_dt - start_dt).days + 5, 20),
+    }
+    data = _get_json(
+        f"{VCI_TRADING}/chart/OHLCChart/gap-chart",
+        method="POST",
+        payload=payload,
+        timeout=8,
+    )
+    if isinstance(data, dict):
+        data = data.get("data", data)
+    if isinstance(data, list) and data and isinstance(data[0], dict) and isinstance(data[0].get("o"), list):
+        data = [{k: data[0].get(k, [])[i] for k in ("t", "o", "h", "l", "c", "v")} for i in range(len(data[0].get("t", [])))]
+    rows = []
+    for row in data or []:
+        timestamp = row.get("t")
+        try:
+            timestamp = datetime.fromtimestamp(float(timestamp), tz=timezone.utc).strftime("%Y-%m-%d")
+        except (TypeError, ValueError):
+            pass
+        rows.append({
+            "time": str(timestamp), "open": _as_float(row.get("o")),
+            "high": _as_float(row.get("h")), "low": _as_float(row.get("l")),
+            "close": _as_float(row.get("c")), "volume": int(_as_float(row.get("v"))),
+        })
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        raise RuntimeError(f"Vietcap trả rỗng cho {clean_symbol}")
+    frame.attrs["source"] = "Vietcap"
+    return frame
+
+
+def fetch_kbs_history(symbol: str, start: str, end: Optional[str] = None) -> pd.DataFrame:
+    """Vietnam-market-only historical fallback; never performs MSN search."""
+    clean_symbol = "UPCOMINDEX" if symbol.upper().strip() == "UPCOM" else symbol.upper().strip()
+    indices = {"VNINDEX", "VN30", "HNXINDEX", "HNX30", "UPCOMINDEX"}
+    kind = "index" if clean_symbol in indices else "stocks"
+    endpoint = f"https://kbbuddywts.kbsec.com.vn/iis-server/investment/{kind}/{clean_symbol}/data_day"
+    end_value = (end or datetime.now().strftime("%Y-%m-%d"))[:10]
+    response = requests.get(
+        endpoint,
+        params={
+            "sdate": datetime.strptime(start[:10], "%Y-%m-%d").strftime("%d-%m-%Y"),
+            "edate": datetime.strptime(end_value, "%Y-%m-%d").strftime("%d-%m-%Y"),
+        },
+        headers={"Accept": "application/json", "User-Agent": _SESSION.headers.get("User-Agent")},
+        timeout=10,
+    )
+    response.raise_for_status()
+    rows = response.json().get("data_day", [])
+    frame = pd.DataFrame(rows).rename(
+        columns={"t": "time", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
+    )
+    if frame.empty:
+        raise RuntimeError(f"KBS trả rỗng cho {clean_symbol}")
+    frame.attrs["source"] = "KBS"
+    return frame
+
+
 class Quote:
     def __init__(self, symbol: str, source: str = "VCI", **_: Any):
         self.symbol = symbol.upper().strip()
 
     def history(self, start: str, end: Optional[str] = None, interval: str = "1D", **_: Any) -> pd.DataFrame:
-        start_dt = datetime.strptime(start[:10], "%Y-%m-%d")
-        end_dt = datetime.strptime((end or datetime.now().strftime("%Y-%m-%d"))[:10], "%Y-%m-%d") + timedelta(days=1)
-        payload = {"timeFrame": "ONE_DAY", "symbols": [self.symbol], "to": int(end_dt.replace(tzinfo=timezone.utc).timestamp()), "countBack": max((end_dt - start_dt).days + 5, 20)}
         try:
-            data = _get_json(f"{VCI_TRADING}/chart/OHLCChart/gap-chart", method="POST", payload=payload, timeout=5)
-        except Exception:
-            data = None
-        if isinstance(data, dict):
-            data = data.get("data", data)
-        if isinstance(data, list) and data and isinstance(data[0], dict) and isinstance(data[0].get("o"), list):
-            data = [{k: data[0].get(k, [])[i] for k in ("t", "o", "h", "l", "c", "v")} for i in range(len(data[0].get("t", [])))]
-        rows = []
-        for row in data or []:
-            timestamp = row.get("t")
+            return fetch_vci_history(self.symbol, start, end)
+        except Exception as primary_error:
             try:
-                numeric_timestamp = float(timestamp)
-                timestamp = datetime.fromtimestamp(numeric_timestamp, tz=timezone.utc).strftime("%Y-%m-%d")
-            except (TypeError, ValueError):
-                pass
-            rows.append({"time": str(timestamp), "open": _as_float(row.get("o")), "high": _as_float(row.get("h")), "low": _as_float(row.get("l")), "close": _as_float(row.get("c")), "volume": int(_as_float(row.get("v")))})
-        return pd.DataFrame(rows)
+                return fetch_kbs_history(self.symbol, start, end)
+            except Exception as fallback_error:
+                print(f"[Quote] history failed for {self.symbol}: Vietcap={primary_error}; KBS={fallback_error}")
+                return pd.DataFrame()
 
 
 class Listing:

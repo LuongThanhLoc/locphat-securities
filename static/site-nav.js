@@ -1,3 +1,60 @@
+/* Global Logo Fallback Helper */
+if (!window.handleLogoFallback) {
+  window.TICKER_AVATAR_COLORS = [
+    'linear-gradient(135deg, #1e3a8a, #3b82f6)',
+    'linear-gradient(135deg, #065f46, #10b981)',
+    'linear-gradient(135deg, #4c1d95, #8b5cf6)',
+    'linear-gradient(135deg, #831843, #ec4899)',
+    'linear-gradient(135deg, #7c2d12, #f97316)',
+    'linear-gradient(135deg, #164e63, #06b6d4)',
+    'linear-gradient(135deg, #1e293b, #64748b)',
+    'linear-gradient(135deg, #701a75, #d946ef)'
+  ];
+
+  window.getTickerColor = function(symbol) {
+    let hash = 0;
+    const str = String(symbol || '').toUpperCase().trim();
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const idx = Math.abs(hash) % window.TICKER_AVATAR_COLORS.length;
+    return window.TICKER_AVATAR_COLORS[idx];
+  };
+
+  window.handleLogoFallback = function(imgEl, symbol) {
+    if (!imgEl) return;
+    const sym = String(symbol || '').toUpperCase().trim();
+    const tried = imgEl.getAttribute('data-logo-tried') || 'jpeg';
+
+    if (tried === 'jpeg') {
+      imgEl.setAttribute('data-logo-tried', 'png');
+      imgEl.src = `https://cdn.simplize.vn/simplizevn/logo/${sym}.png`;
+      return;
+    } else if (tried === 'png') {
+      imgEl.setAttribute('data-logo-tried', 'jpg');
+      imgEl.src = `https://cdn.simplize.vn/simplizevn/logo/${sym}.jpg`;
+      return;
+    }
+
+    imgEl.style.display = 'none';
+    let parent = imgEl.parentElement;
+    if (!parent) return;
+
+    let fallback = parent.querySelector('.lp-logo-fallback, .wl-logo-fallback, .logo-avatar-fallback');
+    if (!fallback) {
+      fallback = document.createElement('div');
+      const isWl = imgEl.classList.contains('wl-logo');
+      const isModal = imgEl.classList.contains('modal-item-logo');
+
+      fallback.className = 'lp-logo-fallback ' + (isWl ? 'wl-logo-fallback' : isModal ? 'modal-logo-fallback' : '');
+      fallback.style.background = window.getTickerColor(sym);
+      fallback.textContent = sym.length <= 4 ? sym : sym.substring(0, 3);
+      parent.appendChild(fallback);
+    }
+    fallback.style.display = 'inline-flex';
+  };
+}
+
 (() => {
   const mount = document.querySelector('[data-lp-site-nav]');
   if (!mount) return;
@@ -27,10 +84,23 @@
         description: 'Sự kiện và quyền cổ đông',
       },
       {
-        key: 'backtest',
-        href: '/backtest',
-        label: 'Kiểm Định RSI',
-        description: 'Kiểm định chiến lược phân kỳ RSI',
+        key: 'tech',
+        label: 'Kỹ thuật cổ phiếu',
+        isDropdown: true,
+        children: [
+          {
+            key: 'backtest',
+            href: '/backtest',
+            label: 'Kiểm định RSI',
+            description: 'Kiểm định chiến lược phân kỳ RSI',
+          },
+          {
+            key: 'rrg',
+            href: '/rrg',
+            label: 'Biểu đồ RRG',
+            description: 'Biểu đồ sức mạnh giá RRG',
+          },
+        ],
       },
       {
         key: 'watchlist',
@@ -44,6 +114,7 @@
     const active = path.startsWith('/stock') ? 'home'
       : path.startsWith('/heatmap') ? 'heatmap'
       : path.startsWith('/backtest') ? 'backtest'
+      : path.startsWith('/rrg') ? 'rrg'
       : path.startsWith('/calendar') ? 'calendar'
       : path.startsWith('/watchlist') ? 'watchlist'
       : 'home';
@@ -54,14 +125,14 @@
 
     // Inject Search CSS if not present
     if (!document.querySelector('link[data-lp-search-style]')) {
-      document.head.insertAdjacentHTML('beforeend', '<link data-lp-search-style rel="stylesheet" href="/static/site-nav-search.css?v=20260804_mobile_nav_v1">');
+      document.head.insertAdjacentHTML('beforeend', '<link data-lp-search-style rel="stylesheet" href="/static/site-nav-search.css?v=20260808_light_v2">');
     }
 
     // 2. Render Header
     mount.innerHTML = `<header class="lp-global-nav">
       <a class="lp-nav-brand" href="/" aria-label="Lộc Phát Securities">
         <div class="lp-nav-brand-logo-wrap">
-          <img src="/static/brand-logo.png" alt="Lộc Phát Securities">
+          <img src="/static/brand-logo.png?v=20260808_logo_fix" alt="Lộc Phát Securities">
         </div>
         <span class="lp-nav-brand-text">
           <strong>Lộc Phát Securities</strong>
@@ -70,9 +141,32 @@
       </a>
 
       <nav class="lp-nav-links" aria-label="Điều hướng chính">
-        ${NAV_ITEMS.map(item => `
-          <a class="lp-nav-link ${active === item.key ? 'active' : ''}" href="${item.href}">${esc(item.label)}</a>
-        `).join('')}
+        ${NAV_ITEMS.map(item => {
+          if (item.isDropdown) {
+            const hasActiveChild = item.children && item.children.some(c => c.key === active);
+            return `
+              <div class="lp-nav-dropdown ${hasActiveChild ? 'active' : ''}">
+                <button class="lp-nav-link lp-dropdown-toggle" type="button" aria-haspopup="true">
+                  <span>${esc(item.label)}</span>
+                  <svg class="lp-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </button>
+                <div class="lp-dropdown-menu" role="menu">
+                  ${item.children.map(child => `
+                    <a class="lp-dropdown-item ${active === child.key ? 'active' : ''}" href="${child.href}" role="menuitem">
+                      <div class="lp-dropdown-item-title">${esc(child.label)}</div>
+                      ${child.description ? `<div class="lp-dropdown-item-sub">${esc(child.description)}</div>` : ''}
+                    </a>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+          }
+          return `
+            <a class="lp-nav-link ${active === item.key ? 'active' : ''}" href="${item.href}">${esc(item.label)}</a>
+          `;
+        }).join('')}
       </nav>
 
       <div class="lp-nav-actions lp-nav-desktop-actions">
@@ -128,7 +222,7 @@
         <aside class="lp-mobile-nav-panel" role="dialog" aria-modal="true" aria-label="Điều hướng Lộc Phát Securities">
           <div class="lp-mobile-nav-head">
             <a class="lp-mobile-nav-brand" href="/" aria-label="Lộc Phát Securities">
-              <img src="/static/brand-logo.png" alt="Lộc Phát Securities">
+              <img src="/static/brand-logo.png?v=20260808_logo_fix" alt="Lộc Phát Securities">
               <span><strong>Lộc Phát Securities</strong></span>
             </a>
             <div class="lp-mobile-nav-head-actions">
@@ -151,6 +245,30 @@
 
           <nav class="lp-mobile-nav-links" aria-label="Điều hướng mobile">
             ${NAV_ITEMS.map(item => {
+              if (item.isDropdown) {
+                return `
+                  <div class="lp-mobile-nav-group">
+                    <div class="lp-mobile-nav-group-title">${esc(item.label)}</div>
+                    ${item.children.map(child => {
+                      const isActive = active === child.key;
+                      return `
+                        <a class="lp-mobile-nav-link ${isActive ? 'active' : ''}" href="${child.href}">
+                          <div class="lp-mobile-nav-text">
+                            <div class="lp-mobile-nav-title">
+                              <strong>${esc(child.label)}</strong>
+                              ${isActive ? `<span class="lp-mobile-nav-badge">Đang xem</span>` : ''}
+                            </div>
+                            <small>${esc(child.description)}</small>
+                          </div>
+                          <svg class="lp-mobile-nav-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                        </a>
+                      `;
+                    }).join('')}
+                  </div>
+                `;
+              }
               const isActive = active === item.key;
               return `
                 <a class="lp-mobile-nav-link ${isActive ? 'active' : ''}" href="${item.href}">
@@ -241,9 +359,9 @@
       link.addEventListener('click', closeMobileNav);
     });
 
-    // Handle Resize > 900px
+    // Handle Resize beyond the compact navigation breakpoint.
     window.addEventListener('resize', () => {
-      if (window.innerWidth > 900 && mobileNavOpen) {
+      if (window.innerWidth > 1180 && mobileNavOpen) {
         closeMobileNav();
       }
     });
@@ -323,7 +441,9 @@
       }
       results.innerHTML = list.map((row, index) => `<div class="lp-search-row ${index === 0 ? 'selected' : ''}" data-index="${index}" role="button" tabindex="0">
         <span class="lp-search-history-icon" aria-hidden="true">◷</span>
-        <img class="lp-search-logo" src="https://cdn.simplize.vn/simplizevn/logo/${esc(row.symbol)}.jpeg" onerror="this.style.visibility='hidden'" alt="">
+        <div class="lp-logo-wrap">
+          <img class="lp-search-logo" src="https://cdn.simplize.vn/simplizevn/logo/${esc(row.symbol)}.jpeg" onerror="window.handleLogoFallback(this, '${esc(row.symbol)}')" alt="${esc(row.symbol)}">
+        </div>
         <span class="lp-search-company"><strong>${esc(row.symbol)}</strong><small>${esc(row.name || row.organ_name || 'Doanh nghiệp niêm yết')}</small></span>
         <span class="lp-search-row-meta">${historyMode ? `<b>${esc(row.symbol)}</b><time>${esc(timeAgo(row.timestamp))}</time>` : '<b>MỞ PHÂN TÍCH</b>'}</span>
         ${historyMode ? `<button class="lp-search-remove" data-symbol="${esc(row.symbol)}" type="button" title="Xóa ${esc(row.symbol)} khỏi lịch sử" aria-label="Xóa ${esc(row.symbol)} khỏi lịch sử">×</button>` : ''}

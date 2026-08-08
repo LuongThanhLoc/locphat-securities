@@ -281,7 +281,7 @@
       .paddingOuter(3)
       .paddingInner(2)
       .paddingTop((node) => node.depth === 1 ? 20 : 0)
-      .round(true)(root);
+      .round(false)(root);
 
     const sectorGroups = svg.append('g').selectAll('g')
       .data(root.children || [])
@@ -291,8 +291,9 @@
       .attr('y', (d) => d.y0)
       .attr('width', (d) => Math.max(d.x1 - d.x0, 0))
       .attr('height', (d) => Math.max(d.y1 - d.y0, 0))
-      .attr('fill', '#0b1217')
-      .attr('stroke', '#2a3942');
+      .attr('class', 'treemap-sector-bg')
+      .style('fill', 'var(--heatmap-sector-bg, #0b1217)')
+      .style('stroke', 'var(--heatmap-sector-stroke, #2a3942)');
     
     // Header strip for sectors (matching Finviz layout)
     sectorGroups.append('rect')
@@ -301,8 +302,8 @@
       .attr('y', (d) => d.y0)
       .attr('width', (d) => Math.max(d.x1 - d.x0, 0))
       .attr('height', (d) => (d.x1 - d.x0) >= 60 ? 20 : 0)
-      .attr('fill', '#141e26')
-      .attr('stroke', 'none');
+      .style('fill', 'var(--heatmap-header-bg, #141e26)')
+      .style('stroke', 'none');
 
     sectorGroups.append('text')
       .attr('class', 'treemap-sector-label')
@@ -312,8 +313,7 @@
       .text((d) => {
         const widthAvailable = d.x1 - d.x0;
         if (widthAvailable < 60) return '';
-        const label = `${d.data.name} ${signed(d.data.avg_change_pct)}`;
-        return widthAvailable > 120 ? label : d.data.name;
+        return `${d.data.name} ${signed(d.data.avg_change_pct)}`;
       })
       .each(function(d) {
         const maxWidth = Math.max(d.x1 - d.x0 - 10, 0);
@@ -347,16 +347,16 @@
         showTooltip(event, d.data);
         d3.select(this).select('rect')
           .transition().duration(60)
-          .attr('stroke', '#ffffff')
-          .attr('stroke-width', 2);
+          .style('stroke', 'var(--heatmap-node-hover, #ffffff)')
+          .style('stroke-width', '2px');
       })
       .on('mousemove', (event) => moveTooltip(event))
       .on('mouseleave', function (event, d) {
         hideTooltip();
         d3.select(this).select('rect')
           .transition().duration(60)
-          .attr('stroke', 'rgba(255,255,255,.14)')
-          .attr('stroke-width', 1);
+          .style('stroke', 'var(--heatmap-node-stroke, rgba(255,255,255,.14))')
+          .style('stroke-width', '1px');
       })
       .on('click', function (event, d) {
         const isTouch = event.pointerType === 'touch' || (window.matchMedia && window.matchMedia('(hover: none)').matches);
@@ -895,7 +895,16 @@
     const trendRead = report.trend_read || '';
     const aiAnomalyNotes = report.ai_anomaly_notes || [];
 
-    const evidenceItem = (label, value) => `<div class="evidence-item"><span>${esc(label)}</span><b>${esc(String(value))}</b></div>`;
+    const evidenceItem = (label, value) => {
+      const valStr = String(value);
+      let colorClass = 'val-navy';
+      if (valStr.startsWith('+')) colorClass = 'val-positive';
+      else if (valStr.startsWith('-')) colorClass = 'val-negative';
+      return `<div class="evidence-item ${colorClass}">
+        <span>${esc(label)}</span>
+        <b class="${colorClass}">${esc(valStr)}</b>
+      </div>`;
+    };
 
     // Trend badge helper
     const trendBadge = (trend, label) => {
@@ -1243,6 +1252,16 @@
   }
 
   function bindEvents() {
+    const mobileFilterToggle = $('heatmapFilterToggle');
+    const mobileFilterPanel = $('heatmapControlbar');
+    mobileFilterToggle?.addEventListener('click', () => {
+      const isOpen = mobileFilterPanel?.classList.toggle('is-mobile-open') || false;
+      mobileFilterToggle.setAttribute('aria-expanded', String(isOpen));
+      const chevron = mobileFilterToggle.querySelector('[data-lucide="chevron-down"], [data-lucide="chevron-up"]');
+      if (chevron) chevron.setAttribute('data-lucide', isOpen ? 'chevron-up' : 'chevron-down');
+      lucide?.createIcons();
+      window.setTimeout(renderTreemap, 80);
+    });
     document.querySelectorAll('#colorMode button').forEach((button) => button.addEventListener('click', () => {
       document.querySelectorAll('#colorMode button').forEach((item) => item.classList.toggle('active', item === button));
       state.colorMode = button.dataset.mode;
@@ -1343,7 +1362,20 @@
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
     let resizeTimer;
-    window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTreemap, 120); });
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (window.innerWidth >= 1024) {
+          mobileFilterPanel?.classList.remove('is-mobile-open');
+          mobileFilterToggle?.setAttribute('aria-expanded', 'false');
+        }
+        renderTreemap();
+      }, 120);
+    });
+    window.addEventListener('orientationchange', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(renderTreemap, 180);
+    });
     if ('ResizeObserver' in window) {
       new ResizeObserver(() => {
         clearTimeout(resizeTimer);
