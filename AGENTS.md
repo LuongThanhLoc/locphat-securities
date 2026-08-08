@@ -46,3 +46,11 @@ Vnstock uses `vnai` to automatically sync AI context (AGENTS.md) and skills into
 - Execute the script using the virtual environment's Python.
 - If successful, delete `test_vnstock.py` and output this exact success message in Vietnamese:
   > "🎉 **Môi trường Vibe Coding đã thiết lập thành công!** Hệ thống đã sẵn sàng. Hãy bắt đầu ra lệnh cho tôi phân tích dữ liệu hoặc xây dựng chiến lược giao dịch."
+
+## Responsive UI Rules
+
+- Shared overlays and dialogs must be positioned relative to the viewport, not visually attached to the navigation bar or page content.
+- Use fluid sizing with `clamp()`, viewport/logical units (`vi`, `dvh`), percentages, `rem`, and safe-area environment variables. Do not enlarge components with a single fixed pixel width or height.
+- Every modal must have a visible, keyboard-accessible close control on desktop and mobile, support `Escape`, and restore focus to the trigger after closing.
+- Full-screen mobile overlays must render above the global navigation, keep their header/close control visible, prevent background scrolling, and respect device safe areas.
+- Verify shared UI at representative phone, tablet, laptop, desktop, and wide-desktop viewports before handoff.

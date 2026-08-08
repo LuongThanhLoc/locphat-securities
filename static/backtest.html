@@ -258,12 +258,12 @@
         <div class="advanced-grid pt-2 border-t border-slate-800/60">
           <!-- Include Short -->
           <div class="space-y-1.5">
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Bao gồm Short</label>
+            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Mô phỏng Short (giả định)</label>
             <div class="flex items-center gap-3 h-[42px]">
-              <div id="includeShortToggle" class="toggle-track active" onclick="toggleSwitch(this)">
+              <div id="includeShortToggle" class="toggle-track" onclick="toggleSwitch(this)">
                 <div class="toggle-thumb"></div>
               </div>
-              <span class="text-xs text-slate-300" id="includeShortLabel">Bật</span>
+              <span class="text-xs text-slate-300" id="includeShortLabel">Tắt</span>
             </div>
           </div>
 
@@ -280,7 +280,7 @@
 
           <!-- Position Size % -->
           <div class="space-y-1.5" id="positionSizeRow">
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">% Vốn / Giao dịch</label>
+            <label id="positionSizeLabel" class="text-xs font-semibold text-slate-400 uppercase tracking-wide">% Vốn / Giao dịch</label>
             <input type="number" id="positionSizePct" value="100" min="1" max="100" step="1" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
           </div>
 
@@ -395,12 +395,12 @@
         </h3>
         <div class="table-scroll">
           <table class="w-full text-xs min-w-[600px]">
-            <thead>
+            <thead id="divergenceTableHead">
               <tr class="text-slate-400 text-xs uppercase tracking-wide border-b border-slate-800">
-                <th class="text-left py-2 px-2">Ngày</th>
-                <th class="text-left py-2 px-2">Loại</th>
-                <th class="text-right py-2 px-2">Giá tín hiệu</th>
-                <th class="text-right py-2 px-2">RSI</th>
+                <th data-sort-column="date" aria-sort="descending" class="text-left py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortDivergences('date')">Ngày <i class="fa-solid fa-sort-down ml-1 text-emerald-400"></i></th>
+                <th data-sort-column="type" aria-sort="none" class="text-left py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortDivergences('type')">Loại <i class="fa-solid fa-sort ml-1 text-slate-600"></i></th>
+                <th data-sort-column="price_at_signal" aria-sort="none" class="text-right py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortDivergences('price_at_signal')">Giá tín hiệu <i class="fa-solid fa-sort ml-1 text-slate-600"></i></th>
+                <th data-sort-column="rsi_at_signal" aria-sort="none" class="text-right py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortDivergences('rsi_at_signal')">RSI <i class="fa-solid fa-sort ml-1 text-slate-600"></i></th>
                 <th class="text-right py-2 px-2">Giá trước</th>
                 <th class="text-right py-2 px-2">RSI trước</th>
                 <th class="text-right py-2 px-2 hidden" id="weeklyRsiHeader">RSI Tuần</th>
@@ -420,12 +420,12 @@
         </h3>
         <div class="table-scroll">
           <table class="w-full text-xs min-w-[700px]">
-            <thead>
+            <thead id="tradesTableHead">
               <tr class="text-slate-400 text-xs uppercase tracking-wide border-b border-slate-800">
-                <th class="text-left py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortTrades('entry_date')">Ngày vào <i class="fa-solid fa-sort ml-1 text-slate-600"></i></th>
+                <th data-sort-column="entry_date" aria-sort="descending" class="text-left py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortTrades('entry_date')">Ngày vào <i class="fa-solid fa-sort-down ml-1 text-emerald-400"></i></th>
                 <th class="text-left py-2 px-2">Loại</th>
                 <th class="text-right py-2 px-2">Giá vào</th>
-                <th class="text-right py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortTrades('pnl_pct')">P&L% <i class="fa-solid fa-sort ml-1 text-slate-600"></i></th>
+                <th data-sort-column="pnl_pct" aria-sort="none" class="text-right py-2 px-2 cursor-pointer hover:text-white select-none" onclick="sortTrades('pnl_pct')">P&L% <i class="fa-solid fa-sort ml-1 text-slate-600"></i></th>
                 <th class="text-right py-2 px-2">Giá ra</th>
                 <th class="text-left py-2 px-2">Ngày ra</th>
                 <th class="text-right py-2 px-2">Ngày nắm</th>
@@ -454,6 +454,6 @@
   <script src="/static/site-nav.js?v=20260808_light_v2"></script>
 
   <!-- Backtest Page Script -->
-  <script src="/static/backtest.js?v=20260808_light_v1"></script>
+  <script src="/static/backtest.js?v=20260808_rsi_execution_audit_v3"></script>
 </body>
 </html>

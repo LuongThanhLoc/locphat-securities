@@ -1,4 +1,4 @@
-"""Tests for the intraday timeline scrubber (Market Radar 3.4).
+"""Tests for the intraday timeline scrubber (Market Radar 4.0).
 
 The poller persists intraday heatmap snapshots to
 `heatmap_intraday_snapshots`. These tests exercise the storage helpers and
@@ -24,13 +24,17 @@ from heatmap_engine import (  # noqa: E402
     HEATMAP_SCHEMA_VERSION,
     INTRADAY_MAX_PER_DAY,
     INTRADAY_PHASE_INTERVALS,
+    SNAPSHOT_RETENTION_DAYS,
+    WEEKLY_ANALYSIS_DAYS,
     _classify_intraday_phase,
     _phase_snapshot_interval_seconds,
     _trim_intraday_for_date,
     get_intraday_snapshots,
     get_latest_intraday_snapshot,
+    get_recent_snapshots,
     purge_intraday_before,
     save_intraday_snapshot,
+    save_snapshot_for_date,
 )
 
 
@@ -50,7 +54,7 @@ class IntradayTimelineTestBase(unittest.TestCase):
         heatmap_engine._SNAPSHOT_DB_INITIALIZED = False
         self._tmpdir.cleanup()
 
-    def _make_payload(self, *, schema_version=7, extra=None):
+    def _make_payload(self, *, schema_version=8, extra=None):
         payload = {
             "schema_version": schema_version,
             "timestamp": "07/08/2026 10:00:00",
@@ -250,12 +254,25 @@ class PollerDecisionTests(unittest.TestCase):
 
 
 class SchemaVersionTests(unittest.TestCase):
-    def test_schema_version_bumped_to_seven(self):
-        """Bumping the schema forces readers to gate on >=7 — lock that in."""
-        self.assertGreaterEqual(HEATMAP_SCHEMA_VERSION, 7)
+    def test_schema_version_bumped_to_eight(self):
+        """Quant v4 publishes schema 8 while legacy persisted readers remain supported."""
+        self.assertGreaterEqual(HEATMAP_SCHEMA_VERSION, 8)
         # Existing v6 readers (heatmap_snapshots table) must still pass the
         # `>= 5` gate used by `get_snapshot_for_date` and friends.
         self.assertGreaterEqual(HEATMAP_SCHEMA_VERSION, 5)
+
+
+class DailySnapshotRetentionTests(IntradayTimelineTestBase):
+    def test_retains_twenty_sessions_while_weekly_window_stays_five(self):
+        self.assertEqual(SNAPSHOT_RETENTION_DAYS, 20)
+        self.assertEqual(WEEKLY_ANALYSIS_DAYS, 5)
+        for day in range(1, 23):
+            save_snapshot_for_date(
+                f"2026-07-{day:02d}",
+                self._make_payload(extra={"data_lineage": {"latest_trading_date": f"2026-07-{day:02d}"}}),
+                frozen=True,
+            )
+        self.assertEqual(len(get_recent_snapshots(days=100)), SNAPSHOT_RETENTION_DAYS)
 
 
 class IntradayRetentionTests(IntradayTimelineTestBase):

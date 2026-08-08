@@ -14,15 +14,29 @@
 
 /* Base Overlay */
 .lp-search-overlay-legacy {
-  padding-top: 0 !important;
+  z-index: 100200 !important;
+  box-sizing: border-box !important;
+  padding: max(env(safe-area-inset-top), clamp(1rem, 4dvh, 3rem))
+    max(env(safe-area-inset-right), clamp(1rem, 3vi, 3rem))
+    max(env(safe-area-inset-bottom), clamp(1rem, 4dvh, 3rem))
+    max(env(safe-area-inset-left), clamp(1rem, 3vi, 3rem)) !important;
   align-items: center !important;
+  justify-content: center !important;
   background: rgba(226, 221, 207, 0.82) !important;
   animation: lpSearchFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  overscroll-behavior: contain !important;
 }
+
+body.lp-search-open { overflow: hidden !important; }
 
 /* Dialog Container */
 .lp-search-overlay-legacy .lp-search-dialog {
-  width: min(720px, calc(100vw - 32px)) !important;
+  width: min(
+    calc(100vi - 2 * clamp(1rem, 3vi, 3rem)),
+    clamp(46rem, 62vi, 64rem)
+  ) !important;
+  max-width: none !important;
+  max-height: min(46rem, calc(100dvh - 2 * clamp(1rem, 4dvh, 3rem))) !important;
   border-radius: 20px !important;
   border: 1px solid rgba(255, 255, 255, 0.6) !important;
   background: rgba(255, 255, 255, 0.95) !important;
@@ -32,12 +46,15 @@
   color: #0f172a !important;
   animation: lpSearchSlideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
 }
 
 /* Header & Input */
 .lp-search-overlay-legacy .lp-search-head {
-  min-height: 76px !important;
-  padding: 16px 24px !important;
+  min-height: clamp(4.75rem, 7dvh, 5.75rem) !important;
+  padding: clamp(0.875rem, 1.5vi, 1.25rem) clamp(1rem, 2vi, 1.75rem) !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.08) !important;
   background: transparent !important;
   display: flex !important;
@@ -51,7 +68,7 @@
 }
 
 .lp-search-overlay-legacy .lp-search-head input {
-  font-size: 20px !important;
+  font-size: clamp(1rem, 1.35vi, 1.35rem) !important;
   font-weight: 600 !important;
   text-transform: uppercase !important;
   color: #0f172a !important;
@@ -75,6 +92,17 @@
   gap: 8px !important;
 }
 
+.lp-search-overlay-legacy .lp-search-close {
+  flex: 0 0 auto !important;
+  width: clamp(2.75rem, 3.5vi, 3.25rem) !important;
+  height: clamp(2.75rem, 3.5vi, 3.25rem) !important;
+  display: inline-grid !important;
+  place-items: center !important;
+  font-size: clamp(1.4rem, 2vi, 1.75rem) !important;
+  line-height: 1 !important;
+  touch-action: manipulation !important;
+}
+
 .lp-search-overlay-legacy .lp-search-controls kbd {
   padding: 4px 8px !important;
   border: 1px solid rgba(0, 0, 0, 0.1) !important;
@@ -89,7 +117,9 @@
 /* Search Body */
 .lp-search-overlay-legacy .lp-search-body {
   padding: 12px 12px 16px !important;
-  max-height: 60vh !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
   overflow-y: auto !important;
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 0, 0, 0.1) transparent;
@@ -292,14 +322,16 @@
 }
 
 /* Mobile Responsive */
-@media (max-width: 640px) {
+@media (max-width: 48rem) {
   .lp-search-overlay-legacy {
     padding: 0 !important;
-    align-items: flex-start !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
   }
 
   .lp-search-overlay-legacy .lp-search-dialog {
-    width: 100% !important;
+    width: 100vi !important;
+    max-width: 100vi !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
     border-radius: 0 !important;
@@ -310,7 +342,36 @@
   }
 
   .lp-search-overlay-legacy .lp-search-head {
-    padding: 12px 16px !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 3 !important;
+    min-height: calc(4.5rem + env(safe-area-inset-top)) !important;
+    padding: calc(0.75rem + env(safe-area-inset-top))
+      max(0.875rem, env(safe-area-inset-right))
+      0.75rem
+      max(0.875rem, env(safe-area-inset-left)) !important;
+    gap: clamp(0.5rem, 2.5vi, 0.75rem) !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+    backdrop-filter: blur(1rem) !important;
+    -webkit-backdrop-filter: blur(1rem) !important;
+  }
+
+  .lp-search-overlay-legacy .lp-search-icon {
+    margin-right: 0 !important;
+    font-size: clamp(1.25rem, 5vi, 1.5rem) !important;
+  }
+
+  .lp-search-overlay-legacy .lp-search-head input {
+    font-size: clamp(1rem, 4.5vi, 1.2rem) !important;
+  }
+
+  .lp-search-overlay-legacy .lp-search-close {
+    width: clamp(2.75rem, 12vi, 3.25rem) !important;
+    height: clamp(2.75rem, 12vi, 3.25rem) !important;
+    border: 1px solid rgba(15, 23, 42, 0.2) !important;
+    border-radius: 0.65rem !important;
+    background: #fff !important;
+    color: #0f172a !important;
   }
 
   .lp-search-overlay-legacy .lp-search-body {
@@ -318,6 +379,7 @@
     max-height: none !important;
     overflow-y: auto !important;
     overscroll-behavior: contain !important;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom)) !important;
   }
 
   .lp-search-overlay-legacy .lp-search-row {
@@ -342,5 +404,22 @@
 
   .lp-search-overlay-legacy .lp-search-remove {
     opacity: 1 !important;
+  }
+}
+
+@media (max-width: 23rem) {
+  .lp-search-overlay-legacy .lp-search-head input::placeholder {
+    color: transparent !important;
+  }
+
+  .lp-search-overlay-legacy .lp-search-label {
+    padding-inline: 0.5rem !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-search-overlay-legacy,
+  .lp-search-overlay-legacy .lp-search-dialog {
+    animation: none !important;
   }
 }

@@ -125,7 +125,7 @@ if (!window.handleLogoFallback) {
 
     // Inject Search CSS if not present
     if (!document.querySelector('link[data-lp-search-style]')) {
-      document.head.insertAdjacentHTML('beforeend', '<link data-lp-search-style rel="stylesheet" href="/static/site-nav-search.css?v=20260808_light_v2">');
+      document.head.insertAdjacentHTML('beforeend', '<link data-lp-search-style rel="stylesheet" href="/static/site-nav-search.css?v=20260808_centered_responsive_v3">');
     }
 
     // 2. Render Header
@@ -197,8 +197,8 @@ if (!window.handleLogoFallback) {
 
     // 3. Render Search Overlay if missing
     if (!document.getElementById('lpSearchOverlay')) {
-      document.body.insertAdjacentHTML('beforeend', `<div class="lp-search-overlay lp-search-overlay-legacy" id="lpSearchOverlay" role="dialog" aria-modal="true" aria-label="Tìm cổ phiếu"><div class="lp-search-dialog">
-        <div class="lp-search-head"><span class="lp-search-icon" aria-hidden="true">⌕</span><input id="lpSearchInput" autocomplete="off" placeholder="Tìm kiếm mã cổ phiếu (SSI, PNJ, BCM, FPT...)" maxlength="80"><div class="lp-search-controls"><kbd>ESC</kbd><button class="lp-search-close" id="lpSearchClose" type="button" title="Đóng" aria-label="Đóng">×</button></div></div>
+      document.body.insertAdjacentHTML('beforeend', `<div class="lp-search-overlay lp-search-overlay-legacy" id="lpSearchOverlay" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Tìm cổ phiếu"><div class="lp-search-dialog" tabindex="-1">
+        <div class="lp-search-head"><span class="lp-search-icon" aria-hidden="true">⌕</span><input id="lpSearchInput" autocomplete="off" enterkeyhint="search" aria-label="Nhập mã cổ phiếu cần tìm" placeholder="Tìm kiếm mã cổ phiếu (SSI, PNJ, BCM, FPT...)" maxlength="80"><div class="lp-search-controls"><kbd>ESC</kbd><button class="lp-search-close" id="lpSearchClose" type="button" title="Đóng tìm kiếm" aria-label="Đóng tìm kiếm">×</button></div></div>
         <div class="lp-search-body"><div class="lp-search-label"><span class="lp-search-label-title"><i></i><b id="lpSearchLabel">Tìm kiếm gần đây</b></span><button class="lp-search-clear" id="lpSearchClear" type="button">Xóa Tất Cả</button></div><div id="lpSearchResults"></div></div>
       </div></div>`);
     }
@@ -399,6 +399,7 @@ if (!window.handleLogoFallback) {
     let rows = [];
     let selected = 0;
     let showingHistory = true;
+    let lastSearchTrigger = null;
 
     const loadHistory = () => {
       try {
@@ -473,15 +474,27 @@ if (!window.handleLogoFallback) {
       render(loadHistory(), true);
     };
 
-    const openSearch = () => {
+    const openSearch = (event) => {
+      lastSearchTrigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement;
       closeMobileNav();
       overlay.classList.add('open');
+      overlay.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('lp-search-open');
       input.value = '';
       showHistory();
       setTimeout(() => input.focus(), 30);
     };
 
-    const closeSearch = () => overlay.classList.remove('open');
+    const closeSearch = () => {
+      if (!overlay.classList.contains('open')) return;
+      overlay.classList.remove('open');
+      overlay.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('lp-search-open');
+      if (lastSearchTrigger instanceof HTMLElement && lastSearchTrigger.isConnected) {
+        const focusTarget = lastSearchTrigger;
+        window.setTimeout(() => focusTarget.focus({ preventScroll: true }), 0);
+      }
+    };
 
     // Bind all data-lp-open-search buttons (desktop bar, mobile bar, mobile drawer)
     document.querySelectorAll('[data-lp-open-search]').forEach(button => {

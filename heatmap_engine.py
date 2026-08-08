@@ -4,7 +4,9 @@ import time
 import threading
 import json
 import hashlib
+import math
 import sqlite3
+import statistics
 import urllib.request
 import requests
 import logging
@@ -16,15 +18,13 @@ logger = logging.getLogger(__name__)
 
 from sector_mapping import get_sector_info, get_sector_memberships, SECTOR_DEFINITIONS
 
-HEATMAP_SCHEMA_VERSION = 7
-HEATMAP_MODEL_VERSION = "lp-market-radar-3.4"
+HEATMAP_SCHEMA_VERSION = 8
+HEATMAP_MODEL_VERSION = "lp-market-radar-4.0"
 
-# Number of trading days retained for weekly analysis.
-# Used both by the retention policy in `save_snapshot_for_date` and by
-# `get_recent_snapshots` / `generate_weekly_analysis` to choose how many
-# historical frozen snapshots feed the weekly report. Keep these call sites
-# in sync — they are wired to the same constant intentionally.
+# Weekly reporting and quant baselining intentionally use different windows:
+# five sessions for the weekly read, twenty close snapshots for robust history.
 WEEKLY_ANALYSIS_DAYS = 5
+SNAPSHOT_RETENTION_DAYS = 20
 
 # ---------- SQLite Snapshot Storage (Tasks 2 & 3) ----------
 _SNAPSHOT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heatmap_snapshots.db")
@@ -232,6 +232,7 @@ def get_intraday_snapshots(trade_date: str) -> List[Dict[str, Any]]:
             payload = json.loads(row["payload_json"])
             if payload.get("schema_version", 0) < 7:
                 continue
+            payload = _upgrade_snapshot_to_v4(payload)
             snapshots.append({
                 "snapshot_time": row["snapshot_time"],
                 "session_phase": row["session_phase"],
@@ -260,6 +261,7 @@ def get_latest_intraday_snapshot() -> Optional[Dict[str, Any]]:
         payload = json.loads(row["payload_json"])
         if payload.get("schema_version", 0) < 7:
             return None
+        payload = _upgrade_snapshot_to_v4(payload)
         return {
             "snapshot_time": row["snapshot_time"],
             "session_phase": row["session_phase"],
@@ -285,6 +287,7 @@ def get_snapshot_for_date(trade_date: str) -> Optional[Dict[str, Any]]:
             # Chấp nhận schema version >= 5 để đọc được cả snapshot cũ
             if payload.get("schema_version", 0) < 5:
                 return None
+            payload = _upgrade_snapshot_to_v4(payload)
             payload["snapshot_frozen"] = bool(row["is_frozen_15h10"])
             return payload
     except Exception as db_err:
@@ -311,6 +314,7 @@ def get_latest_snapshot() -> Optional[Dict[str, Any]]:
             # Chấp nhận schema version >= 5
             if payload.get("schema_version", 0) < 5:
                 return None
+            payload = _upgrade_snapshot_to_v4(payload)
             payload["snapshot_frozen"] = bool(row["is_frozen_15h10"])
             return payload
     except Exception as db_err:
@@ -338,6 +342,7 @@ def get_recent_snapshots(days: int = WEEKLY_ANALYSIS_DAYS) -> List[Dict[str, Any
                 payload = json.loads(row["snapshot_json"])
                 # Chấp nhận schema version >= 5 để đọc được cả snapshot cũ
                 if payload.get("schema_version", 0) >= 5:
+                    payload = _upgrade_snapshot_to_v4(payload)
                     payload["snapshot_frozen"] = bool(row["is_frozen_15h10"])
                     payload["trade_date"] = row["trade_date"]
                     snapshots.append(payload)
@@ -378,7 +383,7 @@ def save_snapshot_for_date(trade_date: str, payload: Dict[str, Any], frozen: boo
             # tiny race window where another writer's pending INSERT could be
             # dropped by our DELETE.
             if upsert_cursor.rowcount > 0:
-                # Keep last WEEKLY_ANALYSIS_DAYS trading days of snapshots for historical analysis.
+                # Keep a longer quant baseline while weekly reporting remains a 5-session view.
                 conn.execute(
                     """
                     DELETE FROM heatmap_snapshots
@@ -387,7 +392,7 @@ def save_snapshot_for_date(trade_date: str, payload: Dict[str, Any], frozen: boo
                         ORDER BY trade_date DESC LIMIT ?
                     )
                     """,
-                    (WEEKLY_ANALYSIS_DAYS,),
+                    (SNAPSHOT_RETENTION_DAYS,),
                 )
             conn.commit()
         # Ops visibility: log progress toward WEEKLY_ANALYSIS_DAYS so Render
@@ -396,7 +401,8 @@ def save_snapshot_for_date(trade_date: str, payload: Dict[str, Any], frozen: boo
             stats = get_snapshot_stats()
             print(
                 f"[Heatmap DB] Snapshot store: {stats['total']} total, "
-                f"{stats['frozen']} frozen (target for weekly: {WEEKLY_ANALYSIS_DAYS})."
+                f"{stats['frozen']} frozen (weekly target: {WEEKLY_ANALYSIS_DAYS}; "
+                f"quant retention: {SNAPSHOT_RETENTION_DAYS})."
             )
         except Exception:
             pass
@@ -511,6 +517,10 @@ def build_snapshot_symbol_index(snapshot: Dict[str, Any]) -> Dict[str, Dict[str,
     return index
 
 
+def _is_finite_metric(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
 # ---------- Nâng cấp AI: Historical Context & Trend Detection ----------
 def _detect_sector_momentum_trend(sector_history: List[Dict[str, Any]], sector_name: str) -> Dict[str, Any]:
     """Detect momentum trend for a sector across multiple days."""
@@ -518,7 +528,10 @@ def _detect_sector_momentum_trend(sector_history: List[Dict[str, Any]], sector_n
         return {"trend": "KHONG_CO_DU_LIEU", "days_in_trend": 0, "change_summary": "Chưa đủ 2 ngày để phân tích xu hướng"}
 
     flow_scores = [s.get("flow_score", 50) for s in sector_history if isinstance(s, dict)]
-    breadths = [s.get("breadth_pct", 50) for s in sector_history if isinstance(s, dict)]
+    breadths = [
+        float(s.get("breadth_pct")) for s in sector_history
+        if isinstance(s, dict) and _is_finite_metric(s.get("breadth_pct"))
+    ]
 
     if len(flow_scores) < 2:
         return {"trend": "KHONG_CO_DU_LIEU", "days_in_trend": 0, "change_summary": "Không có dữ liệu so sánh"}
@@ -545,7 +558,10 @@ def _detect_sector_momentum_trend(sector_history: List[Dict[str, Any]], sector_n
         trend = "ON_DINH"
         label = "ổn định"
 
-    breadth_trend = "TANG" if breadths and breadths[0] > sum(breadths[1:]) / len(breadths[1:]) else "GIAM" if breadths else "KHONG_XAC_DINH"
+    if len(breadths) >= 2:
+        breadth_trend = "TANG" if breadths[0] > sum(breadths[1:]) / len(breadths[1:]) else "GIAM"
+    else:
+        breadth_trend = "KHONG_XAC_DINH"
 
     return {
         "trend": trend,
@@ -568,10 +584,10 @@ def _detect_market_anomalies(current_snapshot: Dict[str, Any], recent_snapshots:
     current_quant = current_snapshot.get("quant_snapshot", {})
     current_sectors = {s["name"]: s for s in current_snapshot.get("sectors", [])}
 
-    current_breadth = current_quant.get("breadth_pct", 50)
-    current_temp = current_quant.get("market_temperature", 50)
-    current_active = current_quant.get("active_ratio_pct", 50)
-    current_top10_liq = current_quant.get("top10_liquidity_share_pct", 0)
+    current_breadth = current_quant.get("breadth_pct")
+    current_temp = current_quant.get("market_temperature")
+    current_active = current_quant.get("active_ratio_pct")
+    current_top10_liq = current_quant.get("top10_liquidity_share_pct")
 
     historical_breadths = []
     historical_temps = []
@@ -580,10 +596,14 @@ def _detect_market_anomalies(current_snapshot: Dict[str, Any], recent_snapshots:
 
     for snap in recent_snapshots:
         quant = snap.get("quant_snapshot", {}) or {}
-        historical_breadths.append(quant.get("breadth_pct", 50))
-        historical_temps.append(quant.get("market_temperature", 50))
-        historical_actives.append(quant.get("active_ratio_pct", 50))
-        historical_top10_liqs.append(quant.get("top10_liquidity_share_pct", 0))
+        for target, value in (
+            (historical_breadths, quant.get("breadth_pct")),
+            (historical_temps, quant.get("market_temperature")),
+            (historical_actives, quant.get("active_ratio_pct")),
+            (historical_top10_liqs, quant.get("top10_liquidity_share_pct")),
+        ):
+            if _is_finite_metric(value):
+                target.append(float(value))
 
     avg_breadth = sum(historical_breadths) / len(historical_breadths) if historical_breadths else 50
     avg_temp = sum(historical_temps) / len(historical_temps) if historical_temps else 50
@@ -595,7 +615,7 @@ def _detect_market_anomalies(current_snapshot: Dict[str, Any], recent_snapshots:
     threshold_active = 15
     threshold_top10 = 15
 
-    if abs(current_breadth - avg_breadth) > threshold_breadth:
+    if _is_finite_metric(current_breadth) and abs(current_breadth - avg_breadth) > threshold_breadth:
         direction = "tang" if current_breadth > avg_breadth else "giam"
         anomalies.append({
             "type": "BREADTH_SPIKE",
@@ -605,7 +625,7 @@ def _detect_market_anomalies(current_snapshot: Dict[str, Any], recent_snapshots:
             "metric": {"current": current_breadth, "avg_5d": round(avg_breadth, 1), "diff": round(current_breadth - avg_breadth, 1)}
         })
 
-    if abs(current_temp - avg_temp) > threshold_temp:
+    if _is_finite_metric(current_temp) and abs(current_temp - avg_temp) > threshold_temp:
         direction = "tang" if current_temp > avg_temp else "giam"
         anomalies.append({
             "type": "TEMPERATURE_SHIFT",
@@ -615,7 +635,7 @@ def _detect_market_anomalies(current_snapshot: Dict[str, Any], recent_snapshots:
             "metric": {"current": current_temp, "avg_5d": round(avg_temp, 1), "diff": round(current_temp - avg_temp, 1)}
         })
 
-    if abs(current_active - avg_active) > threshold_active:
+    if _is_finite_metric(current_active) and abs(current_active - avg_active) > threshold_active:
         direction = "tang" if current_active > avg_active else "giam"
         anomalies.append({
             "type": "ACTIVE_RATIO_CHANGE",
@@ -625,7 +645,7 @@ def _detect_market_anomalies(current_snapshot: Dict[str, Any], recent_snapshots:
             "metric": {"current": current_active, "avg_5d": round(avg_active, 1), "diff": round(current_active - avg_active, 1)}
         })
 
-    if abs(current_top10_liq - avg_top10) > threshold_top10:
+    if _is_finite_metric(current_top10_liq) and abs(current_top10_liq - avg_top10) > threshold_top10:
         direction = "tang" if current_top10_liq > avg_top10 else "giam"
         anomalies.append({
             "type": "LIQUIDITY_CONCENTRATION",
@@ -636,17 +656,17 @@ def _detect_market_anomalies(current_snapshot: Dict[str, Any], recent_snapshots:
         })
 
     for sector_name, sector in current_sectors.items():
-        sector_flow = sector.get("flow_score", 50)
-        sector_breadth = sector.get("breadth_pct", 50)
+        sector_breadth = sector.get("breadth_pct")
 
         hist_sector_breadths = []
         for snap in recent_snapshots:
             for s in snap.get("sectors", []):
                 if s.get("name") == sector_name:
-                    hist_sector_breadths.append(s.get("breadth_pct", 50))
+                    if _is_finite_metric(s.get("breadth_pct")):
+                        hist_sector_breadths.append(float(s.get("breadth_pct")))
                     break
 
-        if hist_sector_breadths:
+        if _is_finite_metric(sector_breadth) and hist_sector_breadths:
             avg_sec_breadth = sum(hist_sector_breadths) / len(hist_sector_breadths)
             if abs(sector_breadth - avg_sec_breadth) > 25:
                 direction = "tang" if sector_breadth > avg_sec_breadth else "giam"
@@ -673,13 +693,19 @@ def _build_historical_context(current_snapshot: Dict[str, Any], recent_snapshots
     current_quant = current_snapshot.get("quant_snapshot", {})
     current_sectors = {s["name"]: s for s in current_snapshot.get("sectors", [])}
 
-    temps = [s.get("quant_snapshot", {}).get("market_temperature", 50) for s in recent_snapshots]
-    breadths = [s.get("quant_snapshot", {}).get("breadth_pct", 50) for s in recent_snapshots]
+    temps = [
+        float(s.get("quant_snapshot", {}).get("market_temperature")) for s in recent_snapshots
+        if _is_finite_metric(s.get("quant_snapshot", {}).get("market_temperature"))
+    ]
+    breadths = [
+        float(s.get("quant_snapshot", {}).get("breadth_pct")) for s in recent_snapshots
+        if _is_finite_metric(s.get("quant_snapshot", {}).get("breadth_pct"))
+    ]
     temps.reverse()
     breadths.reverse()
 
-    current_temp = current_quant.get("market_temperature", 50)
-    current_breadth = current_quant.get("breadth_pct", 50)
+    current_temp = float(current_quant.get("market_temperature")) if _is_finite_metric(current_quant.get("market_temperature")) else 50.0
+    current_breadth = float(current_quant.get("breadth_pct")) if _is_finite_metric(current_quant.get("breadth_pct")) else 50.0
     avg_temp = sum(temps) / len(temps) if temps else 50
     avg_breadth = sum(breadths) / len(breadths) if breadths else 50
 
@@ -765,7 +791,18 @@ def build_historical_snapshot_context() -> Dict[str, Any]:
     if not current:
         return {"available": False, "message": "Không có snapshot hiện tại"}
 
-    recent = get_recent_snapshots(days=5)
+    current_quant = current.get("quant_snapshot") or {}
+    if current_quant.get("model_version") != HEATMAP_MODEL_VERSION:
+        return {"available": False, "message": "Snapshot hiện tại chưa đủ dữ liệu để chuẩn hóa Quant v4"}
+
+    current_id = current_quant.get("snapshot_id")
+    recent = [
+        snapshot for snapshot in get_recent_snapshots(days=WEEKLY_ANALYSIS_DAYS + 1)
+        if (snapshot.get("quant_snapshot") or {}).get("model_version") == HEATMAP_MODEL_VERSION
+        and (snapshot.get("quant_snapshot") or {}).get("snapshot_id") != current_id
+    ][:WEEKLY_ANALYSIS_DAYS]
+    if not recent:
+        return {"available": False, "message": "Chưa có snapshot Quant v4 tương thích để so sánh"}
     anomalies = _detect_market_anomalies(current, recent)
     historical = _build_historical_context(current, recent)
 
@@ -1276,21 +1313,49 @@ def _calc_position_in_range(stock: Dict[str, Any]) -> float:
     return _clamp(position, 0.0, 1.0)
 
 
-def _calc_breadth_stability(advances: int, declines: int, unchanged: int) -> float:
-    """
-    Breadth Stability: Đo độ rõ ràng của direction thị trường.
-    Low unchanged + high A/D = decisive market
-    High unchanged = choppy/uncertain
-    """
-    total = advances + declines + unchanged
-    if total == 0:
-        return 0.5
-    
-    unchanged_ratio = unchanged / total
-    
-    # <20% unchanged = very decisive, >40% unchanged = choppy
-    stability = _clamp((0.40 - unchanged_ratio) / 0.20, 0.0, 1.0)
-    return stability
+def _is_quant_stock(stock: Dict[str, Any]) -> bool:
+    """Return whether a board row belongs to the v4 common-stock universe."""
+    instrument_type = str(stock.get("instrument_type") or "STOCK").upper()
+    exchange = str(stock.get("exchange") or "").upper()
+    return (
+        instrument_type == "STOCK"
+        and exchange in {"HOSE", "HNX", "UPCOM"}
+        and float(stock.get("ref_price", 0) or 0) > 0
+    )
+
+
+def _is_active_stock(stock: Dict[str, Any]) -> bool:
+    return float(stock.get("volume", 0) or 0) > 0 or float(stock.get("trading_value", 0) or 0) > 0
+
+
+def _reference_market_cap(stock: Dict[str, Any]) -> float:
+    explicit = float(stock.get("reference_market_cap", 0) or 0)
+    if explicit > 0:
+        return explicit
+    current_cap = max(float(stock.get("market_cap", 0) or 0), 0.0)
+    change = float(stock.get("change_pct", 0) or 0) / 100.0
+    divisor = 1.0 + change
+    return current_cap / divisor if current_cap > 0 and divisor > 0 else current_cap
+
+
+def _concentration_state(top10_share: Optional[float], effective_count: Optional[float]) -> str:
+    if top10_share is None or effective_count is None:
+        return "KHONG_DU_DU_LIEU"
+    if top10_share < 30.0 and effective_count >= 50.0:
+        return "LAN_TOA"
+    if top10_share < 45.0 and effective_count >= 25.0:
+        return "CAN_BANG"
+    if top10_share < 60.0 and effective_count >= 12.0:
+        return "TAP_TRUNG"
+    return "RAT_TAP_TRUNG"
+
+
+def _heat_confidence(valid_count: int, active_ratio: float, directional_ratio: float) -> str:
+    if valid_count >= 500 and active_ratio >= 0.55 and directional_ratio >= 0.50:
+        return "CAO"
+    if valid_count >= 200 and active_ratio >= 0.35 and directional_ratio >= 0.25:
+        return "VUA"
+    return "THAP"
 
 
 def _score_label(score: float) -> str:
@@ -1337,47 +1402,55 @@ def classify_price_status(raw_match_price: float, ref_price: float,
 
 
 def build_quant_snapshot(stock_records: List[Dict[str, Any]], sectors: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Build an auditable session-only market radar without using an LLM.
-    
-    Flow Score Enhancement (v2):
-    - Stock flow_score: price_signal + liquidity_percentile + volume_price_alignment + position_in_range
-    - Market temperature: breadth + return_signal + active_ratio + concentration + breadth_stability
+    """Build the deterministic v4 common-stock market radar.
+
+    Direction (heat) is deliberately separate from participation quality and
+    liquidity concentration. This prevents a busy flat tape or a decisive
+    selloff from receiving an artificial bullish bonus.
     """
-    valid = [s for s in stock_records if s.get("ref_price", 0) > 0]
-    active = [s for s in valid if s.get("volume", 0) > 0 or s.get("trading_value", 0) > 0]
-    advances = [s for s in valid if s.get("change_pct", 0) > 0]
-    declines = [s for s in valid if s.get("change_pct", 0) < 0]
-    unchanged = [s for s in valid if s.get("change_pct", 0) == 0]
+    valid = [s for s in stock_records if _is_quant_stock(s)]
+    active = [s for s in valid if _is_active_stock(s)]
+    advances = [s for s in active if float(s.get("change_pct", 0) or 0) > 0]
+    declines = [s for s in active if float(s.get("change_pct", 0) or 0) < 0]
+    unchanged = [s for s in active if float(s.get("change_pct", 0) or 0) == 0]
+    inactive = [s for s in valid if not _is_active_stock(s)]
     directional_count = len(advances) + len(declines)
-    breadth = len(advances) / directional_count if directional_count else 0.5
+    breadth = len(advances) / directional_count if directional_count else None
     active_ratio = len(active) / len(valid) if valid else 0.0
-    total_market_cap = sum(max(float(s.get("market_cap", 0)), 0.0) for s in valid)
+    directional_ratio = directional_count / len(active) if active else 0.0
+    advance_share_active = len(advances) / len(active) if active else None
+    net_breadth = (len(advances) - len(declines)) / len(active) if active else 0.0
+    total_market_cap = sum(_reference_market_cap(s) for s in valid)
     total_trading_value = sum(max(float(s.get("trading_value", 0)), 0.0) for s in valid)
 
     weighted_change = 0.0
     if total_market_cap > 0:
         weighted_change = sum(
-            float(s.get("change_pct", 0)) * max(float(s.get("market_cap", 0)), 0.0)
+            float(s.get("change_pct", 0) or 0) * _reference_market_cap(s)
             for s in valid
         ) / total_market_cap
 
+    median_change = statistics.median(float(s.get("change_pct", 0) or 0) for s in active) if active else 0.0
+    cap_return_signal = _clamp(weighted_change / 3.0, -1.0, 1.0)
+    median_return_signal = _clamp(median_change / 3.0, -1.0, 1.0)
+    temperature = round(_clamp(
+        50.0 + 50.0 * (
+            0.50 * net_breadth
+            + 0.30 * cap_return_signal
+            + 0.20 * median_return_signal
+        )
+    ), 1)
+
     liquidity_sorted = sorted(valid, key=lambda s: float(s.get("trading_value", 0)), reverse=True)
-    top10_value = sum(float(s.get("trading_value", 0)) for s in liquidity_sorted[:10])
-    top10_share = (top10_value / total_trading_value * 100.0) if total_trading_value else 0.0
-    concentration_health = 1.0 - _clamp((top10_share - 35.0) / 50.0, 0.0, 1.0)
-    return_signal = _clamp((weighted_change + 3.0) / 6.0, 0.0, 1.0)
-    
-    # NEW: Breadth stability component
-    breadth_stability = _calc_breadth_stability(len(advances), len(declines), len(unchanged))
-    
-    # NEW: Enhanced temperature formula with breadth stability
-    temperature = round(_clamp(100.0 * (
-        0.38 * breadth
-        + 0.22 * return_signal
-        + 0.18 * active_ratio
-        + 0.08 * concentration_health
-        + 0.14 * breadth_stability
-    )), 1)
+    liquidity_shares = [
+        max(float(s.get("trading_value", 0) or 0), 0.0) / total_trading_value
+        for s in liquidity_sorted
+    ] if total_trading_value > 0 else []
+    top5_share = sum(liquidity_shares[:5]) * 100.0 if liquidity_shares else None
+    top10_share = sum(liquidity_shares[:10]) * 100.0 if liquidity_shares else None
+    top20_share = sum(liquidity_shares[:20]) * 100.0 if liquidity_shares else None
+    liquidity_hhi = sum(share * share for share in liquidity_shares) if liquidity_shares else None
+    effective_count = (1.0 / liquidity_hhi) if liquidity_hhi and liquidity_hhi > 0 else None
 
     liquidity_rank = {s["symbol"]: rank for rank, s in enumerate(liquidity_sorted, start=1)}
     population = max(len(liquidity_sorted) - 1, 1)
@@ -1428,55 +1501,70 @@ def build_quant_snapshot(stock_records: List[Dict[str, Any]], sectors: List[Dict
             "position_signal": round(position_signal, 3),
         }
 
-    max_sector_liquidity = max((float(s.get("total_trading_value", 0)) for s in sectors), default=0.0)
     for sector in sectors:
-        stocks = sector.get("stocks", [])
-        sector_active = [s for s in stocks if s.get("volume", 0) > 0 or s.get("trading_value", 0) > 0]
-        sector_up = sum(1 for s in stocks if s.get("change_pct", 0) > 0)
-        sector_down = sum(1 for s in stocks if s.get("change_pct", 0) < 0)
-        sector_unchanged = sum(1 for s in stocks if s.get("change_pct", 0) == 0)
+        stocks = [s for s in sector.get("stocks", []) if _is_quant_stock(s)]
+        sector_active = [s for s in stocks if _is_active_stock(s)]
+        sector_up = sum(1 for s in sector_active if float(s.get("change_pct", 0) or 0) > 0)
+        sector_down = sum(1 for s in sector_active if float(s.get("change_pct", 0) or 0) < 0)
+        sector_unchanged = sum(1 for s in sector_active if float(s.get("change_pct", 0) or 0) == 0)
+        sector_inactive = len(stocks) - len(sector_active)
         sector_directional = sector_up + sector_down
-        sector_breadth = sector_up / sector_directional if sector_directional else 0.5
+        sector_breadth = sector_up / sector_directional if sector_directional else None
+        sector_net_breadth = (sector_up - sector_down) / len(sector_active) if sector_active else 0.0
         sector_active_ratio = len(sector_active) / len(stocks) if stocks else 0.0
-        liquidity_share = float(sector.get("total_trading_value", 0)) / total_trading_value if total_trading_value else 0.0
-        relative_liquidity = float(sector.get("total_trading_value", 0)) / max_sector_liquidity if max_sector_liquidity else 0.0
-        
-        # NEW: Sector breadth stability
-        sec_breadth_stability = _calc_breadth_stability(sector_up, sector_down, sector_unchanged)
-        
-        # NEW: Sector concentration (HHI-based)
-        total_sec_vol = sum(float(s.get("trading_value", 0)) for s in stocks)
-        if total_sec_vol > 0:
-            hhi = sum((float(s.get("trading_value", 0)) / total_sec_vol) ** 2 for s in stocks)
-            sec_concentration = _clamp((0.25 - hhi) / 0.20, -1.0, 1.0)
-        else:
-            sec_concentration = 0.0
-        
-        # Enhanced sector flow_score: 50 + weighted signals
-        score = _clamp(
-            50
-            + 6 * float(sector.get("avg_change_pct", 0))
-            + 22 * (sector_breadth - 0.5)
-            + 8 * (sector_active_ratio - 0.5)
-            + 6 * relative_liquidity
-            + 8 * sec_breadth_stability
-            + 6 * sec_concentration
+        sector_value = sum(max(float(s.get("trading_value", 0) or 0), 0.0) for s in stocks)
+        sector_ref_cap = sum(_reference_market_cap(s) for s in stocks)
+        liquidity_share = sector_value / total_trading_value if total_trading_value else 0.0
+        sector_weighted_change = (
+            sum(float(s.get("change_pct", 0) or 0) * _reference_market_cap(s) for s in stocks) / sector_ref_cap
+            if sector_ref_cap > 0 else 0.0
         )
+        sector_median_change = statistics.median(
+            float(s.get("change_pct", 0) or 0) for s in sector_active
+        ) if sector_active else 0.0
+        market_turnover = total_trading_value / total_market_cap if total_market_cap > 0 else 0.0
+        sector_turnover = sector_value / sector_ref_cap if sector_ref_cap > 0 else 0.0
+        relative_turnover = sector_turnover / market_turnover if market_turnover > 0 else 1.0
+        turnover_signal = _clamp(math.log2(max(relative_turnover, 0.25)) / 2.0, -1.0, 1.0)
+
+        sec_shares = [
+            max(float(s.get("trading_value", 0) or 0), 0.0) / sector_value
+            for s in stocks
+        ] if sector_value > 0 else []
+        sec_hhi = sum(share * share for share in sec_shares) if sec_shares else None
+        sec_effective = 1.0 / sec_hhi if sec_hhi and sec_hhi > 0 else None
+
+        score = _clamp(50.0 + 50.0 * (
+            0.45 * sector_net_breadth
+            + 0.30 * _clamp(sector_weighted_change / 3.0, -1.0, 1.0)
+            + 0.15 * _clamp(sector_median_change / 3.0, -1.0, 1.0)
+            + 0.10 * turnover_signal
+        ))
         
         sector.update({
             "advances": sector_up,
             "declines": sector_down,
             "unchanged": sector_unchanged,
-            "breadth_pct": round(sector_breadth * 100.0, 1),
+            "inactive_count": sector_inactive,
+            "breadth_pct": round(sector_breadth * 100.0, 1) if sector_breadth is not None else None,
+            "net_breadth_pct": round(sector_net_breadth * 100.0, 1),
+            "directional_participation_pct": round(
+                sector_directional / len(sector_active) * 100.0, 1
+            ) if sector_active else 0.0,
             "active_ratio_pct": round(sector_active_ratio * 100.0, 1),
             "liquidity_share_pct": round(liquidity_share * 100.0, 2),
             "flow_score": round(score, 1),
             "flow_status": _score_label(score),
-            "confidence": "CAO" if len(sector_active) >= 12 else ("VUA" if len(sector_active) >= 5 else "THAP"),
-            # NEW: Additional signals for transparency
+            "confidence": (
+                "CAO" if len(sector_active) >= 12 and sector_active_ratio >= 0.5
+                else ("VUA" if len(sector_active) >= 5 else "THAP")
+            ),
             "_sector_signals": {
-                "breadth_stability": round(sec_breadth_stability, 3),
-                "concentration_signal": round(sec_concentration, 3),
+                "reference_cap_weighted_change_pct": round(sector_weighted_change, 3),
+                "median_change_pct": round(sector_median_change, 3),
+                "relative_turnover": round(relative_turnover, 3),
+                "liquidity_hhi": round(sec_hhi, 6) if sec_hhi is not None else None,
+                "effective_stock_count": round(sec_effective, 1) if sec_effective is not None else None,
             }
         })
 
@@ -1486,7 +1574,7 @@ def build_quant_snapshot(stock_records: List[Dict[str, Any]], sectors: List[Dict
         reverse=True,
     )[:8]
     sector_leaders = sorted(sectors, key=lambda s: (float(s.get("flow_score", 0)), float(s.get("total_trading_value", 0))), reverse=True)
-    source_fingerprint = "|".join(
+    source_fingerprint = HEATMAP_MODEL_VERSION + "|" + "|".join(
         f"{s['symbol']}:{s.get('match_price', 0)}:{s.get('volume', 0)}" for s in sorted(valid, key=lambda x: x["symbol"])
     )
     snapshot_id = hashlib.sha256(source_fingerprint.encode("utf-8")).hexdigest()[:16]
@@ -1495,13 +1583,36 @@ def build_quant_snapshot(stock_records: List[Dict[str, Any]], sectors: List[Dict
         "model_version": HEATMAP_MODEL_VERSION,
         "snapshot_id": snapshot_id,
         "market_temperature": temperature,
-        "market_regime": _market_regime(temperature, breadth),
-        "breadth_pct": round(breadth * 100.0, 1),
-        "advance_decline_ratio": round(len(advances) / max(len(declines), 1), 2),
+        "market_regime": _market_regime(temperature, breadth if breadth is not None else 0.5),
+        "heat_confidence": _heat_confidence(len(valid), active_ratio, directional_ratio),
+        "breadth_pct": round(breadth * 100.0, 1) if breadth is not None else None,
+        "breadth_available": breadth is not None,
+        "breadth_state": "AVAILABLE" if breadth is not None else "INSUFFICIENT_DIRECTIONAL_DATA",
+        "breadth_sample_size": directional_count,
+        "advance_share_active_pct": round(advance_share_active * 100.0, 1) if advance_share_active is not None else None,
+        "directional_participation_pct": round(directional_ratio * 100.0, 1),
+        "net_breadth_pct": round(net_breadth * 100.0, 1),
+        "advance_decline_ratio": round(len(advances) / len(declines), 2) if declines else None,
+        "advance_decline_state": (
+            "AVAILABLE" if declines else ("NO_DECLINES" if advances else "NO_DIRECTIONAL_ISSUES")
+        ),
         "active_ratio_pct": round(active_ratio * 100.0, 1),
+        "active_count": len(active),
+        "inactive_count": len(inactive),
+        "unchanged_active_count": len(unchanged),
+        "quant_universe_count": len(valid),
         "market_cap_weighted_change_pct": round(weighted_change, 2),
-        "top10_liquidity_share_pct": round(top10_share, 1),
-        "breadth_stability_pct": round(breadth_stability * 100.0, 1),
+        "median_change_pct": round(median_change, 2),
+        "matched_trading_value": round(total_trading_value, 0),
+        "top5_liquidity_share_pct": round(top5_share, 1) if top5_share is not None else None,
+        "top10_liquidity_share_pct": round(top10_share, 1) if top10_share is not None else None,
+        "top20_liquidity_share_pct": round(top20_share, 1) if top20_share is not None else None,
+        "liquidity_hhi": round(liquidity_hhi, 6) if liquidity_hhi is not None else None,
+        "effective_stock_count": round(effective_count, 1) if effective_count is not None else None,
+        "concentration_state": _concentration_state(top10_share, effective_count),
+        "concentration_baseline": {"available": False, "sessions": 0, "reason": "INSUFFICIENT_HISTORY"},
+        "breadth_stability_pct": None,
+        "deprecated_fields": ["breadth_stability_pct"],
         "sector_leaders": [
             {
                 "sector": s["name"],
@@ -1528,11 +1639,129 @@ def build_quant_snapshot(stock_records: List[Dict[str, Any]], sectors: List[Dict
         ],
         "methodology": {
             "scope": "Anh chup mot phien; khong phai du bao gia va khong suy dien giao dich to chuc.",
-            "temperature": "38% do rong + 22% bien dong von hoa + 18% ty le co giao dich + 8% phan tan thanh khoan + 14% do on dinh do rong.",
+            "quant_universe": "Co phieu thuong HOSE/HNX/UPCOM co gia tham chieu hop le; loai ETF va chung chi quy.",
+            "temperature": "50 + 50 x (50% net breadth + 30% loi suat von hoa tham chieu + 20% trung vi loi suat); loi suat chuan hoa trong +/-3%.",
+            "breadth": "A/(A+D); ma tran/san duoc tinh theo huong, ma dung tham chieu co giao dich va ma khong giao dich duoc tach rieng.",
+            "concentration": "Top 5/10/20 ty trong GTGD khop lenh + HHI + so ma hieu dung 1/HHI; khong tham gia huong cua diem nhiet.",
             "flow_score": "24% bien dong gia + 14% thanh khoan + 8% khop khoi luong-gia + 6% vi tri trong range.",
-            "flow_score_sector": "6% bien dong + 22% do rong + 8% ty le giao dich + 6% thanh khoan tuong doi + 8% on dinh do rong + 6% phan bo.",
+            "flow_score_sector": "45% net breadth + 30% loi suat von hoa tham chieu + 15% trung vi loi suat + 10% cuong do vong quay tuong doi.",
         },
     }
+
+
+def _apply_concentration_baseline(
+    quant_snapshot: Dict[str, Any], recent_snapshots: List[Dict[str, Any]]
+) -> None:
+    """Attach a robust trailing Top-10 baseline when enough v4 sessions exist."""
+    current_id = quant_snapshot.get("snapshot_id")
+    values: List[float] = []
+    for snapshot in recent_snapshots:
+        quant = snapshot.get("quant_snapshot") or {}
+        if quant.get("model_version") != HEATMAP_MODEL_VERSION:
+            continue
+        if current_id and quant.get("snapshot_id") == current_id:
+            continue
+        value = quant.get("top10_liquidity_share_pct")
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    values = values[:SNAPSHOT_RETENTION_DAYS]
+    current = quant_snapshot.get("top10_liquidity_share_pct")
+    if not isinstance(current, (int, float)) or len(values) < 10:
+        quant_snapshot["concentration_baseline"] = {
+            "available": False,
+            "sessions": len(values),
+            "reason": "INSUFFICIENT_HISTORY",
+        }
+        return
+
+    median = statistics.median(values)
+    mad = statistics.median(abs(value - median) for value in values)
+    robust_scale = 1.4826 * mad
+    robust_z = (float(current) - median) / robust_scale if robust_scale > 0 else 0.0
+    if robust_z >= 2.0:
+        relative_state = "CAO_BAT_THUONG"
+    elif robust_z <= -2.0:
+        relative_state = "LAN_TOA_BAT_THUONG"
+    else:
+        relative_state = "BINH_THUONG"
+    quant_snapshot["concentration_baseline"] = {
+        "available": True,
+        "sessions": len(values),
+        "median_top10_pct": round(median, 1),
+        "mad_pct": round(mad, 2),
+        "delta_pct_points": round(float(current) - median, 1),
+        "robust_zscore": round(robust_z, 2),
+        "relative_state": relative_state,
+    }
+
+
+def _get_recent_v4_quant_snapshots() -> List[Dict[str, Any]]:
+    """Read only compact v4 quant objects for concentration baselining."""
+    init_db_snapshot()
+    snapshots: List[Dict[str, Any]] = []
+    try:
+        with _get_snapshot_db_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT json_extract(snapshot_json, '$.quant_snapshot') AS quant_json
+                FROM heatmap_snapshots
+                WHERE is_frozen_15h10 = 1
+                  AND json_extract(snapshot_json, '$.quant_snapshot.model_version') = ?
+                ORDER BY trade_date DESC
+                LIMIT ?
+                """,
+                (HEATMAP_MODEL_VERSION, SNAPSHOT_RETENTION_DAYS),
+            ).fetchall()
+        for row in rows:
+            if row["quant_json"]:
+                snapshots.append({"quant_snapshot": json.loads(row["quant_json"])})
+    except Exception as db_err:
+        logger.warning("Heatmap concentration baseline unavailable: %s", db_err)
+    return snapshots
+
+
+def _upgrade_snapshot_to_v4(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Recompute legacy full snapshots in memory without rewriting frozen rows."""
+    quant = payload.get("quant_snapshot") or {}
+    if payload.get("schema_version", 0) >= HEATMAP_SCHEMA_VERSION and quant.get("model_version") == HEATMAP_MODEL_VERSION:
+        return payload
+
+    symbol_index = build_snapshot_symbol_index(payload)
+    if not symbol_index:
+        payload.setdefault("data_quality", {}).setdefault("warnings", []).append(
+            "LEGACY_MODEL: snapshot khong co du dong co phieu de tai tinh Quant v4."
+        )
+        return payload
+
+    source_model_version = quant.get("model_version") or "unknown"
+    stocks = list(symbol_index.values())
+    sectors = payload.get("sectors") if isinstance(payload.get("sectors"), list) else []
+    new_quant = build_quant_snapshot(stocks, sectors)
+    new_quant["source_snapshot_model_version"] = source_model_version
+    new_quant["recomputed_from_legacy"] = True
+    payload["quant_snapshot"] = new_quant
+    payload["schema_version"] = HEATMAP_SCHEMA_VERSION
+
+    eligible = [stock for stock in stocks if _is_quant_stock(stock)]
+    summary = payload.setdefault("summary", {})
+    summary.update({
+        "total_stocks": len(eligible),
+        "advances": sum(stock.get("status") == "GAIN" and _is_active_stock(stock) for stock in eligible),
+        "declines": sum(stock.get("status") == "LOSS" and _is_active_stock(stock) for stock in eligible),
+        "unchanged": sum(stock.get("status") == "REF" and _is_active_stock(stock) for stock in eligible),
+        "inactive_count": sum(not _is_active_stock(stock) for stock in eligible),
+        "ceilings": sum(stock.get("status") == "CEILING" and _is_active_stock(stock) for stock in eligible),
+        "floors": sum(stock.get("status") == "FLOOR" and _is_active_stock(stock) for stock in eligible),
+        "total_market_cap": sum(max(float(stock.get("market_cap", 0) or 0), 0.0) for stock in eligible),
+        "matched_trading_value": sum(max(float(stock.get("trading_value", 0) or 0), 0.0) for stock in eligible),
+    })
+    payload.setdefault("data_lineage", {})["quant_universe"] = {
+        "instrument_type": "STOCK",
+        "exchanges": ["HOSE", "HNX", "UPCOM"],
+        "count": len(eligible),
+        "excluded_funds": sum(not _is_quant_stock(stock) for stock in stocks),
+    }
+    return payload
 
 
 # ---------- Intraday Snapshot Poller (Task 2) ----------
@@ -1859,6 +2088,7 @@ def _collect_market_board() -> Tuple[List[Dict[str, Any]], str, str, int]:
                 "volume": int(accumulated_vol),
                 "trading_value": float(accumulated_val),
                 "market_cap": float(market_cap),
+                "reference_market_cap": float(listed_shares * ref_price),
                 "status": status,
                 "instrument_type": stock_type,
                 "sector": sector_name,
@@ -1944,16 +2174,20 @@ def _assemble_heatmap_payload(
     fall back to the unique-symbols count (a safe under-estimate).
     """
     quant_snapshot = build_quant_snapshot(stock_records, sectors_list)
+    _apply_concentration_baseline(quant_snapshot, _get_recent_v4_quant_snapshots())
     sectors_list.sort(key=lambda x: x["total_market_cap"], reverse=True)
 
-    total_stocks = len(stock_records)
-    advances = sum(1 for s in stock_records if s["status"] == "GAIN")
-    declines = sum(1 for s in stock_records if s["status"] == "LOSS")
-    unchanged = sum(1 for s in stock_records if s["status"] == "REF")
-    ceilings = sum(1 for s in stock_records if s["status"] == "CEILING")
-    floors = sum(1 for s in stock_records if s["status"] == "FLOOR")
-    total_mcap = sum(s["market_cap"] for s in stock_records)
-    matched_val = sum(s["trading_value"] for s in stock_records)
+    quant_stocks = [stock for stock in stock_records if _is_quant_stock(stock)]
+    active_quant_stocks = [stock for stock in quant_stocks if _is_active_stock(stock)]
+    total_stocks = len(quant_stocks)
+    advances = sum(1 for s in active_quant_stocks if s["status"] == "GAIN")
+    declines = sum(1 for s in active_quant_stocks if s["status"] == "LOSS")
+    unchanged = sum(1 for s in active_quant_stocks if s["status"] == "REF")
+    inactive_count = total_stocks - len(active_quant_stocks)
+    ceilings = sum(1 for s in active_quant_stocks if s["status"] == "CEILING")
+    floors = sum(1 for s in active_quant_stocks if s["status"] == "FLOOR")
+    total_mcap = sum(s["market_cap"] for s in quant_stocks)
+    matched_val = sum(s["trading_value"] for s in quant_stocks)
     total_val = _fetch_market_total_liquidity(matched_val)
 
     print(f"[DEBUG] Tổng thanh khoản thị trường: {total_val/1e9:.2f} tỷ VNĐ (Khớp lệnh: {matched_val/1e9:.2f} tỷ)")
@@ -1975,10 +2209,12 @@ def _assemble_heatmap_payload(
             "advances": advances,
             "declines": declines,
             "unchanged": unchanged,
+            "inactive_count": inactive_count,
             "ceilings": ceilings,
             "floors": floors,
             "total_market_cap": total_mcap,
             "total_trading_value": total_val,
+            "matched_trading_value": matched_val,
         },
         "sectors": sectors_list,
         "quant_snapshot": quant_snapshot,
@@ -1992,8 +2228,17 @@ def _assemble_heatmap_payload(
             "coverage": {
                 "requested_symbols": requested_count,
                 "accepted_listings": total_stocks,
-                "accepted_active_listings": sum(1 for s in stock_records if s.get("volume", 0) > 0),
+                "accepted_active_listings": len(active_quant_stocks),
                 "excluded_or_unpriced": max(requested_count - total_stocks, 0),
+            },
+            "quant_universe": {
+                "instrument_type": "STOCK",
+                "exchanges": ["HOSE", "HNX", "UPCOM"],
+                "count": total_stocks,
+                "excluded_funds": sum(
+                    str(stock.get("instrument_type") or "STOCK").upper() != "STOCK"
+                    for stock in stock_records
+                ),
             },
         },
         "data_quality": {
@@ -2014,7 +2259,8 @@ def fetch_market_heatmap_data(force_refresh: bool = False) -> Dict[str, Any]:
     [Task 2 - Snapshot 15h10]:
       - If past 15:10 on a weekday OR weekend AND DB already has FROZEN snapshot for today -> RETURN DB snapshot (NO API call)
       - After 15:10 if we DO run the API -> persist result to DB as frozen (saves money/API quota for all later users today)
-      - Automatic cleanup: only keeps last 3 days of snapshots (older ones auto-deleted, so 'tomorrow' wipes the past)
+      - Automatic cleanup retains 20 close snapshots for robust quant baselines;
+        weekly reporting still consumes only the latest 5 compatible sessions.
 
     [Task 3 - Market Closed]: adds `market_closed` + `snapshot_frozen` flags so UI can switch display.
     """
@@ -2237,18 +2483,30 @@ def _build_quant_only_heatmap_insight(heatmap_data: Dict[str, Any], reason: str)
             f"và độ rộng tăng {breadth:.1f}%. Đây là diễn giải định lượng tự động."
         ),
         "money_flow_matrix": {
-            "liquidity_concentration": f"Top 10 mã chiếm {float(quant.get('top10_liquidity_share_pct') or 0):.1f}% thanh khoản phiên.",
-            "market_breadth_eval": f"A/D {float(quant.get('advance_decline_ratio') or 0):.2f}; tỷ lệ mã có giao dịch {float(quant.get('active_ratio_pct') or 0):.1f}%.",
-            "breadth_stability": f"Độ ổn định độ rộng: {float(quant.get('breadth_stability_pct') or 0):.1f}% (cao = thị trường rõ ràng, thấp = sideway/chờ đợi).",
+            "liquidity_concentration": (
+                f"Top 10 mã chiếm {float(quant.get('top10_liquidity_share_pct') or 0):.1f}% GTGD khớp lệnh; "
+                f"quy mô hiệu dụng {float(quant.get('effective_stock_count') or 0):.1f} mã, trạng thái {quant.get('concentration_state', 'KHONG_DU_DU_LIEU')}."
+            ),
+            "market_breadth_eval": (
+                f"A/D {'∞' if quant.get('advance_decline_state') == 'NO_DECLINES' else format(float(quant.get('advance_decline_ratio') or 0), '.2f')}; "
+                f"{float(quant.get('advance_share_active_pct') or 0):.1f}% mã có giao dịch tăng và "
+                f"{float(quant.get('directional_participation_pct') or 0):.1f}% có hướng."
+            ),
+            "participation_quality": f"Độ tin cậy nhiệt: {quant.get('heat_confidence', 'THAP')}; tỷ lệ mã có giao dịch {float(quant.get('active_ratio_pct') or 0):.1f}%.",
             "scope_warning": "Chỉ là proxy giá-thanh khoản; không có dữ liệu khối ngoại, tự doanh hay lệnh của tổ chức.",
         },
         "evidence": {
             "breadth_pct": quant.get("breadth_pct"),
             "advance_decline_ratio": quant.get("advance_decline_ratio"),
             "active_ratio_pct": quant.get("active_ratio_pct"),
-            "breadth_stability_pct": quant.get("breadth_stability_pct"),
+            "advance_share_active_pct": quant.get("advance_share_active_pct"),
+            "directional_participation_pct": quant.get("directional_participation_pct"),
+            "net_breadth_pct": quant.get("net_breadth_pct"),
             "market_cap_weighted_change_pct": quant.get("market_cap_weighted_change_pct"),
             "top10_liquidity_share_pct": quant.get("top10_liquidity_share_pct"),
+            "liquidity_hhi": quant.get("liquidity_hhi"),
+            "effective_stock_count": quant.get("effective_stock_count"),
+            "concentration_state": quant.get("concentration_state"),
             "data_lineage": heatmap_data.get("data_lineage", {}),
         },
         "sector_momentum_matrix": sector_matrix,
@@ -2339,7 +2597,8 @@ def generate_deepseek_heatmap_insight(heatmap_data: Dict[str, Any]) -> Dict[str,
             key: quant.get(key) for key in [
                 "market_temperature", "market_regime", "breadth_pct", "advance_decline_ratio",
                 "active_ratio_pct", "market_cap_weighted_change_pct", "top10_liquidity_share_pct",
-                "breadth_stability_pct",
+                "advance_share_active_pct", "directional_participation_pct", "net_breadth_pct",
+                "heat_confidence", "liquidity_hhi", "effective_stock_count", "concentration_state",
             ]
         },
         "historical_context": historical if historical.get("available") else None,
@@ -2476,7 +2735,7 @@ INPUT:
         })
 
     report = {
-        "report_version": "lp-ai-market-radar-3.3",
+        "report_version": "lp-ai-market-radar-4.0",
         "snapshot_id": snapshot_id,
         "generated_at": get_vn_now().strftime("%d/%m/%Y %H:%M:%S"),
         "market_temperature": quant.get("market_temperature"),
@@ -2493,9 +2752,14 @@ INPUT:
             "breadth_pct": quant.get("breadth_pct"),
             "advance_decline_ratio": quant.get("advance_decline_ratio"),
             "active_ratio_pct": quant.get("active_ratio_pct"),
+            "advance_share_active_pct": quant.get("advance_share_active_pct"),
+            "directional_participation_pct": quant.get("directional_participation_pct"),
+            "net_breadth_pct": quant.get("net_breadth_pct"),
             "market_cap_weighted_change_pct": quant.get("market_cap_weighted_change_pct"),
             "top10_liquidity_share_pct": quant.get("top10_liquidity_share_pct"),
-            "breadth_stability_pct": quant.get("breadth_stability_pct"),
+            "liquidity_hhi": quant.get("liquidity_hhi"),
+            "effective_stock_count": quant.get("effective_stock_count"),
+            "concentration_state": quant.get("concentration_state"),
             "data_lineage": heatmap_data.get("data_lineage", {}),
         },
         "historical_context": {
@@ -2526,7 +2790,7 @@ INPUT:
             "checklist_4": str(checklist[3] if len(checklist) > 3 else "Không all-in: chia vốn tối đa 20-30% cho một vị thế")[:200],
             "checklist_5": str(checklist[4] if len(checklist) > 4 else "Đặt stop-loss ngay từ đầu, không hold hy vọng")[:200],
         },
-        "ai_engine_source": "Lộc Phát AI Engine v3.3, grounded on LP Quant snapshot + 5-day history",
+        "ai_engine_source": "Lộc Phát AI Engine v4.0, grounded on LP Quant snapshot + compatible 5-day history",
         "token_usage": body.get("usage", {}),
         "disclaimer": "Đây là công cụ hỗ trợ phân tích dựa trên dữ liệu và mô hình AI, không phải tư vấn đầu tư cá nhân hóa. Nhà đầu tư tự chịu trách nhiệm với quyết định của mình.",
     }
@@ -2600,18 +2864,30 @@ def _build_quant_only_heatmap_insight_v2(
         ),
         "trend_read": historical.get("insight", "Chưa có dữ liệu lịch sử để phân tích xu hướng.") if historical else "Chưa có dữ liệu lịch sử.",
         "money_flow_matrix": {
-            "liquidity_concentration": f"Top 10 mã chiếm {float(quant.get('top10_liquidity_share_pct') or 0):.1f}% thanh khoản phiên.",
-            "market_breadth_eval": f"A/D {float(quant.get('advance_decline_ratio') or 0):.2f}; tỷ lệ mã có giao dịch {float(quant.get('active_ratio_pct') or 0):.1f}%.",
-            "breadth_stability": f"Độ ổn định độ rộng: {float(quant.get('breadth_stability_pct') or 0):.1f}%.",
+            "liquidity_concentration": (
+                f"Top 10 mã chiếm {float(quant.get('top10_liquidity_share_pct') or 0):.1f}% GTGD khớp lệnh; "
+                f"quy mô hiệu dụng {float(quant.get('effective_stock_count') or 0):.1f} mã."
+            ),
+            "market_breadth_eval": (
+                f"A/D {'∞' if quant.get('advance_decline_state') == 'NO_DECLINES' else format(float(quant.get('advance_decline_ratio') or 0), '.2f')}; "
+                f"{float(quant.get('advance_share_active_pct') or 0):.1f}% mã có giao dịch tăng, "
+                f"mức tham gia có hướng {float(quant.get('directional_participation_pct') or 0):.1f}%."
+            ),
+            "participation_quality": f"Độ tin cậy nhiệt: {quant.get('heat_confidence', 'THAP')}; hoạt động {float(quant.get('active_ratio_pct') or 0):.1f}%.",
             "scope_warning": "Chỉ là proxy giá-thanh khoản; không có dữ liệu khối ngoại, tự doanh hay lệnh của tổ chức.",
         },
         "evidence": {
             "breadth_pct": quant.get("breadth_pct"),
             "advance_decline_ratio": quant.get("advance_decline_ratio"),
             "active_ratio_pct": quant.get("active_ratio_pct"),
-            "breadth_stability_pct": quant.get("breadth_stability_pct"),
+            "advance_share_active_pct": quant.get("advance_share_active_pct"),
+            "directional_participation_pct": quant.get("directional_participation_pct"),
+            "net_breadth_pct": quant.get("net_breadth_pct"),
             "market_cap_weighted_change_pct": quant.get("market_cap_weighted_change_pct"),
             "top10_liquidity_share_pct": quant.get("top10_liquidity_share_pct"),
+            "liquidity_hhi": quant.get("liquidity_hhi"),
+            "effective_stock_count": quant.get("effective_stock_count"),
+            "concentration_state": quant.get("concentration_state"),
             "data_lineage": heatmap_data.get("data_lineage", {}),
         },
         "historical_context": {
@@ -2638,7 +2914,7 @@ def _build_quant_only_heatmap_insight_v2(
             "risk_action": "Giảm tỷ trọng xuống 20-30%, bảo toàn vốn và chờ thị trường ổn định.",
         },
         "capital_allocation_guardrail": _allocation_guardrail(temperature),
-        "ai_engine_source": "LP Quant snapshot v3.3 (fallback định lượng + historical context)",
+        "ai_engine_source": "LP Quant snapshot v4.0 (fallback định lượng + compatible historical context)",
         "token_usage": {},
         "disclaimer": "Hệ thống AI chưa được kích hoạt nên báo cáo hiện tại sử dụng phân tích định lượng chuẩn. Đây là công cụ hỗ trợ phân tích, không phải tư vấn đầu tư cá nhân hóa.",
         "configuration_notice": reason,
@@ -2651,7 +2927,10 @@ def generate_weekly_analysis() -> Dict[str, Any]:
     Generate weekly trading analysis from the last 5 frozen snapshots.
     Called after market close on Friday (15:00+).
     """
-    snapshots = get_recent_snapshots(days=WEEKLY_ANALYSIS_DAYS)
+    snapshots = [
+        snapshot for snapshot in get_recent_snapshots(days=SNAPSHOT_RETENTION_DAYS)
+        if (snapshot.get("quant_snapshot") or {}).get("model_version") == HEATMAP_MODEL_VERSION
+    ][:WEEKLY_ANALYSIS_DAYS]
 
     if len(snapshots) < 5:
         raise RuntimeError(
@@ -2667,8 +2946,15 @@ def generate_weekly_analysis() -> Dict[str, Any]:
     # Aggregate data from all 5 days
     total_advances = sum(s.get("summary", {}).get("advances", 0) for s in snapshots)
     total_declines = sum(s.get("summary", {}).get("declines", 0) for s in snapshots)
-    avg_breadth = sum(s.get("quant_snapshot", {}).get("breadth_pct", 0) for s in snapshots) / 5
-    avg_temperature = sum(s.get("quant_snapshot", {}).get("market_temperature", 0) for s in snapshots) / 5
+    breadth_values = [
+        float(s.get("quant_snapshot", {}).get("breadth_pct")) for s in snapshots
+        if _is_finite_metric(s.get("quant_snapshot", {}).get("breadth_pct"))
+    ]
+    if len(breadth_values) != WEEKLY_ANALYSIS_DAYS:
+        raise RuntimeError("Có snapshot không đủ mẫu tăng/giảm để tính độ rộng tuần.")
+    temperature_values = [float(s.get("quant_snapshot", {}).get("market_temperature", 50)) for s in snapshots]
+    avg_breadth = sum(breadth_values) / WEEKLY_ANALYSIS_DAYS
+    avg_temperature = sum(temperature_values) / WEEKLY_ANALYSIS_DAYS
 
     # Sector performance across the week
     sector_changes = {}
@@ -2808,7 +3094,7 @@ Response format: JSON object"""
             "opportunities": str(narrative.get("opportunities", "Không có"))[:300],
             "risks": str(narrative.get("risks", "Không có"))[:300],
             "sector_rotation_note": str(narrative.get("sector_rotation_note", ""))[:500],
-            "ai_engine_source": "Lộc Phát AI Engine v3.3 - Weekly Analysis",
+            "ai_engine_source": "Lộc Phát AI Engine v4.0 - Weekly Analysis",
             "token_usage": body.get("usage", {}),
             "disclaimer": "Đây là công cụ hỗ trợ phân tích dựa trên dữ liệu và mô hình AI, không phải tư vấn đầu tư cá nhân hóa.",
         }
@@ -2875,7 +3161,7 @@ def _build_weekly_quant_only_report(
         "opportunities": opportunities,
         "risks": "Độ rộng dưới 45% kéo dài có thể làm suy yếu xu hướng hiện tại.",
         "sector_rotation_note": sector_rotation_note,
-        "ai_engine_source": "Lộc Phát Quant v3.3 - Weekly Analysis (fallback)",
+        "ai_engine_source": "Lộc Phát Quant v4.0 - Weekly Analysis (fallback)",
         "token_usage": {},
         "disclaimer": "Đây là công cụ hỗ trợ phân tích dựa trên dữ liệu định lượng, không phải tư vấn đầu tư.",
     }

@@ -156,10 +156,15 @@
       opacity: 0.55;
     }
 
-    .rrg-sort-button { display:inline-flex; align-items:center; gap:6px; width:100%; font:inherit; color:inherit; }
+    .rrg-sort-button { display:inline-flex; align-items:center; gap:8px; width:100%; font:inherit; color:inherit; }
     .rrg-sort-button.is-right { justify-content:flex-end; }
-    .rrg-sort-indicator { min-width:24px; font-size:9px; opacity:.72; }
+    .rrg-sort-indicator { min-width:28px; display:inline-flex; align-items:center; justify-content:flex-start; font-size:14px; line-height:1; opacity:.92; }
+    .rrg-sort-button.is-right .rrg-sort-indicator { justify-content:flex-end; }
+    .rrg-sort-indicator > i { font-size:14px; }
+    .rrg-sort-indicator > i.is-idle { color:#738087; opacity:.62; }
+    .rrg-sort-indicator > sub { font-size:9px; line-height:1; font-weight:800; }
     .rrg-radar-card { min-height:118px; }
+    .rrg-radar-status { grid-column:1 / -1; min-height:118px; }
     .rrg-radar-symbol { min-height:34px !important; }
     #btnToggleTails {
       background: #173b53 !important;
@@ -337,7 +342,10 @@
         <span id="pinnedCount" class="text-[10px] text-slate-500 font-semibold">Đã ghim 0/5 mã</span>
       </div>
       <div id="rrgRadarGrid" class="grid grid-cols-1 lg:grid-cols-3 gap-px bg-slate-800/60">
-        <div class="p-5 text-xs text-slate-500 bg-slate-900">Đang tải Rotation Radar…</div>
+        <div class="rrg-radar-status p-5 text-xs text-slate-400 bg-slate-900 flex items-center justify-center font-semibold" role="status" aria-live="polite">
+          <i class="fa-solid fa-spinner fa-spin mr-2 text-emerald-400" aria-hidden="true"></i>
+          Đang Tải Dữ Liệu RRG…
+        </div>
       </div>
     </section>
 
@@ -350,11 +358,11 @@
         <span id="tableUpdatedTime" class="text-xs text-slate-400"></span>
       </div>
 
-      <div class="overflow-x-auto">
+      <div class="rrg-table-scroll overflow-x-auto">
         <table class="w-full min-w-[1080px] text-left text-xs text-slate-300">
           <thead class="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800">
             <tr>
-              <th class="px-4 py-3"><button class="rrg-sort-button" type="button" data-sort-key="symbol">Mã CP <span class="rrg-sort-indicator"></span></button></th>
+              <th class="rrg-symbol-column px-4 py-3"><button class="rrg-sort-button" type="button" data-sort-key="symbol">Mã CP <span class="rrg-sort-indicator"></span></button></th>
               <th class="px-4 py-3"><button class="rrg-sort-button" type="button" data-sort-key="sector">Ngành ICB <span class="rrg-sort-indicator"></span></button></th>
               <th class="px-4 py-3"><button class="rrg-sort-button" type="button" data-sort-key="quadrant">Trạng Thái <span class="rrg-sort-indicator"></span></button></th>
               <th class="px-4 py-3 text-right" title="Điểm xoay tương đối 0–100, không phải điểm mua"><button class="rrg-sort-button is-right" type="button" data-sort-key="rotation_score">Điểm Xoay <span class="rrg-sort-indicator"></span></button></th>
@@ -368,7 +376,10 @@
           </thead>
           <tbody id="rrgTableBody" class="divide-y divide-slate-800/60">
             <tr>
-              <td colspan="10" class="text-center py-8 text-slate-500">Đang tải dữ liệu biểu đồ LP‑RRG...</td>
+              <td colspan="10" class="text-center py-8 text-slate-400 font-semibold" role="status" aria-live="polite">
+                <i class="fa-solid fa-spinner fa-spin mr-2 text-emerald-400" aria-hidden="true"></i>
+                Đang Tải Dữ Liệu RRG…
+              </td>
             </tr>
           </tbody>
         </table>

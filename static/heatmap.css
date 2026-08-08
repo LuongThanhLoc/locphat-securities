@@ -153,6 +153,7 @@ kbd { border: 1px solid var(--line); background: var(--surface-2); color: var(--
 .market-counts .flat b { color: #aebdc5; }
 .market-counts .ceiling b { color: var(--purple); }
 .market-counts .floor b { color: var(--cyan); }
+.market-counts .inactive b { color: var(--muted); }
 
 .controlbar {
   min-height: 58px;
@@ -819,7 +820,7 @@ dialog::backdrop { background: rgba(2, 6, 8, .8); backdrop-filter: blur(5px); }
   .ai-report { padding: 10px; }
 }
 
-/* === MARKET TIMELINE SCRUBBER (Market Radar 3.4) === */
+/* === MARKET TIMELINE SCRUBBER (Market Radar 4.0) === */
 .timeline-bar {
   margin-top: 10px;
   border: 1px solid var(--line);

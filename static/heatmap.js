@@ -34,6 +34,14 @@
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
   });
+  const formatOptional = (value, digits = 0) => value === null || value === undefined
+    ? '--'
+    : formatNumber(value, digits);
+  const concentrationLabel = (value) => ({
+    LAN_TOA: 'Lan tỏa', CAN_BANG: 'Cân bằng', TAP_TRUNG: 'Tập trung',
+    RAT_TAP_TRUNG: 'Rất tập trung', KHONG_DU_DU_LIEU: 'Chưa đủ dữ liệu',
+  }[value] || 'Chưa xác định');
+  const confidenceLabel = (value) => ({ CAO: 'cao', VUA: 'vừa', THAP: 'thấp' }[value] || 'chưa rõ');
   const formatMoney = (value) => {
     const amount = Number(value || 0);
     if (amount >= 1e15) return `${formatNumber(amount / 1e15, 2)} triệu tỷ`;
@@ -121,17 +129,27 @@
     const summary = data.summary || {};
     const quant = data.quant_snapshot || {};
     $('temperatureValue').textContent = `${formatNumber(quant.market_temperature, 1)}/100`;
-    $('regimeValue').textContent = regimeLabel(quant.market_regime);
-    $('breadthValue').textContent = `${formatNumber(quant.breadth_pct, 1)}%`;
-    $('advanceDeclineValue').textContent = `A/D ${formatNumber(quant.advance_decline_ratio, 2)}`;
+    $('regimeValue').textContent = `${regimeLabel(quant.market_regime)} · tin cậy ${confidenceLabel(quant.heat_confidence)}`;
+    $('breadthValue').textContent = quant.breadth_available === false ? '--' : `${formatOptional(quant.breadth_pct, 1)}%`;
+    const adValue = quant.advance_decline_state === 'NO_DECLINES'
+      ? '∞'
+      : quant.advance_decline_state === 'NO_DIRECTIONAL_ISSUES'
+        ? '--'
+        : formatOptional(quant.advance_decline_ratio, 2);
+    $('advanceDeclineValue').textContent = `A/D ${adValue} · ${formatOptional(quant.advance_share_active_pct, 1)}% mã GD tăng · ${formatOptional(quant.directional_participation_pct, 1)}% có hướng`;
     $('liquidityValue').textContent = formatMoney(summary.total_trading_value);
     $('activeRatioValue').textContent = `${formatNumber(quant.active_ratio_pct, 1)}% mã có giao dịch`;
-    $('concentrationValue').textContent = `${formatNumber(quant.top10_liquidity_share_pct, 1)}%`;
+    $('concentrationValue').textContent = quant.top10_liquidity_share_pct === null || quant.top10_liquidity_share_pct === undefined
+      ? '--'
+      : `${formatNumber(quant.top10_liquidity_share_pct, 1)}%`;
+    $('concentrationDetail').textContent = `Top 10 khớp lệnh · hiệu dụng ${formatOptional(quant.effective_stock_count, 1)} mã · ${concentrationLabel(quant.concentration_state)}`;
+    $('concentrationDetail').title = `Top 5 ${formatOptional(quant.top5_liquidity_share_pct, 1)}% · Top 20 ${formatOptional(quant.top20_liquidity_share_pct, 1)}% · HHI ${formatOptional(quant.liquidity_hhi, 4)}`;
     $('ceilingCount').textContent = formatNumber(summary.ceilings);
     $('advanceCount').textContent = formatNumber(summary.advances);
     $('flatCount').textContent = formatNumber(summary.unchanged);
     $('declineCount').textContent = formatNumber(summary.declines);
     $('floorCount').textContent = formatNumber(summary.floors);
+    $('inactiveCount').textContent = formatNumber(summary.inactive_count);
 
     const phase = data.market_session?.phase;
     const live = Boolean(data.market_session?.is_live_matching);
@@ -166,11 +184,11 @@
     $('sectorRadar').innerHTML = sectors.slice(0, 12).map((sector) => {
       const color = scoreColor(Number(sector.flow_score || 0));
       const secSignals = sector._sector_signals || {};
-      const stabilityHtml = secSignals.breadth_stability !== undefined
-        ? `<span title="Độ ổn định độ rộng">Ổn định ${formatNumber(secSignals.breadth_stability * 100, 0)}%</span>`
+      const stabilityHtml = sector.directional_participation_pct !== undefined
+        ? `<span title="Tỷ lệ mã có giao dịch đang tăng hoặc giảm">Có hướng ${formatNumber(sector.directional_participation_pct, 0)}%</span>`
         : '';
-      const concHtml = secSignals.concentration_signal !== undefined
-        ? `<span title="Phân bổ dòng tiền (cao=lan tỏa)">PB ${formatNumber(secSignals.concentration_signal * 100, 0)}%</span>`
+      const concHtml = secSignals.effective_stock_count !== undefined
+        ? `<span title="Số mã thanh khoản hiệu dụng trong ngành">Hiệu dụng ${formatOptional(secSignals.effective_stock_count, 1)} mã</span>`
         : '';
       return `<div class="radar-row">
         <div class="radar-row-top">
@@ -529,7 +547,7 @@
   }
 
   // ============================================================================
-  // MARKET TIMELINE SCRUBBER (Market Radar 3.4)
+  // MARKET TIMELINE SCRUBBER (Market Radar 4.0)
   // --------------------------------------------------------------------------
   // Bottom-of-page interactive bar. The backend poller writes
   // `heatmap_intraday_snapshots` rows every 1m (ATO/ATC) / 5m (continuous) /

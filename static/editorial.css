@@ -1286,17 +1286,17 @@ body.lp-editorial {
 }
 .lp-page-rrg .rrg-loading-text { color: var(--lp-ink); text-shadow: none; }
 .lp-page-rrg .rrg-loading-sub { color: var(--lp-muted); }
-.lp-page-rrg .overflow-x-auto {
+.lp-page-rrg .rrg-table-scroll {
   position: relative;
   max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
   scrollbar-color: var(--lp-navy) var(--lp-paper-muted);
 }
-.lp-page-rrg .overflow-x-auto table { min-width: 760px; color: var(--lp-ink); }
-.lp-page-rrg .overflow-x-auto thead { background: var(--lp-paper-muted) !important; color: var(--lp-muted) !important; }
-.lp-page-rrg .overflow-x-auto th,
-.lp-page-rrg .overflow-x-auto td { border-color: var(--lp-line-soft) !important; }
+.lp-page-rrg .rrg-table-scroll table { min-width: 760px; color: var(--lp-ink); }
+.lp-page-rrg .rrg-table-scroll thead { background: var(--lp-paper-muted) !important; color: var(--lp-muted) !important; }
+.lp-page-rrg .rrg-table-scroll th,
+.lp-page-rrg .rrg-table-scroll td { border-color: var(--lp-line-soft) !important; }
 .lp-page-rrg #rrgTableBody tr { background: var(--lp-paper-strong); }
 .lp-page-rrg #rrgTableBody tr:hover,
 .lp-page-rrg #rrgTableBody tr.bg-emerald-500\/20 {
@@ -1327,15 +1327,27 @@ body.lp-editorial {
   border-color: #85c59d !important;
   color: #08713c !important;
 }
-.lp-page-rrg .overflow-x-auto th:first-child,
-.lp-page-rrg .overflow-x-auto td:first-child {
+.lp-page-rrg .rrg-symbol-column,
+.lp-page-rrg .rrg-symbol-cell {
   position: sticky;
   left: 0;
+  width: 132px;
+  min-width: 132px;
+  max-width: 132px;
+  box-sizing: border-box;
   z-index: 2;
   background: var(--lp-paper-strong) !important;
-  box-shadow: 1px 0 var(--lp-line);
+  box-shadow: 2px 0 0 var(--lp-line);
 }
-.lp-page-rrg .overflow-x-auto thead th:first-child { z-index: 3; background: var(--lp-paper-muted) !important; }
+.lp-page-rrg .rrg-symbol-column { z-index: 4; background: var(--lp-paper-muted) !important; }
+.lp-page-rrg .rrg-symbol-cell-inner { min-width: 0; white-space: nowrap; }
+.lp-page-rrg #rrgTableBody tr:hover .rrg-symbol-cell,
+.lp-page-rrg #rrgTableBody tr.bg-emerald-500\/20 .rrg-symbol-cell {
+  background: #e5f3e9 !important;
+}
+.lp-page-rrg #rrgTableBody tr.bg-blue-500\/10 .rrg-symbol-cell {
+  background: #eaf1fb !important;
+}
 
 /* RSI backtest ----------------------------------------------------------- */
 .lp-page-backtest .lp-page-header-wrap,

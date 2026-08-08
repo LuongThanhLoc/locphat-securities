@@ -95,6 +95,24 @@
     if (chartWrap) chartWrap.classList.remove('is-faded');
   }
 
+  function renderRadarLoading() {
+    if (!radarGrid) return;
+    radarGrid.innerHTML = `
+      <div class="rrg-radar-status p-5 text-xs text-slate-400 bg-slate-900 flex items-center justify-center font-semibold" role="status" aria-live="polite">
+        <i class="fa-solid fa-spinner fa-spin mr-2 text-emerald-400" aria-hidden="true"></i>
+        Đang Tải Dữ Liệu RRG…
+      </div>`;
+  }
+
+  function renderRadarError() {
+    if (!radarGrid) return;
+    radarGrid.innerHTML = `
+      <div class="rrg-radar-status p-5 text-xs text-red-400 bg-slate-900 flex items-center justify-center font-semibold" role="status" aria-live="polite">
+        <i class="fa-solid fa-triangle-exclamation mr-2" aria-hidden="true"></i>
+        Dữ liệu Rotation Radar đang được đồng bộ. Vui lòng thử lại sau ít phút.
+      </div>`;
+  }
+
   // ---------- Numeric helpers ----------
   function safeNum(v, digits = 2) {
     if (v === null || v === undefined || Number.isNaN(v)) return '—';
@@ -163,6 +181,7 @@
           </td>
         </tr>`;
     }
+    if (!hadCompleteDataset) renderRadarLoading();
 
     let url = `/api/rrg/data?group=${encodeURIComponent(group)}&benchmark=${encodeURIComponent(benchmark)}&tail_length=${encodeURIComponent(tailLength)}&period=${encodeURIComponent(period)}`;
     if (group === 'CUSTOM' && customSymbolsCsv) {
@@ -214,14 +233,17 @@
         renderRrgChart();
         renderRotationRadar();
         renderRrgTable();
-      } else if (rrgTableBody) {
-        rrgTableBody.innerHTML = `
-          <tr>
-            <td colspan="10" class="text-center py-8 text-red-400 font-semibold">
-              <i class="fa-solid fa-triangle-exclamation mr-2"></i>
-              Dữ liệu RRG đang được đồng bộ và chưa đạt độ phủ 100%. Vui lòng thử lại sau ít phút.
-            </td>
-          </tr>`;
+      } else {
+        renderRadarError();
+        if (rrgTableBody) {
+          rrgTableBody.innerHTML = `
+            <tr>
+              <td colspan="10" class="text-center py-8 text-red-400 font-semibold" role="status" aria-live="polite">
+                <i class="fa-solid fa-triangle-exclamation mr-2" aria-hidden="true"></i>
+                Dữ liệu RRG đang được đồng bộ và chưa đạt độ phủ 100%. Vui lòng thử lại sau ít phút.
+              </td>
+            </tr>`;
+        }
       }
     }
   }
@@ -340,13 +362,13 @@
       const indicator = button.querySelector('.rrg-sort-indicator');
       const th = button.closest('th');
       if (index < 0) {
-        if (indicator) indicator.innerHTML = '<i class="fa-solid fa-sort opacity-40 text-[10px]"></i>';
+        if (indicator) indicator.innerHTML = '<i class="fa-solid fa-sort is-idle" aria-hidden="true"></i>';
         if (th) th.removeAttribute('aria-sort');
         return;
       }
       const rule = sortKeys[index];
       const iconClass = rule.direction === 'asc' ? 'fa-arrow-up text-emerald-500' : 'fa-arrow-down text-red-500';
-      if (indicator) indicator.innerHTML = `<i class="fa-solid ${iconClass}"></i><sub class="ml-0.5">${index + 1}</sub>`;
+      if (indicator) indicator.innerHTML = `<i class="fa-solid ${iconClass}" aria-hidden="true"></i><sub class="ml-1">${index + 1}</sub>`;
       if (th) th.setAttribute('aria-sort', rule.direction === 'asc' ? 'ascending' : 'descending');
     });
   }
@@ -1096,9 +1118,11 @@
 
       return `
         <tr class="${rowCls} cursor-pointer" data-symbol="${item.symbol}">
-          <td class="px-4 py-3 font-bold text-white flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full" style="background:${q.color || '#64748b'}"></span>
-            <a href="/stock/${encodeURIComponent(item.symbol)}" class="hover:text-emerald-400 transition-colors">${item.symbol}</a>
+          <td class="rrg-symbol-cell px-4 py-3 font-bold text-white">
+            <div class="rrg-symbol-cell-inner flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${q.color || '#64748b'}"></span>
+              <a href="/stock/${encodeURIComponent(item.symbol)}" class="hover:text-emerald-400 transition-colors">${item.symbol}</a>
+            </div>
           </td>
           <td class="px-4 py-3 text-slate-400 text-[11px]">
             <div class="flex flex-col gap-1">

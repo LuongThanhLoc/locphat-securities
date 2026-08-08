@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
-  <link rel="stylesheet" href="/static/heatmap.css?v=20260808_light_v1">
+  <link rel="stylesheet" href="/static/heatmap.css?v=20260808_quant_v4">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
   <link rel="stylesheet" href="/static/site-nav-ai.css?v=20260804_mobile_nav_v1">
   <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
@@ -77,7 +77,7 @@
       <article class="summary-item">
         <span>Mức tập trung</span>
         <strong id="concentrationValue">--</strong>
-        <small>Top 10 mã theo GTGD</small>
+        <small id="concentrationDetail">Top 10 mã theo GTGD khớp lệnh</small>
       </article>
       <article class="summary-item market-counts">
         <span class="ceiling"><b id="ceilingCount">0</b> trần</span>
@@ -85,6 +85,7 @@
         <span class="flat"><b id="flatCount">0</b> TC</span>
         <span class="down"><b id="declineCount">0</b> giảm</span>
         <span class="floor"><b id="floorCount">0</b> sàn</span>
+        <span class="inactive"><b id="inactiveCount">0</b> không GD</span>
       </article>
     </section>
 
@@ -249,6 +250,6 @@
   </dialog>
 
   <script src="/static/site-nav.js?v=20260808_light_v2"></script>
-  <script src="/static/heatmap.js?v=20260807_tooltip_fix_v2" defer></script>
+  <script src="/static/heatmap.js?v=20260808_quant_v4" defer></script>
 </body>
 </html>

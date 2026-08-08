@@ -1,4 +1,4 @@
-"""RSI Divergence Backtesting Engine v2 for Lộc Phát Securities.
+"""RSI Divergence Backtesting Engine v3 for Lộc Phát Securities.
 
 Detects bullish and bearish RSI divergences, simulates trades with configurable
 exit strategies, position sizing, multi-timeframe confirmation, and market regime filtering.
@@ -25,19 +25,40 @@ def _finite(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _frame(rows: Iterable[Dict[str, Any]]) -> pd.DataFrame:
+def _frame(
+    rows: Iterable[Dict[str, Any]],
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+) -> pd.DataFrame:
+    """Normalize provider bars without inventing dates or prices.
+
+    A row is usable only when it contains a provider-supplied session date and
+    a coherent positive OHLC bar.  When volume is available, zero-volume rows
+    are removed because no transaction actually occurred for the instrument.
+    """
     frame = pd.DataFrame(list(rows or []))
     if frame.empty or "close" not in frame:
         return pd.DataFrame()
     date_col = "date" if "date" in frame.columns else "time" if "time" in frame.columns else None
-    if date_col:
-        frame["date"] = pd.to_datetime(frame[date_col], errors="coerce")
-    else:
-        frame["date"] = pd.date_range(end=pd.Timestamp.today(), periods=len(frame), freq="B")
+    if not date_col:
+        return pd.DataFrame()
+    frame["date"] = pd.to_datetime(frame[date_col], errors="coerce", utc=True).dt.tz_localize(None).dt.normalize()
     for column in ("open", "high", "low", "close", "volume"):
         frame[column] = pd.to_numeric(frame.get(column), errors="coerce")
-    frame = frame.dropna(subset=["date", "close"]).sort_values("date").drop_duplicates("date")
-    frame = frame[frame["close"] > 0].reset_index(drop=True)
+    frame = frame.dropna(subset=["date", "open", "high", "low", "close"])
+    frame = frame[frame["date"].dt.weekday < 5]
+    frame = frame[
+        (frame[["open", "high", "low", "close"]] > 0).all(axis=1)
+        & (frame["high"] >= frame[["open", "close", "low"]].max(axis=1))
+        & (frame["low"] <= frame[["open", "close", "high"]].min(axis=1))
+    ]
+    if frame["volume"].notna().any() and (frame["volume"] > 0).any():
+        frame = frame[frame["volume"] > 0]
+    if start is not None:
+        frame = frame[frame["date"] >= pd.Timestamp(start)]
+    if end is not None:
+        frame = frame[frame["date"] <= pd.Timestamp(end)]
+    frame = frame.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
     return frame
 
 
@@ -45,7 +66,11 @@ def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    return 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    relative_strength = gain / loss.replace(0, np.nan)
+    result = 100 - 100 / (1 + relative_strength)
+    result = result.mask((loss == 0) & (gain > 0), 100.0)
+    result = result.mask((loss == 0) & (gain == 0), 50.0)
+    return result
 
 
 def _atr(frame: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -71,40 +96,24 @@ def _enrich(frame: pd.DataFrame, rsi_period: int = 14) -> pd.DataFrame:
     return result
 
 
-def _enrich_weekly(weekly_frame: pd.DataFrame, rsi_period: int = 14) -> pd.DataFrame:
-    result = weekly_frame.copy()
-    result["rsi"] = _rsi(result["close"], rsi_period)
-    return result
+def _aligned_higher_timeframe_rsi(
+    frame: pd.DataFrame,
+    timeframe: str,
+    rsi_period: int,
+) -> pd.Series:
+    """Return the last *completed* weekly/monthly RSI for every daily bar.
 
-
-# ------------------------------------------------------------------
-# Extrema Detection
-# ------------------------------------------------------------------
-
-def _find_local_extrema(series: pd.Series, window: int = 5) -> pd.Series:
-    values = series.ffill().values
-    half = window // 2
-    n = len(values)
-    result = np.zeros(n, dtype=bool)
-    for i in range(half, n - half):
-        center_val = values[i]
-        window_vals = values[i - half:i + half + 1]
-        if center_val == window_vals.min():
-            result[i] = True
-    return pd.Series(result, index=series.index)
-
-
-def _find_local_maxima(series: pd.Series, window: int = 5) -> pd.Series:
-    values = series.ffill().values
-    half = window // 2
-    n = len(values)
-    result = np.zeros(n, dtype=bool)
-    for i in range(half, n - half):
-        center_val = values[i]
-        window_vals = values[i - half:i + half + 1]
-        if center_val == window_vals.max():
-            result[i] = True
-    return pd.Series(result, index=series.index)
+    Shifting one complete period is deliberate: a Monday signal must never use
+    the close of the following Friday, and a mid-month signal must never use
+    the eventual month-end close.
+    """
+    if frame.empty or timeframe not in ("1W", "1M"):
+        return pd.Series(np.nan, index=frame.index, dtype=float)
+    period_freq = "W-FRI" if timeframe == "1W" else "M"
+    period_key = frame["date"].dt.to_period(period_freq)
+    period_close = frame.groupby(period_key, sort=True)["close"].last()
+    completed_rsi = _rsi(period_close, rsi_period).shift(1)
+    return period_key.map(completed_rsi).set_axis(frame.index).astype(float)
 
 
 # ------------------------------------------------------------------
@@ -121,97 +130,99 @@ def _detect_divergences(
     confirm_rsi_min: float = 50.0,
     confirm_rsi_max: float = 50.0,
 ) -> List[Dict[str, Any]]:
-    divergences = []
-    price = frame["close"].values
+    """Detect causal, confirmed swing divergences exactly once per pivot.
+
+    The former rolling-half implementation could emit the same divergence on
+    several consecutive sessions.  Here a pivot is confirmed only after
+    ``pivot_right`` real bars have traded, and that confirmation date is the
+    signal date used by the backtest.
+    """
+    divergences: List[Dict[str, Any]] = []
+    close = frame["close"].to_numpy(dtype=float)
+    low = frame["low"].to_numpy(dtype=float)
+    high = frame["high"].to_numpy(dtype=float)
     rsi = frame["rsi"].values
     dates = frame["date"].values
     has_confirm = confirm_timeframe in ("1W", "1M") and weekly_rsi is not None
+    pivot_right = max(2, min(5, lookback // 4))
+    pivot_width = pivot_right * 2 + 1
+    low_pivots: List[int] = []
+    high_pivots: List[int] = []
 
-    for i in range(lookback, len(frame) - 1):
-        current_rsi = rsi[i]
-        if not np.isfinite(_finite(current_rsi)):
+    for signal_idx in range(pivot_width - 1, len(frame) - 1):
+        pivot_idx = signal_idx - pivot_right
+        left = pivot_idx - pivot_right
+        right = pivot_idx + pivot_right + 1
+        current_rsi = rsi[signal_idx]
+        pivot_rsi = rsi[pivot_idx]
+        if not np.isfinite(current_rsi) or not np.isfinite(pivot_rsi):
             continue
+        weekly_val = float(weekly_rsi.iloc[signal_idx]) if has_confirm else np.nan
+        confirm_available = not has_confirm or np.isfinite(weekly_val)
 
-        # Multi-timeframe confirmation
-        if has_confirm:
-            weekly_val = _finite(weekly_rsi.iloc[i]) if i < len(weekly_rsi) else 50.0
+        low_window = low[left:right]
+        is_low = low[pivot_idx] == np.min(low_window) and np.argmin(low_window) == pivot_right
+        if is_low:
+            previous = low_pivots[-1] if low_pivots else None
+            if previous is not None and pivot_idx - previous <= lookback:
+                bullish_ok = (
+                    low[pivot_idx] < low[previous]
+                    and rsi[pivot_idx] > rsi[previous]
+                    and current_rsi >= rsi_entry_min
+                    and current_rsi < 55
+                    and confirm_available
+                )
+                if has_confirm:
+                    bullish_ok = bullish_ok and weekly_val < confirm_rsi_min
+                if bullish_ok:
+                    divergences.append({
+                        "date": pd.Timestamp(dates[signal_idx]).strftime("%Y-%m-%d"),
+                        "pivot_date": pd.Timestamp(dates[pivot_idx]).strftime("%Y-%m-%d"),
+                        "previous_pivot_date": pd.Timestamp(dates[previous]).strftime("%Y-%m-%d"),
+                        "type": "bullish",
+                        "price_at_signal": round(float(close[signal_idx]), 2),
+                        "rsi_at_signal": round(float(current_rsi), 1),
+                        "lookback_low_price": round(float(low[previous]), 2),
+                        "lookback_low_rsi": round(float(rsi[previous]), 1),
+                        "divergence_low_price": round(float(low[pivot_idx]), 2),
+                        "divergence_low_rsi": round(float(rsi[pivot_idx]), 1),
+                        "signal_bar_index": signal_idx,
+                        "weekly_rsi": round(weekly_val, 1) if has_confirm else None,
+                    })
+            low_pivots.append(pivot_idx)
 
-        window_prices = price[i - lookback:i + 1]
-        window_rsi = rsi[i - lookback:i + 1]
-        half = lookback // 2
+        high_window = high[left:right]
+        is_high = high[pivot_idx] == np.max(high_window) and np.argmax(high_window) == pivot_right
+        if is_high:
+            previous = high_pivots[-1] if high_pivots else None
+            if previous is not None and pivot_idx - previous <= lookback:
+                bearish_ok = (
+                    high[pivot_idx] > high[previous]
+                    and rsi[pivot_idx] < rsi[previous]
+                    and current_rsi <= rsi_entry_max
+                    and current_rsi > 45
+                    and confirm_available
+                )
+                if has_confirm:
+                    bearish_ok = bearish_ok and weekly_val > confirm_rsi_max
+                if bearish_ok:
+                    divergences.append({
+                        "date": pd.Timestamp(dates[signal_idx]).strftime("%Y-%m-%d"),
+                        "pivot_date": pd.Timestamp(dates[pivot_idx]).strftime("%Y-%m-%d"),
+                        "previous_pivot_date": pd.Timestamp(dates[previous]).strftime("%Y-%m-%d"),
+                        "type": "bearish",
+                        "price_at_signal": round(float(close[signal_idx]), 2),
+                        "rsi_at_signal": round(float(current_rsi), 1),
+                        "lookback_high_price": round(float(high[previous]), 2),
+                        "lookback_high_rsi": round(float(rsi[previous]), 1),
+                        "divergence_high_price": round(float(high[pivot_idx]), 2),
+                        "divergence_high_rsi": round(float(rsi[pivot_idx]), 1),
+                        "signal_bar_index": signal_idx,
+                        "weekly_rsi": round(weekly_val, 1) if has_confirm else None,
+                    })
+            high_pivots.append(pivot_idx)
 
-        if len(window_prices[:half]) < 3 or len(window_prices[half:]) < 3:
-            continue
-
-        # ---- Bullish divergence ----
-        first_half_lows = window_prices[:half]
-        second_half_lows = window_prices[half:]
-        fl_low_idx = np.argmin(first_half_lows)
-        sl_low_idx = np.argmin(second_half_lows) + half
-
-        price_low_1 = price[i - lookback + fl_low_idx]
-        price_low_2 = price[i - lookback + sl_low_idx]
-        rsi_low_1 = rsi[i - lookback + fl_low_idx]
-        rsi_low_2 = rsi[i - lookback + sl_low_idx]
-
-        bullish_ok = (
-            price_low_2 < price_low_1
-            and rsi_low_2 > rsi_low_1
-            and _finite(current_rsi) >= rsi_entry_min
-            and _finite(current_rsi) < 55
-        )
-        if has_confirm:
-            bullish_ok = bullish_ok and weekly_val < confirm_rsi_min
-
-        if bullish_ok:
-            divergences.append({
-                "date": pd.Timestamp(dates[i]).strftime("%Y-%m-%d"),
-                "type": "bullish",
-                "price_at_signal": round(float(price[i]), 2),
-                "rsi_at_signal": round(float(current_rsi), 1),
-                "lookback_low_price": round(float(price_low_1), 2),
-                "lookback_low_rsi": round(float(rsi_low_1), 1),
-                "divergence_low_price": round(float(price_low_2), 2),
-                "divergence_low_rsi": round(float(rsi_low_2), 1),
-                "signal_bar_index": i,
-                "weekly_rsi": round(float(weekly_val), 1) if has_confirm else None,
-            })
-
-        # ---- Bearish divergence ----
-        first_half_highs = window_prices[:half]
-        second_half_highs = window_prices[half:]
-        fh_high_idx = np.argmax(first_half_highs)
-        sh_high_idx = np.argmax(second_half_highs) + half
-
-        price_high_1 = price[i - lookback + fh_high_idx]
-        price_high_2 = price[i - lookback + sh_high_idx]
-        rsi_high_1 = rsi[i - lookback + fh_high_idx]
-        rsi_high_2 = rsi[i - lookback + sh_high_idx]
-
-        bearish_ok = (
-            price_high_2 > price_high_1
-            and rsi_high_2 < rsi_high_1
-            and _finite(current_rsi) <= rsi_entry_max
-            and _finite(current_rsi) > 45
-        )
-        if has_confirm:
-            bearish_ok = bearish_ok and weekly_val > confirm_rsi_max
-
-        if bearish_ok:
-            divergences.append({
-                "date": pd.Timestamp(dates[i]).strftime("%Y-%m-%d"),
-                "type": "bearish",
-                "price_at_signal": round(float(price[i]), 2),
-                "rsi_at_signal": round(float(current_rsi), 1),
-                "lookback_high_price": round(float(price_high_1), 2),
-                "lookback_high_rsi": round(float(rsi_high_1), 1),
-                "divergence_high_price": round(float(price_high_2), 2),
-                "divergence_high_rsi": round(float(rsi_high_2), 1),
-                "signal_bar_index": i,
-                "weekly_rsi": round(float(weekly_val), 1) if has_confirm else None,
-            })
-
-    return divergences
+    return sorted(divergences, key=lambda item: (item["signal_bar_index"], item["type"]))
 
 
 # ------------------------------------------------------------------
@@ -240,7 +251,16 @@ def _filter_by_regime(
     # Benchmark RSI if provided
     bench_rsi = None
     if benchmark_frame is not None and len(benchmark_frame) > 14:
-        bench_rsi = _rsi(benchmark_frame["close"], 14).values
+        benchmark = benchmark_frame[["date", "close"]].copy()
+        benchmark["benchmark_rsi"] = _rsi(benchmark["close"], 14)
+        aligned = pd.merge_asof(
+            frame[["date"]].sort_values("date"),
+            benchmark[["date", "benchmark_rsi"]].sort_values("date"),
+            on="date",
+            direction="backward",
+            tolerance=pd.Timedelta(days=7),
+        )
+        bench_rsi = aligned["benchmark_rsi"].to_numpy(dtype=float)
 
     for div in divergences:
         idx = div["signal_bar_index"]
@@ -258,9 +278,12 @@ def _filter_by_regime(
 
         # Benchmark RSI filter
         if trend_filter == "rsi_bench" and bench_rsi is not None:
-            if idx < len(bench_rsi):
-                bench_val = _finite(bench_rsi[idx])
+            if idx < len(bench_rsi) and np.isfinite(bench_rsi[idx]):
+                bench_val = float(bench_rsi[idx])
                 if div["type"] == "bullish" and bench_val >= 50:
+                    filtered_count += 1
+                    continue
+                if div["type"] == "bearish" and bench_val <= 50:
                     filtered_count += 1
                     continue
 
@@ -325,7 +348,7 @@ def _simulate_trades(
     divergences: List[Dict[str, Any]],
     exit_strategy: str = "time",
     holding_days: int = 20,
-    include_short: bool = True,
+    include_short: bool = False,
     max_concurrent_trades: int = 1,
     commission_pct: float = 0.0,
     slippage_pct: float = 0.0,
@@ -335,7 +358,19 @@ def _simulate_trades(
     win_rate_approx: float = 50.0,
     avg_win_approx: float = 5.0,
     avg_loss_approx: float = 3.0,
+    initial_capital: float = 100_000_000.0,
+    execution_audit: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
+    audit = execution_audit if execution_audit is not None else {}
+    for reason in (
+        "short_disabled",
+        "concurrency_limit",
+        "no_next_session",
+        "incomplete_exit_window",
+        "invalid_entry_price",
+    ):
+        audit.setdefault(reason, 0)
+
     if not divergences:
         return []
 
@@ -349,7 +384,7 @@ def _simulate_trades(
     dates = frame["date"].values
     n = len(frame)
 
-    traded_bars: set = set()
+    active_exit_indices: List[int] = []
 
     for div in divergences:
         signal_idx = div["signal_bar_index"]
@@ -357,22 +392,28 @@ def _simulate_trades(
 
         # Skip bearish if shorting is disabled
         if div_type == "bearish" and not include_short:
-            continue
-
-        # Skip if bar already has a trade
-        if signal_idx in traded_bars or signal_idx + 1 in traded_bars:
+            audit["short_disabled"] += 1
             continue
 
         if signal_idx + 1 >= n:
+            audit["no_next_session"] += 1
             continue
 
-        # Apply slippage to entry
-        entry_raw = open_prices[signal_idx + 1]
-        entry_slippage = entry_raw * (1 + slippage_pct / 100)
+        entry_idx = signal_idx + 1
+        active_exit_indices = [idx for idx in active_exit_indices if idx >= entry_idx]
+        if len(active_exit_indices) >= max(1, max_concurrent_trades):
+            audit["concurrency_limit"] += 1
+            continue
+
+        # Apply adverse slippage in the correct direction.
+        entry_raw = open_prices[entry_idx]
+        entry_factor = 1 + slippage_pct / 100 if div_type == "bullish" else 1 - slippage_pct / 100
+        entry_slippage = entry_raw * entry_factor
         entry_price = round(float(entry_slippage), 2)
-        entry_date = pd.Timestamp(dates[signal_idx + 1]).strftime("%Y-%m-%d")
+        entry_date = pd.Timestamp(dates[entry_idx]).strftime("%Y-%m-%d")
 
         if entry_price <= 0:
+            audit["invalid_entry_price"] += 1
             continue
 
         # Determine exit
@@ -382,72 +423,84 @@ def _simulate_trades(
         holding = 0
 
         if exit_strategy == "time":
-            exit_idx = min(signal_idx + 1 + holding_days, n - 1)
+            target_idx = entry_idx + holding_days
+            if target_idx >= n:
+                audit["incomplete_exit_window"] += 1
+                continue  # Do not turn a still-open position into a completed trade.
+            exit_idx = target_idx
             exit_reason = "time_exit"
 
         elif exit_strategy == "rsi":
-            max_check = min(signal_idx + 1 + 60, n)
-            exit_idx = signal_idx + 1
-            for j in range(signal_idx + 1, max_check):
+            max_exit_idx = entry_idx + 60
+            max_check = min(max_exit_idx, n - 1)
+            for j in range(entry_idx, max_check + 1):
                 cur_rsi = rsi[j]
                 if div_type == "bullish":
-                    if cur_rsi >= 65 or j >= signal_idx + 1 + 60:
+                    if np.isfinite(cur_rsi) and cur_rsi >= 65:
                         exit_idx = j
-                        exit_reason = "rsi_overbought" if cur_rsi >= 65 else "max_days"
+                        exit_reason = "rsi_overbought"
                         break
                 else:
-                    if cur_rsi <= 35 or j >= signal_idx + 1 + 60:
+                    if np.isfinite(cur_rsi) and cur_rsi <= 35:
                         exit_idx = j
-                        exit_reason = "rsi_oversold" if cur_rsi <= 35 else "max_days"
+                        exit_reason = "rsi_oversold"
                         break
             if exit_idx is None:
-                exit_idx = min(signal_idx + 1 + 60, n - 1)
+                if max_exit_idx >= n:
+                    audit["incomplete_exit_window"] += 1
+                    continue
+                exit_idx = max_exit_idx
                 exit_reason = "max_days"
 
         elif exit_strategy == "trailing":
-            exit_idx = signal_idx + 1
-            entry_atr = _finite(atr[signal_idx + 1], entry_price * 0.02)
-            trailing_stop = entry_price - atr_stop_multiple * entry_atr
-            max_check = min(signal_idx + 1 + 60, n)
+            entry_atr = _finite(atr[entry_idx], entry_price * 0.02)
+            trailing_stop = entry_price - atr_stop_multiple * entry_atr if div_type == "bullish" else entry_price + atr_stop_multiple * entry_atr
+            max_exit_idx = entry_idx + 60
+            max_check = min(max_exit_idx, n - 1)
 
-            for j in range(signal_idx + 1, max_check):
+            for j in range(entry_idx, max_check + 1):
                 cur_low = low_prices[j]
                 cur_high = high_prices[j]
                 cur_price = price[j]
 
                 if div_type == "bullish":
-                    if cur_price > trailing_stop + 0.5 * entry_atr:
-                        trailing_stop = cur_price - atr_stop_multiple * entry_atr
                     if cur_low <= trailing_stop:
                         exit_idx = j
                         exit_price = round(float(trailing_stop), 2)
                         exit_reason = "trailing_stop"
                         break
+                    # Do not assume whether today's high or low happened first.
+                    # A close-based stop update becomes active next session.
+                    if cur_price > trailing_stop + 0.5 * entry_atr:
+                        trailing_stop = max(trailing_stop, cur_price - atr_stop_multiple * entry_atr)
                 else:
-                    # Short: exit when high exceeds trailing stop (short squeeze)
-                    short_stop = entry_price + atr_stop_multiple * entry_atr
-                    if cur_price < short_stop - 0.5 * entry_atr:
-                        short_stop = cur_price + atr_stop_multiple * entry_atr
-                    if cur_high >= short_stop:
+                    if cur_high >= trailing_stop:
                         exit_idx = j
-                        exit_price = round(float(short_stop), 2)
+                        exit_price = round(float(trailing_stop), 2)
                         exit_reason = "trailing_stop"
                         break
+                    if cur_price < trailing_stop - 0.5 * entry_atr:
+                        trailing_stop = min(trailing_stop, cur_price + atr_stop_multiple * entry_atr)
 
             if exit_reason is None:
-                exit_idx = min(signal_idx + 1 + 20, n - 1)
+                if max_exit_idx >= n:
+                    audit["incomplete_exit_window"] += 1
+                    continue
+                exit_idx = max_exit_idx
                 exit_reason = "max_days"
 
         # Calculate exit price with slippage
         if exit_idx is not None and exit_idx < n:
             exit_date = pd.Timestamp(dates[exit_idx]).strftime("%Y-%m-%d")
-            holding = exit_idx - signal_idx - 1
+            holding = exit_idx - entry_idx
 
             if exit_price is None:
-                exit_raw = close_prices = price[exit_idx]
-                exit_price = round(float(exit_raw * (1 - slippage_pct / 100)), 2)
+                exit_raw = price[exit_idx]
+                exit_factor = 1 - slippage_pct / 100 if div_type == "bullish" else 1 + slippage_pct / 100
+                exit_price = round(float(exit_raw * exit_factor), 2)
             else:
-                exit_price = round(float(exit_price * (1 - slippage_pct / 100)), 2)
+                exit_factor = 1 - slippage_pct / 100 if div_type == "bullish" else 1 + slippage_pct / 100
+                exit_price = round(float(exit_price * exit_factor), 2)
 
             # P&L
             if div_type == "bullish":
@@ -456,30 +509,31 @@ def _simulate_trades(
                 raw_pnl_pct = (entry_price - exit_price) / entry_price * 100
 
             # Commission
-            commission_cost = (entry_price + exit_price) * commission_pct / 100
-            net_pnl_pct = raw_pnl_pct - commission_cost
+            commission_cost_pct = commission_pct * (entry_price + exit_price) / entry_price
+            net_pnl_pct = raw_pnl_pct - commission_cost_pct
 
             # Max drawdown / runup
             max_drawdown = 0.0
             max_runup = 0.0
 
-            for k in range(signal_idx + 1, exit_idx + 1):
-                k_price = price[k]
-                trade_pnl = (k_price - entry_price) / entry_price * 100 if div_type == "bullish" else (entry_price - k_price) / entry_price * 100
+            for k in range(entry_idx, exit_idx + 1):
                 if div_type == "bullish":
-                    if trade_pnl < max_drawdown:
-                        max_drawdown = trade_pnl
-                    if trade_pnl > max_runup:
-                        max_runup = trade_pnl
+                    adverse = (low_prices[k] - entry_price) / entry_price * 100
+                    favorable = (high_prices[k] - entry_price) / entry_price * 100
                 else:
-                    if -trade_pnl < max_drawdown:
-                        max_drawdown = -trade_pnl
-                    if trade_pnl > max_runup:
-                        max_runup = trade_pnl
+                    adverse = (entry_price - high_prices[k]) / entry_price * 100
+                    favorable = (entry_price - low_prices[k]) / entry_price * 100
+                max_drawdown = min(max_drawdown, adverse)
+                max_runup = max(max_runup, favorable)
 
-            # Mark bars
-            for k in range(signal_idx + 1, exit_idx + 1):
-                traded_bars.add(k)
+            position_value = _compute_position_size(
+                initial_capital, position_size_pct, position_mode, 0.0,
+                _finite(atr[entry_idx]), entry_price,
+                win_rate_approx, avg_win_approx, avg_loss_approx,
+            )
+            position_weight = min(max(position_value / initial_capital, 0.0), 1.0) if initial_capital > 0 else 0.0
+            capital_return_pct = net_pnl_pct * position_weight
+            active_exit_indices.append(exit_idx)
 
             trades.append({
                 "entry_date": entry_date,
@@ -489,6 +543,9 @@ def _simulate_trades(
                 "exit_price": exit_price,
                 "pnl_pct": round(net_pnl_pct, 2),
                 "raw_pnl_pct": round(raw_pnl_pct, 2),
+                "commission_pct": round(commission_cost_pct, 4),
+                "position_weight_pct": round(position_weight * 100, 2),
+                "capital_return_pct": round(capital_return_pct, 4),
                 "holding_days": holding,
                 "exit_reason": exit_reason,
                 "max_drawdown_pct": round(max_drawdown, 2),
@@ -534,6 +591,8 @@ def _calculate_metrics(
         "avg_bullish_pnl": 0.0,
         "avg_bearish_pnl": 0.0,
         "total_signals": 0,
+        "bullish_signals": 0,
+        "bearish_signals": 0,
         "filtered_signals": 0,
         "short_trades": 0,
         "long_trades": 0,
@@ -544,9 +603,14 @@ def _calculate_metrics(
         "total_return_vnd": 0.0,
     }
 
+    base["total_signals"] = len(divergences)
+    base["bullish_signals"] = sum(1 for item in divergences if item.get("type") == "bullish")
+    base["bearish_signals"] = sum(1 for item in divergences if item.get("type") == "bearish")
+    base["filtered_signals"] = filtered_signals
+    rsi_values = [d["rsi_at_signal"] for d in divergences if d.get("rsi_at_signal") is not None]
+    base["avg_rsi_at_signal"] = round(float(np.mean(rsi_values)), 1) if rsi_values else 0.0
+
     if not trades:
-        base["total_signals"] = len(divergences)
-        base["filtered_signals"] = filtered_signals
         return base
 
     pnls = [t["pnl_pct"] for t in trades]
@@ -570,12 +634,11 @@ def _calculate_metrics(
         years = 1.0
         divs_per_year = 0.0
 
-    # CAGR: compound annual growth rate from equity curve
-    # Simplified: use total return over the period
-    total_return = sum(pnls) / 100.0
-    cagr = ((1 + total_return) ** (1 / years) - 1) * 100 if years > 0 else 0.0
+    capital_returns = [t.get("capital_return_pct", t["pnl_pct"]) for t in trades]
+    growth_factor = float(np.prod([1 + value / 100.0 for value in capital_returns]))
+    total_return = growth_factor - 1
+    cagr = ((max(growth_factor, 0.0) ** (1 / years)) - 1) * 100 if years > 0 else 0.0
 
-    rsi_values = [d["rsi_at_signal"] for d in divergences]
     avg_rsi = np.mean(rsi_values) if rsi_values else 50.0
 
     bullish_trades = [t for t in trades if t["divergence_type"] == "bullish"]
@@ -588,8 +651,7 @@ def _calculate_metrics(
     all_runups = [t["max_runup_pct"] for t in trades]
 
     # VND balance metrics
-    total_return_pct = sum(pnls)
-    final_balance = initial_capital * (1 + total_return_pct / 100)
+    final_balance = initial_capital * growth_factor
     total_return_vnd = final_balance - initial_capital
 
     return {
@@ -613,6 +675,8 @@ def _calculate_metrics(
         "avg_bullish_pnl": round(avg_bullish, 2),
         "avg_bearish_pnl": round(avg_bearish, 2),
         "total_signals": len(divergences),
+        "bullish_signals": sum(1 for item in divergences if item.get("type") == "bullish"),
+        "bearish_signals": sum(1 for item in divergences if item.get("type") == "bearish"),
         "filtered_signals": filtered_signals,
         "long_trades": len(bullish_trades),
         "short_trades": len(bearish_trades),
@@ -634,7 +698,7 @@ def _build_equity_curve(
     initial_capital: float = 100_000_000.0,
 ) -> List[Dict[str, Any]]:
     """Build equity curve using bar-by-bar compounding, in VND units."""
-    if not trades:
+    if frame.empty:
         return []
 
     equity = initial_capital
@@ -642,10 +706,11 @@ def _build_equity_curve(
     dates = frame["date"].values
     price = frame["close"].values
 
-    # Build trade lookup: date -> trade
-    trade_map: Dict[str, Dict] = {}
+    # Realise results only on the actual exit session; applying final P&L on
+    # entry day would leak future information into the equity curve.
+    trade_map: Dict[str, List[Dict[str, Any]]] = {}
     for t in trades:
-        trade_map[t["entry_date"]] = t
+        trade_map.setdefault(t["exit_date"], []).append(t)
 
     start_price = frame["close"].iloc[0]
     benchmark = initial_capital
@@ -655,10 +720,10 @@ def _build_equity_curve(
         current_price = price[i]
         benchmark = round((current_price / start_price) * initial_capital, 2)
 
-        # Apply trade P&L when trade starts
-        trade = trade_map.get(current_date)
-        if trade is not None:
-            equity = equity * (1 + trade["pnl_pct"] / 100)
+        # Apply trade P&L only when the position exits. With no trades this
+        # stays as a truthful flat cash line while the benchmark uses real closes.
+        for trade in trade_map.get(current_date, []):
+            equity = equity * (1 + trade.get("capital_return_pct", trade["pnl_pct"]) / 100)
 
         equity_curve.append({
             "date": current_date,
@@ -667,25 +732,6 @@ def _build_equity_curve(
         })
 
     return equity_curve
-
-
-# ------------------------------------------------------------------
-# Weekly Data Resampling
-# ------------------------------------------------------------------
-
-def _resample_to_weekly(frame: pd.DataFrame) -> pd.DataFrame:
-    """Resample daily OHLCV to weekly (Monday close)."""
-    if frame.empty:
-        return pd.DataFrame()
-    df = frame.set_index("date").copy()
-    weekly = df[["open", "high", "low", "close", "volume"]].resample("W-MON").agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum",
-    }).dropna().reset_index()
-    return weekly
 
 
 # ------------------------------------------------------------------
@@ -703,7 +749,7 @@ def run_backtest(
     rsi_entry_min: float = 40.0,
     rsi_entry_max: float = 60.0,
     # v2 parameters
-    include_short: bool = True,
+    include_short: bool = False,
     max_concurrent_trades: int = 1,
     commission_pct: float = 0.0,
     slippage_pct: float = 0.0,
@@ -726,7 +772,9 @@ def run_backtest(
         start=start_date.strftime("%Y-%m-%d"),
         end=end_date.strftime("%Y-%m-%d"),
     )
-    df = _frame(raw_df.to_dict("records"))
+    provider_rows = len(raw_df)
+    provider_source = str(raw_df.attrs.get("source") or "Không xác định")
+    df = _frame(raw_df.to_dict("records"), start=start_date, end=end_date)
 
     if df.empty:
         return _empty_result(symbol, start_date, end_date, {
@@ -734,7 +782,14 @@ def run_backtest(
             "exit_strategy": exit_strategy, "holding_days": holding_days,
             "include_short": include_short, "position_mode": position_mode,
             "confirm_timeframe": confirm_timeframe, "trend_filter": trend_filter,
-        }, "no_data")
+        }, "no_data", {
+            "source": provider_source,
+            "provider_rows": provider_rows,
+            "verified_trading_sessions": 0,
+            "excluded_rows": provider_rows,
+            "first_session": None,
+            "last_session": None,
+        })
 
     df = _enrich(df, rsi_period)
 
@@ -744,22 +799,19 @@ def run_backtest(
             "exit_strategy": exit_strategy, "holding_days": holding_days,
             "include_short": include_short, "position_mode": position_mode,
             "confirm_timeframe": confirm_timeframe, "trend_filter": trend_filter,
-        }, "insufficient_data")
+        }, "insufficient_data", {
+            "source": provider_source,
+            "provider_rows": provider_rows,
+            "verified_trading_sessions": len(df),
+            "excluded_rows": max(provider_rows - len(df), 0),
+            "first_session": df["date"].iloc[0].strftime("%Y-%m-%d"),
+            "last_session": df["date"].iloc[-1].strftime("%Y-%m-%d"),
+        })
 
-    # Weekly data for multi-timeframe confirmation
+    # Completed higher-timeframe data aligned causally to each daily session.
     weekly_rsi: Optional[pd.Series] = None
     if confirm_timeframe in ("1W", "1M"):
-        try:
-            weekly_raw = Quote(symbol=symbol).history(
-                start=start_date.strftime("%Y-%m-%d"),
-                end=end_date.strftime("%Y-%m-%d"),
-            )
-            weekly_df = _frame(weekly_raw.to_dict("records"))
-            if not weekly_df.empty:
-                weekly_df = _enrich_weekly(weekly_df, rsi_period)
-                weekly_rsi = weekly_df["rsi"]
-        except Exception:
-            weekly_rsi = None
+        weekly_rsi = _aligned_higher_timeframe_rsi(df, confirm_timeframe, rsi_period)
 
     # Benchmark data for regime filter
     benchmark_frame: Optional[pd.DataFrame] = None
@@ -769,7 +821,7 @@ def run_backtest(
                 start=start_date.strftime("%Y-%m-%d"),
                 end=end_date.strftime("%Y-%m-%d"),
             )
-            benchmark_frame = _frame(bench_raw.to_dict("records"))
+            benchmark_frame = _frame(bench_raw.to_dict("records"), start=start_date, end=end_date)
             if not benchmark_frame.empty:
                 benchmark_frame = _enrich(benchmark_frame, rsi_period)
         except Exception:
@@ -797,6 +849,7 @@ def run_backtest(
     )
 
     # Simulate trades
+    simulation_skips: Dict[str, int] = {}
     trades = _simulate_trades(
         df,
         filtered_divs,
@@ -808,7 +861,20 @@ def run_backtest(
         slippage_pct=slippage_pct,
         position_mode=position_mode,
         position_size_pct=position_size_pct,
+        initial_capital=initial_capital,
+        execution_audit=simulation_skips,
     )
+
+    execution_audit = {
+        "total_detected_signals": len(divergences),
+        "eligible_after_regime": len(filtered_divs),
+        "trades_created": len(trades),
+        "skipped_signals": filtered_count + sum(simulation_skips.values()),
+        "skipped": {
+            "market_regime_filter": filtered_count,
+            **simulation_skips,
+        },
+    }
 
     # Calculate metrics
     summary = _calculate_metrics(
@@ -849,10 +915,26 @@ def run_backtest(
             "market_index": market_index,
             "initial_capital": initial_capital,
         },
-        "divergences": divergences,
-        "trades": trades,
+        "data_quality": {
+            "source": provider_source,
+            "provider_rows": provider_rows,
+            "verified_trading_sessions": len(df),
+            "excluded_rows": max(provider_rows - len(df), 0),
+            "first_session": df["date"].iloc[0].strftime("%Y-%m-%d"),
+            "last_session": df["date"].iloc[-1].strftime("%Y-%m-%d"),
+            "rules": [
+                "Không tạo ngày thay thế khi nguồn thiếu ngày",
+                "Các dòng ngoài khoảng kiểm định không được đưa vào kết quả",
+                "Chỉ dùng OHLC dương, nhất quán và ngày thứ Hai-thứ Sáu",
+                "Loại phiên khối lượng 0 khi nguồn có dữ liệu khối lượng",
+                "Tín hiệu xác nhận sau pivot; lệnh vào ở giá mở cửa phiên kế tiếp",
+            ],
+        },
+        "divergences": sorted(divergences, key=lambda item: item["date"], reverse=True),
+        "trades": sorted(trades, key=lambda item: item["entry_date"], reverse=True),
         "summary": summary,
         "equity_curve": equity_curve,
+        "execution_audit": execution_audit,
     }
 
 
@@ -862,18 +944,43 @@ def _empty_result(
     end_date: date,
     params: Dict[str, Any],
     reason: str,
+    data_quality: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    quality = data_quality or {}
+    source = quality.get("source") or "Không xác định"
+    sessions = int(quality.get("verified_trading_sessions") or 0)
     error_messages = {
-        "no_data": f"Không có dữ liệu giá cho mã {symbol} trong khoảng thời gian này.",
-        "insufficient_data": f"Cần tối thiểu 50 phiên giao dịch, chỉ có dữ liệu không đủ.",
+        "no_data": (
+            f"Nguồn {source} không trả phiên OHLC hợp lệ cho mã {symbol} "
+            "trong khoảng thời gian đã chọn."
+        ),
+        "insufficient_data": (
+            f"Cần tối thiểu 50 phiên giao dịch thực để kiểm định; "
+            f"nguồn {source} chỉ trả {sessions} phiên hợp lệ trong khoảng đã chọn."
+        ),
     }
     return {
         "symbol": symbol,
         "error": error_messages.get(reason, "Lỗi không xác định."),
         "analysis_period": {"start": start_date.isoformat(), "end": end_date.isoformat()},
         "parameters": params,
+        "data_quality": quality,
         "divergences": [],
         "trades": [],
         "summary": {},
         "equity_curve": [],
+        "execution_audit": {
+            "total_detected_signals": 0,
+            "eligible_after_regime": 0,
+            "trades_created": 0,
+            "skipped_signals": 0,
+            "skipped": {
+                "market_regime_filter": 0,
+                "short_disabled": 0,
+                "concurrency_limit": 0,
+                "no_next_session": 0,
+                "incomplete_exit_window": 0,
+                "invalid_entry_price": 0,
+            },
+        },
     }
