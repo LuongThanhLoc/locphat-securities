@@ -19,7 +19,9 @@
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
   }[char]));
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-  const signed = (value) => value == null ? '--' : `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(2)}%`;
+  const signed = (value) => value == null ? '!' : `${Number(value) > 0 ? '+' : ''}${Number(value).toFixed(2)}%`;
+  const isVerified = (node) => node?.data_confidence === 'VERIFIED' && node?.change_pct != null;
+  const displayedChange = (node) => isVerified(node) ? signed(node.change_pct) : '!';
   const compactMoney = (value) => {
     const number = Number(value || 0);
     if (number >= 1e15) return `${(number / 1e15).toLocaleString('vi-VN', { maximumFractionDigits: 2 })} triệu tỷ`;
@@ -32,11 +34,18 @@
     OK: 'Đã xác minh', MISSING_HISTORY: 'Thiếu lịch sử', REFERENCE_TOO_OLD: 'Mốc lịch sử quá cũ',
     UNKNOWN_PRICE_BASIS: 'Chưa xác định cơ sở giá', INVALID_REFERENCE_DATE: 'Ngày tham chiếu không hợp lệ',
     INVALID_REFERENCE_PRICE: 'Giá tham chiếu không hợp lệ', MISSING_CURRENT_PRICE: 'Thiếu giá hiện tại',
-    SOURCE_QUALITY_FAILED: 'Không đạt kiểm tra chéo nguồn',
+    SOURCE_QUALITY_FAILED: 'Không đạt đối soát với bảng giá', SOURCE_DISAGREEMENT: 'Vietcap và KBS không đồng nhất',
+    INVALID_OHLC: 'Dữ liệu OHLC không hợp lệ', SINGLE_SOURCE: 'Chỉ có một nguồn lịch sử',
+    RECENT_CLOSE_MISMATCH: 'Close gần nhất không khớp bảng giá', RECENT_CLOSE_UNVERIFIED: 'Chưa đối soát close gần nhất',
+    MISSING_RECENT_CLOSE: 'Thiếu close gần nhất', HISTORY_CACHE_STALE: 'Cache OHLC chưa đồng bộ',
+    CORPORATE_ACTION_AUDIT_PENDING: 'Đang kiểm tra sự kiện doanh nghiệp',
+    CORPORATE_ACTION_SOURCE_ERROR: 'Nguồn sự kiện doanh nghiệp không khả dụng',
+    CORPORATE_ACTION_UNVERIFIED: 'Có sự kiện doanh nghiệp chưa xác minh',
+    INVALID_SESSION_REFERENCE: 'Thiếu giá tham chiếu cùng snapshot',
   }[status] || status || 'Chưa xác minh');
   const basisLabel = (basis) => basis === 'SESSION_REFERENCE'
     ? 'Giá khớp / tham chiếu cùng phiên'
-    : basis === 'ADJUSTED_CLOSE' ? 'Giá đóng cửa điều chỉnh' : 'Chưa xác định';
+    : basis === 'SOURCE_REPORTED_OHLC' ? 'OHLC do nguồn công bố · giá mở cửa phiên mốc' : 'Chưa xác định';
   const sourceLabel = (value) => String(value || 'Chưa có nguồn').replace('Vietcap public price board', 'Vietcap bảng giá công khai');
   const formatDateTime = (value) => {
     if (!value) return '--';
@@ -62,7 +71,7 @@
   };
 
   function colorFor(node) {
-    if (node.change_pct == null) return { fill: '#737d7a', edge: '#a6aeab', glow: 'rgba(115,125,122,.26)' };
+    if (!isVerified(node)) return { fill: '#737d7a', edge: '#d3a13b', glow: 'rgba(211,161,59,.28)' };
     if (state.range === '1D' && node.status === 'CEILING') return { fill: '#6940a8', edge: '#9b6be2', glow: 'rgba(105,64,168,.3)' };
     if (state.range === '1D' && node.status === 'FLOOR') return { fill: '#197a9b', edge: '#52b7d8', glow: 'rgba(25,122,155,.28)' };
     const value = clamp(Number(node.change_pct), -12, 12);
@@ -231,7 +240,9 @@
     gradient.addColorStop(1, d3.color(colors.fill).darker(.5).formatHex());
     ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, Math.PI * 2); ctx.fillStyle = gradient; ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.lineWidth = node === state.hovered || node === state.selected ? Math.max(2.5, 3 / k) : Math.max(1.2, 2 / k);
+    ctx.lineWidth = node === state.hovered || node === state.selected
+      ? Math.max(2.5, 3 / k)
+      : (!isVerified(node) ? Math.max(2, 2.6 / k) : Math.max(1.2, 2 / k));
     ctx.strokeStyle = node === state.hovered || node === state.selected ? '#f7d77e' : colors.edge;
     ctx.stroke();
 
@@ -246,7 +257,7 @@
       if (visualRadius >= 27) {
         const pctSize = clamp(r * .25, 6 / k, 14 / k);
         ctx.font = `700 ${pctSize}px Inter, sans-serif`;
-        const pct = signed(node.change_pct);
+        const pct = displayedChange(node);
         ctx.strokeText(pct, node.x, node.y + symbolSize * .72); ctx.fillText(pct, node.x, node.y + symbolSize * .72);
       }
     }
@@ -283,8 +294,12 @@
   }
 
   function tooltipHtml(node) {
-    return `<h3>${esc(node.symbol)} <span class="${changeClass(node.change_pct)}">${esc(signed(node.change_pct))}</span></h3>
+    const warning = !isVerified(node)
+      ? `<div class="bubble-tooltip-warning"><strong>!</strong><span>${esc(node.reason_message || statusLabel(node.reason_code || node.calculation_status))}</span></div>`
+      : '';
+    return `<h3>${esc(node.symbol)} <span class="${isVerified(node) ? changeClass(node.change_pct) : 'warning'}">${esc(displayedChange(node))}</span></h3>
       <p>${esc(node.name)} · ${esc(node.exchange)} · ${esc(node.sector)}</p>
+      ${warning}
       <div class="bubble-tooltip-grid">
         <span>Giá gần nhất<b>${Number(node.last_price || 0).toLocaleString('vi-VN')}</b></span>
         <span>Mốc so sánh<b>${esc(node.reference_date || 'Chưa đủ dữ liệu')}</b></span>
@@ -294,20 +309,25 @@
   }
   function showTooltip(node, event) {
     const tip = $('bubbleTooltip');
-    if (!node) { tip.hidden = true; return; }
+    if (!node) { tip.hidden = true; canvas.setAttribute('aria-label', 'Bong bóng thị trường. Di chuyển con trỏ lên mã để xem chi tiết.'); return; }
     tip.innerHTML = tooltipHtml(node); tip.hidden = false;
+    canvas.setAttribute('aria-label', `${node.symbol}, ${isVerified(node) ? displayedChange(node) : `không xác minh được: ${node.reason_message || statusLabel(node.reason_code)}`}`);
     const margin = 12; const rect = tip.getBoundingClientRect();
     tip.style.left = `${clamp(event.clientX + 14, margin, innerWidth - rect.width - margin)}px`;
     tip.style.top = `${clamp(event.clientY + 14, margin, innerHeight - rect.height - margin)}px`;
   }
 
   function formatPrice(value) {
+    if (value == null || value === '') return 'Không có';
     const number = Number(value);
-    return Number.isFinite(number) ? number.toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : '--';
+    return Number.isFinite(number) ? number.toLocaleString('vi-VN', { maximumFractionDigits: 2 }) : 'Không có';
   }
 
   function calculationText(node) {
-    if (node.calculation_status !== 'OK' || node.change_pct == null) return statusLabel(node.calculation_status);
+    if (!isVerified(node)) return node.reason_message || statusLabel(node.reason_code || node.calculation_status);
+    if (node.reference_price_field === 'open') {
+      return `(${formatPrice(node.last_price)} − ${formatPrice(node.anchor_open)}) / |${formatPrice(node.anchor_open)}| = ${signed(node.change_pct)}`;
+    }
     return `${formatPrice(node.last_price)} / ${formatPrice(node.reference_price)} − 1 = ${signed(node.change_pct)}`;
   }
 
@@ -315,27 +335,44 @@
     if (!node) return;
     state.dialogOpen = true; state.dialogTrigger = trigger; state.selected = node;
     $('bubbleTooltip').hidden = true;
+    const verified = isVerified(node);
+    const checkedSources = (node.sources_checked || []).join(' + ') || 'Chưa đủ hai nguồn';
+    const actionList = (node.corporate_actions_detected || []).map((event) =>
+      `<li>${esc(event.event_date || '--')} · ${esc(event.title || event.type || 'Sự kiện doanh nghiệp')}</li>`
+    ).join('');
+    const auditPanel = verified
+      ? `<div class="bubble-quick-audit">
+          <h3>Minh chứng phép tính</h3>
+          <p class="bubble-quick-formula">${esc(calculationText(node))}</p>
+          <p><strong>Cơ sở:</strong> ${esc(basisLabel(node.price_basis))} · <strong>Trạng thái:</strong> VERIFIED</p>
+          <p><strong>Giá hiện tại:</strong> ${esc(sourceLabel(node.current_source))} · ${esc(formatDateTime(node.current_observed_at))}</p>
+          <p><strong>Nguồn lịch sử:</strong> ${esc(checkedSources)} · phiên ${esc(node.reference_date || '--')} cho mốc ${esc(node.target_reference_date || '--')}</p>
+          <p><strong>Sai lệch nguồn lớn nhất:</strong> ${node.source_agreement_pct == null ? '--' : `${esc(Number(node.source_agreement_pct).toFixed(4))}%`} · <strong>Đối soát close:</strong> ${esc(node.reconciliation_status || '--')}</p>
+        </div>`
+      : `<div class="bubble-quick-audit bubble-quick-warning" role="alert">
+          <h3><span aria-hidden="true">!</span> Không xác minh được biến động</h3>
+          <p class="bubble-quick-warning-message">${esc(node.reason_message || statusLabel(node.reason_code || node.calculation_status))}</p>
+          <p><strong>Mã nguyên nhân:</strong> ${esc(node.reason_code || node.calculation_status || 'UNVERIFIED')}</p>
+          <p><strong>Nguồn đã thử:</strong> ${esc(checkedSources)}</p>
+          <p><strong>Mốc yêu cầu:</strong> ${esc(node.target_reference_date || '--')} · <strong>Phiên tìm thấy:</strong> ${esc(node.reference_date || 'Không có')}</p>
+          <p><strong>Kiểm tra lúc:</strong> ${esc(formatDateTime(node.quality_checked_at))} · ${node.retryable ? 'Hệ thống sẽ tự thử lại.' : 'Cần xác minh cơ sở điều chỉnh trước khi công bố số.'}</p>
+          ${actionList ? `<p><strong>Sự kiện phát hiện:</strong></p><ul>${actionList}</ul>` : ''}
+        </div>`;
     const logo = node.logo_url ? `<img class="bubble-quick-logo" id="bubbleQuickLogo" src="${esc(node.logo_url)}" alt="Logo ${esc(node.symbol)}">` : '';
     $('bubbleQuickContent').innerHTML = `<div class="bubble-quick-identity">
         <div id="bubbleQuickLogoWrap">${logo || `<span class="bubble-quick-avatar">${esc(node.symbol.slice(0, 3))}</span>`}</div>
-        <div><div class="bubble-quick-symbol"><strong>${esc(node.symbol)}</strong><b class="${changeClass(node.change_pct)}">${esc(signed(node.change_pct))}</b></div>
+        <div><div class="bubble-quick-symbol"><strong>${esc(node.symbol)}</strong><b class="${verified ? changeClass(node.change_pct) : 'warning'}">${esc(displayedChange(node))}</b></div>
         <p>${esc(node.name || 'Chưa có tên doanh nghiệp')}</p><div class="bubble-quick-tags"><span>${esc(node.exchange || '--')}</span><span>${esc(node.sector || 'Chưa phân ngành')}</span><span>${esc(state.range)}</span></div></div>
       </div>
       <div class="bubble-quick-grid">
         <div class="bubble-quick-metric"><span>Giá gần nhất</span><strong>${esc(formatPrice(node.last_price))}</strong><small>${esc(sourceLabel(node.current_source))}</small></div>
-        <div class="bubble-quick-metric"><span>Biến động ${esc(state.range)}</span><strong class="${changeClass(node.change_pct)}">${esc(signed(node.change_pct))}</strong><small>So với mốc tham chiếu</small></div>
-        <div class="bubble-quick-metric"><span>Giá tham chiếu</span><strong>${esc(formatPrice(node.reference_price))}</strong><small>${esc(node.reference_date || 'Chưa đủ dữ liệu')} · ${esc(sourceLabel(node.reference_source))}</small></div>
+        <div class="bubble-quick-metric"><span>Biến động ${esc(state.range)}</span><strong class="${verified ? changeClass(node.change_pct) : 'warning'}">${esc(displayedChange(node))}</strong><small>${verified ? (node.reference_price_field === 'open' ? 'So với giá mở cửa phiên mốc' : 'So với tham chiếu cùng phiên') : 'Không công bố số chưa xác minh'}</small></div>
+        <div class="bubble-quick-metric"><span>${node.reference_price_field === 'open' ? 'Giá mở cửa mốc' : 'Giá tham chiếu'}</span><strong>${esc(formatPrice(node.reference_price))}</strong><small>${esc(node.reference_date || 'Chưa đủ dữ liệu')} · ${esc(sourceLabel(node.reference_source))}</small></div>
         <div class="bubble-quick-metric"><span>Vốn hóa</span><strong>${esc(compactMoney(node.market_cap))}</strong><small>Quy mô doanh nghiệp</small></div>
         <div class="bubble-quick-metric"><span>Giá trị giao dịch</span><strong>${esc(compactMoney(node.trading_value))}</strong><small>Snapshot phiên gần nhất</small></div>
         <div class="bubble-quick-metric"><span>Xếp hạng đang xem</span><strong>#${(state.ranked.findIndex((item) => item.symbol === node.symbol) + 1).toLocaleString('vi-VN')}</strong><small>Theo ${esc(metricLabel())}</small></div>
       </div>
-      <div class="bubble-quick-audit">
-        <h3>Minh chứng phép tính</h3>
-        <p class="bubble-quick-formula">${esc(calculationText(node))}</p>
-        <p><strong>Cơ sở:</strong> ${esc(basisLabel(node.price_basis))} · <strong>Trạng thái:</strong> ${esc(statusLabel(node.calculation_status))}</p>
-        <p><strong>Giá hiện tại:</strong> ${esc(sourceLabel(node.current_source))} · ${esc(formatDateTime(node.current_observed_at))}</p>
-        <p><strong>Giá mốc:</strong> ${esc(sourceLabel(node.reference_source))} · lấy ngày ${esc(node.reference_date || '--')} cho mốc yêu cầu ${esc(node.target_reference_date || '--')} · tải ${esc(formatDateTime(node.reference_fetched_at))}</p>
-      </div>`;
+      ${auditPanel}`;
     const image = $('bubbleQuickLogo');
     if (image) image.addEventListener('error', () => { $('bubbleQuickLogoWrap').innerHTML = `<span class="bubble-quick-avatar">${esc(node.symbol.slice(0, 3))}</span>`; }, { once: true });
     $('bubbleQuickTitle').textContent = `${node.symbol} · ${node.name || 'Chi tiết cổ phiếu'}`;
@@ -419,15 +456,15 @@
     const historySources = method.history_source_priority?.join(' → ') || data.sources?.join(', ') || '--';
     const rangeDescription = data.range === '1D'
       ? 'Giá khớp gần nhất so với giá tham chiếu của cùng phiên.'
-      : `Lùi ${Number(method.range_days || 0).toLocaleString('vi-VN')} ngày lịch, chọn phiên gần nhất không sau ${data.target_reference_date || '--'}; tối đa ${method.max_reference_lag_days ?? 14} ngày.`;
+      : `Lùi ${Number(method.range_days || 0).toLocaleString('vi-VN')} ngày lịch, chọn phiên gần nhất không sau ${data.target_reference_date || '--'} và dùng giá mở cửa của phiên đó; tối đa ${method.max_reference_lag_days ?? 14} ngày.`;
     $('bubbleMethodContent').innerHTML = `<article class="bubble-method-card">
-        <h3>${esc(data.range)} được tính thế nào?</h3><p>${esc(rangeDescription)}</p><code>${esc(data.formula || '((last_price / reference_price) - 1) * 100')}</code>
+        <h3>${esc(data.range)} được tính thế nào?</h3><p>${esc(rangeDescription)}</p><code>${esc(data.formula || '((current_price - anchor_open) / abs(anchor_open)) * 100')}</code>${data.range === '1D' ? '' : '<p>Cùng định nghĩa Performance của TradingView Screener; dữ liệu gốc vẫn lấy từ Vietcap/KBS, không lấy từ TradingView.</p>'}
       </article>
       <article class="bubble-method-card">
         <h3>Cơ sở và nguồn giá</h3><p>${esc(method.price_basis_label || basisLabel(data.price_basis))}</p><p>Giá hiện tại: ${esc(sourceLabel(method.current_source))}</p><p>Lịch sử: ${esc(historySources)}</p>
       </article>
       <article class="bubble-method-card">
-        <h3>Nguyên tắc chất lượng</h3><p>Không nội suy, không tạo số thay thế. Thiếu dữ liệu, mốc quá cũ hoặc không qua kiểm tra chéo sẽ trả <code>null</code> và hiển thị màu xám.</p><p>Cache cũ chưa xác định cơ sở giá bị bỏ qua.</p>
+        <h3>Nguyên tắc chất lượng</h3><p>Chỉ hiện % khi Vietcap và KBS cùng có Open/Close, lệch không quá ${esc(method.source_comparison_tolerance_pct ?? .5)}% hoặc ${esc(method.source_comparison_tolerance_vnd ?? 100)} đồng, close gần nhất khớp bảng giá và không có sự kiện doanh nghiệp chưa xác minh.</p><p>Mọi trường hợp khác trả <code>null</code> và hiện dấu <code>!</code>; không nội suy, không dựng số thay thế.</p>
       </article>`;
   }
 
@@ -446,11 +483,13 @@
     $('bubbleEvidenceFetched').textContent = updatedAt;
     renderMethodology(data);
     const missing = Number(coverage.missing || 0);
+    const unverified = Number(coverage.unverified || 0);
+    const unavailable = Number(coverage.unavailable || 0);
     const status = $('bubbleStatus');
     status.className = `bubble-status ${missing ? 'warning' : ''}`;
     status.textContent = missing
-      ? `${missing.toLocaleString('vi-VN')} mã chưa đủ lịch sử cho ${data.range}. Hệ thống đang đồng bộ nền; các mã này được hiển thị màu xám.${live ? ' Dữ liệu giá vẫn tự động cập nhật mỗi 5 giây.' : ''}`
-      : `Đã tải đủ ${Number(coverage.available || 0).toLocaleString('vi-VN')} mã · nguồn ${data.sources?.join(', ') || 'bảng giá thị trường'}${live ? ' · tự động cập nhật mỗi 5 giây.' : '.'}`;
+      ? `${missing.toLocaleString('vi-VN')} cảnh báo: ${unverified.toLocaleString('vi-VN')} chưa xác minh, ${unavailable.toLocaleString('vi-VN')} không có dữ liệu. Các bong bóng này hiện dấu ! và không công bố %.${live ? ' Giá hiện tại vẫn cập nhật mỗi 5 giây.' : ''}`
+      : `Đã xác minh đủ ${Number(coverage.verified || coverage.available || 0).toLocaleString('vi-VN')} mã · ${live ? 'giá hiện tại cập nhật mỗi 5 giây.' : 'không có cảnh báo chất lượng.'}`;
   }
 
   function applyRealtimePayload(payload) {

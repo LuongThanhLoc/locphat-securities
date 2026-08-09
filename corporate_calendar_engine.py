@@ -616,6 +616,41 @@ def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, A
     return events, health
 
 
+def fetch_price_affecting_actions(symbol: str, start: date, end: date) -> list[Dict[str, Any]]:
+    """Return VCI structured actions that can mechanically affect price.
+
+    This intentionally excludes meetings and generic disclosures.  Unlike the
+    calendar UI fetcher, failures are allowed to propagate so a data-quality
+    consumer can distinguish a verified empty result from an unavailable feed.
+    """
+    symbol = str(symbol or "").upper().strip()
+    if not _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+        raise ValueError("Mã chứng khoán không hợp lệ")
+    body = _unwrap_data(_get_json(
+        f"{VCI_IQ}/v1/events",
+        params={
+            "ticker": symbol,
+            "fromDate": start.strftime("%Y%m%d"),
+            "toDate": end.strftime("%Y%m%d"),
+            "eventCode": "DIV,ISS,AIS,LIST,DELIST,SUSP,HALT",
+            "page": 0,
+            "size": 200,
+        },
+        timeout=WORKER_TIMEOUT_SECONDS,
+    )) or {}
+    raw_rows = body.get("content", []) if isinstance(body, dict) else body
+    price_affecting = {
+        "cash_dividend", "stock_dividend", "capital_action",
+        "listing_change", "trading_halt",
+    }
+    events: list[Dict[str, Any]] = []
+    for raw in raw_rows or []:
+        event = _corporate_action_event(_snake_case_row(raw), start, end)
+        if event and event.get("type") in price_affecting:
+            events.append(event)
+    return _deduplicate(events)
+
+
 def _normalize_title_key(title: str) -> str:
     cleaned = _re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", str(title or ""))
     return _re.sub(r"\W+", "", cleaned.lower())
