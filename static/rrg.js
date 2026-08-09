@@ -1150,7 +1150,7 @@
             <div class="inline-flex items-center gap-1.5">
               <a href="/stock/${encodeURIComponent(item.symbol)}" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold text-[10px] transition-colors">Xem</a>
               <a href="/backtest?symbol=${encodeURIComponent(item.symbol)}" class="px-2 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 rounded font-semibold text-[10px] transition-colors">RSI</a>
-              <button type="button" data-pin-symbol="${item.symbol}" aria-label="${isPinned ? 'Bỏ ghim' : 'Ghim'} ${item.symbol}" class="px-2 py-1 border rounded font-semibold text-[10px] transition-colors ${isPinned ? 'bg-blue-500/20 text-blue-600 border-blue-500/40' : 'bg-slate-800 text-slate-300 border-slate-700'}"><i class="fa-solid fa-thumbtack"></i></button>
+              <button type="button" data-pin-symbol="${item.symbol}" aria-label="${isPinned ? 'Bỏ ghim' : 'Ghim'} ${item.symbol}" class="inline-flex items-center justify-center h-6 px-2 border rounded font-semibold text-[10px] transition-colors ${isPinned ? 'bg-blue-500/20 text-blue-600 border-blue-500/40' : 'bg-slate-800 text-slate-300 border-slate-700'}"><i class="fa-solid fa-thumbtack text-[10px]"></i></button>
             </div>
           </td>
         </tr>`;

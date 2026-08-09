@@ -51,11 +51,14 @@
       .config-grid { grid-template-columns: repeat(6, 1fr); }
     }
 
-    /* Advanced grid: 2-col mobile, 2-col tablet, 3-col desktop */
+    /* Advanced grid: 1-col phone, 2-col tablet, 3/4-col desktop */
     .advanced-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr;
       gap: 10px;
+    }
+    @media (min-width: 640px) {
+      .advanced-grid { grid-template-columns: repeat(2, 1fr); }
     }
     @media (min-width: 768px) {
       .advanced-grid { grid-template-columns: repeat(3, 1fr); }
@@ -115,7 +118,47 @@
 
     /* Advanced section toggle */
     .advanced-section { overflow: hidden; max-height: 0; opacity: 0; transition: max-height 0.3s ease, opacity 0.3s ease; }
-    .advanced-section.open { max-height: 400px; opacity: 1; }
+    .advanced-section.open { max-height: 2400px; opacity: 1; }
+
+    .advanced-guide {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+      padding: clamp(0.75rem, 1.5vw, 1rem);
+      border: 1px solid rgba(14, 116, 144, 0.25);
+      background: rgba(236, 254, 255, 0.5);
+    }
+    .advanced-guide-step {
+      display: grid;
+      grid-template-columns: 1.5rem minmax(0, 1fr);
+      gap: 0.5rem;
+      align-items: start;
+      color: #475569;
+      font-size: clamp(0.72rem, 1.4vw, 0.8rem);
+      line-height: 1.45;
+    }
+    .advanced-guide-step strong { color: #0f172a; }
+    .advanced-guide-number {
+      display: grid;
+      place-items: center;
+      inline-size: 1.5rem;
+      block-size: 1.5rem;
+      border-radius: 999px;
+      background: #075985;
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 800;
+    }
+    .field-help {
+      margin: 0;
+      color: #64748b;
+      font-size: clamp(0.68rem, 1.25vw, 0.76rem);
+      line-height: 1.45;
+    }
+    @media (min-width: 768px) {
+      .advanced-guide { grid-template-columns: repeat(3, 1fr); }
+    }
 
     @media (max-width: 640px) {
       .config-grid .space-y-1\.5 label { font-size: 10px; }
@@ -130,12 +173,6 @@
   <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
 </head>
 <body class="lp-editorial lp-page-backtest font-sans antialiased min-h-screen">
-
-  <!-- Loading Overlay -->
-  <div id="loading" class="loading-overlay">
-    <div class="spinner"></div>
-    <div class="loading-text" id="loadingText">Đang phân tích...</div>
-  </div>
 
   <!-- Global Navigation -->
   <div class="lp-page-nav-wrap" data-lp-site-nav></div>
@@ -186,16 +223,11 @@
           </div>
         </div>
 
-        <!-- Start Date -->
+        <!-- Bar Limit -->
         <div class="space-y-1.5">
-          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Từ ngày</label>
-          <input type="date" id="startDate" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
-        </div>
-
-        <!-- End Date -->
-        <div class="space-y-1.5">
-          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Đến ngày</label>
-          <input type="date" id="endDate" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
+          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide" id="barLimitLabel">Số phiên gần nhất</label>
+          <input type="number" id="barLimit" value="748" min="50" max="5000" step="1" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
+          <p class="field-help" id="barLimitHelp">Tính lùi từ phiên thật mới nhất; không cố định ngày bắt đầu.</p>
         </div>
 
         <!-- Initial Capital -->
@@ -256,6 +288,57 @@
       <!-- Advanced Parameters (Collapsible) -->
       <div class="advanced-section" id="advancedSection">
         <div class="advanced-grid pt-2 border-t border-slate-800/60">
+          <div class="advanced-guide" role="note" aria-label="Cách các bộ lọc kiểm định hoạt động">
+            <div class="advanced-guide-step">
+              <span class="advanced-guide-number">1</span>
+              <span><strong>Phát hiện tín hiệu</strong><br>RSI và phân kỳ được tính trên khung nến chính.</span>
+            </div>
+            <div class="advanced-guide-step">
+              <span class="advanced-guide-number">2</span>
+              <span><strong>Lọc tín hiệu</strong><br>Khung lớn và bối cảnh xu hướng có thể loại tín hiệu không đạt điều kiện.</span>
+            </div>
+            <div class="advanced-guide-step">
+              <span class="advanced-guide-number">3</span>
+              <span><strong>Mô phỏng giao dịch</strong><br>Chỉ tín hiệu còn lại mới được đưa vào kiểm định lệnh.</span>
+            </div>
+          </div>
+
+          <!-- Main Timeframe -->
+          <div class="space-y-1.5">
+            <label for="timeframe" class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Khung nến phát hiện tín hiệu</label>
+            <select id="timeframe" aria-describedby="timeframeHelp" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none cursor-pointer">
+              <option value="1H">1 Giờ</option>
+              <option value="2H">2 Giờ</option>
+              <option value="4H">4 Giờ</option>
+              <option value="1D" selected>1 Ngày</option>
+              <option value="1W">1 Tuần</option>
+              <option value="1M">1 Tháng</option>
+            </select>
+            <p class="field-help" id="timeframeHelp">Mỗi nến ngày tạo một điểm giá để tính RSI và tìm phân kỳ.</p>
+          </div>
+
+          <!-- Range Mode -->
+          <div class="space-y-1.5">
+            <label for="rangeMode" class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Cách chọn khoảng dữ liệu</label>
+            <select id="rangeMode" aria-describedby="rangeModeHelp" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none cursor-pointer">
+              <option value="bars" selected>Số phiên/bar gần nhất</option>
+              <option value="dates">Theo ngày</option>
+            </select>
+            <p class="field-help" id="rangeModeHelp">Lấy số phiên/bar thật gần nhất, tính lùi từ dữ liệu mới nhất của nguồn.</p>
+          </div>
+
+          <!-- Start Date -->
+          <div class="space-y-1.5 date-range-field" style="display:none">
+            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Từ ngày</label>
+            <input type="date" id="startDate" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
+          </div>
+
+          <!-- End Date -->
+          <div class="space-y-1.5 date-range-field" style="display:none">
+            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Đến ngày</label>
+            <input type="date" id="endDate" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
+          </div>
+
           <!-- Include Short -->
           <div class="space-y-1.5">
             <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Mô phỏng Short (giả định)</label>
@@ -298,23 +381,24 @@
 
           <!-- Confirm Timeframe -->
           <div class="space-y-1.5">
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Xác nhận khung thời gian</label>
-            <select id="confirmTimeframe" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none cursor-pointer">
+            <label for="confirmTimeframe" class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Bộ lọc RSI khung lớn</label>
+            <select id="confirmTimeframe" aria-describedby="confirmTimeframeHelp" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none cursor-pointer">
               <option value="">Tắt</option>
               <option value="1W">1 Tuần</option>
               <option value="1M">1 Tháng</option>
             </select>
+            <p class="field-help" id="confirmTimeframeHelp">Tắt: tín hiệu không bị lọc thêm bởi RSI của khung lớn.</p>
           </div>
 
           <!-- Confirm RSI Min -->
           <div class="space-y-1.5" id="confirmRsiMinRow" style="display:none">
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">RSI HT Min (Tăng)</label>
+            <label for="confirmRsiMin" class="text-xs font-semibold text-slate-400 uppercase tracking-wide">RSI khung lớn dưới mức (Tăng)</label>
             <input type="number" id="confirmRsiMin" value="50" min="20" max="70" step="1" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
           </div>
 
           <!-- Confirm RSI Max -->
           <div class="space-y-1.5" id="confirmRsiMaxRow" style="display:none">
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">RSI HT Max (Giảm)</label>
+            <label for="confirmRsiMax" class="text-xs font-semibold text-slate-400 uppercase tracking-wide">RSI khung lớn trên mức (Giảm)</label>
             <input type="number" id="confirmRsiMax" value="50" min="30" max="80" step="1" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none">
           </div>
 
@@ -330,13 +414,14 @@
 
           <!-- Trend Filter -->
           <div class="space-y-1.5">
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Bộ lọc xu hướng</label>
-            <select id="trendFilter" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none cursor-pointer">
+            <label for="trendFilter" class="text-xs font-semibold text-slate-400 uppercase tracking-wide">Bộ lọc bối cảnh xu hướng</label>
+            <select id="trendFilter" aria-describedby="trendFilterHelp" class="w-full bg-slate-950/90 border border-slate-700/60 focus:border-emerald-500 rounded-xl px-3 py-2 text-white text-sm outline-none cursor-pointer">
               <option value="none">Tắt</option>
               <option value="ma50">Giá &gt; MA50</option>
               <option value="ma200">Giá &gt; MA200</option>
-              <option value="rsi_bench">Chỉ số RSI &lt; 50</option>
+              <option value="rsi_bench">RSI chỉ số theo chiều tín hiệu</option>
             </select>
+            <p class="field-help" id="trendFilterHelp">Tắt: không loại tín hiệu theo MA hoặc RSI chỉ số thị trường.</p>
           </div>
 
           <!-- Max Concurrent Trades -->
@@ -362,6 +447,13 @@
   <!-- Main Content Area -->
   <div class="px-2 md:px-4 py-5 space-y-5">
 
+    <!-- Inline Loading State -->
+    <section id="loading" class="loading-overlay hidden" aria-live="polite" aria-busy="true">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loadingText">Đang tính toán dựa trên dữ liệu...</div>
+      <div class="loading-subtext" id="loadingSubtext">Vui lòng chờ trong giây lát, hệ thống đang kiểm tra OHLC thật và tín hiệu RSI.</div>
+    </section>
+
     <!-- Results Section (Initially Hidden) -->
     <div id="resultsSection" class="hidden space-y-5">
 
@@ -375,14 +467,16 @@
             <i class="fa-solid fa-chart-line text-emerald-400"></i>
             Đường cong Vốn
           </h3>
-          <div id="equityChart" class="h-64 sm:h-72"></div>
+          <p class="chart-panel-note">So sánh hiệu quả với Mua &amp; Nắm giữ. Vốn chiến lược chỉ thay đổi khi một giao dịch mô phỏng được đóng; chấm trên đường là thời điểm chốt lệnh.</p>
+          <div id="equityChart" class="chart-panel-content"></div>
         </div>
         <div class="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-4 backdrop-blur-xl">
           <h3 class="text-sm font-bold text-white mb-3 flex items-center gap-2">
             <i class="fa-solid fa-chart-bar text-sky-400"></i>
-            Phân bổ Lợi nhuận
+            Hiệu quả từng Giao dịch
           </h3>
-          <div id="distributionChart" class="h-64 sm:h-72"></div>
+          <p class="chart-panel-note">Mỗi thanh là P&amp;L của một giao dịch mô phỏng theo thời gian. Thanh đậm là lời, thanh nhạt là lỗ, xám là hòa vốn; đường dọc nét đứt là mức trung bình.</p>
+          <div id="distributionChart" class="chart-panel-content"></div>
         </div>
       </section>
 
@@ -454,6 +548,6 @@
   <script src="/static/site-nav.js?v=20260808_light_v2"></script>
 
   <!-- Backtest Page Script -->
-  <script src="/static/backtest.js?v=20260808_rsi_execution_audit_v3"></script>
+  <script src="/static/backtest.js?v=20260808_rsi_advanced_help_v9"></script>
 </body>
 </html>

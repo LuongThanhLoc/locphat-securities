@@ -10,6 +10,7 @@ let divergenceSortColumn = 'date';
 let divergenceSortDirection = 'desc';
 let tradeSortColumn = 'entry_date';
 let tradeSortDirection = 'desc';
+let loadingHideTimer = null;
 
 /* ==========================================================================
    KHỞI TẠO
@@ -21,6 +22,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('endDate').value = formatDate(today);
   document.getElementById('startDate').value = formatDate(threeYearsAgo);
+  updateTimeframeLabels();
+  updateRangeModeFields();
 
   initSymbolSearch();
 
@@ -39,6 +42,10 @@ document.addEventListener('DOMContentLoaded', function() {
   // Watch advanced toggles
   document.getElementById('confirmTimeframe').addEventListener('change', toggleConfirmTimeframeFields);
   document.getElementById('positionMode').addEventListener('change', updatePositionSizeField);
+  document.getElementById('timeframe').addEventListener('change', updateTimeframeLabels);
+  document.getElementById('rangeMode').addEventListener('change', updateRangeModeFields);
+  document.getElementById('trendFilter').addEventListener('change', updateAdvancedFieldHelp);
+  updateAdvancedFieldHelp();
 });
 
 function formatDate(date) {
@@ -133,6 +140,7 @@ function toggleConfirmTimeframeFields() {
     minRow.style.display = 'none';
     maxRow.style.display = 'none';
   }
+  updateAdvancedFieldHelp();
 }
 
 function updatePositionSizeField() {
@@ -154,16 +162,89 @@ function updatePositionSizeField() {
   }
 }
 
+function getBarUnitLabel(timeframe) {
+  return ['1H', '2H', '4H'].includes(timeframe) ? 'bar' : 'phiên';
+}
+
+function updateTimeframeLabels() {
+  const timeframe = document.getElementById('timeframe')?.value || '1D';
+  const unit = getBarUnitLabel(timeframe);
+  const label = document.getElementById('barLimitLabel');
+  if (label) label.textContent = `Số ${unit} gần nhất`;
+  updateAdvancedFieldHelp();
+}
+
+function updateRangeModeFields() {
+  const mode = document.getElementById('rangeMode')?.value || 'bars';
+  document.querySelectorAll('.date-range-field').forEach(el => {
+    el.style.display = mode === 'dates' ? 'block' : 'none';
+  });
+  updateAdvancedFieldHelp();
+}
+
+function updateAdvancedFieldHelp() {
+  const timeframe = document.getElementById('timeframe')?.value || '1D';
+  const rangeMode = document.getElementById('rangeMode')?.value || 'bars';
+  const confirmTimeframe = document.getElementById('confirmTimeframe')?.value || '';
+  const trendFilter = document.getElementById('trendFilter')?.value || 'none';
+  const timeframeNames = {
+    '1H': '1 giờ', '2H': '2 giờ', '4H': '4 giờ',
+    '1D': 'ngày', '1W': 'tuần', '1M': 'tháng',
+  };
+
+  const timeframeHelp = document.getElementById('timeframeHelp');
+  if (timeframeHelp) {
+    timeframeHelp.textContent = `Mỗi nến ${timeframeNames[timeframe] || timeframe} tạo một điểm giá để tính RSI và tìm phân kỳ.`;
+  }
+
+  const rangeModeHelp = document.getElementById('rangeModeHelp');
+  if (rangeModeHelp) {
+    rangeModeHelp.textContent = rangeMode === 'dates'
+      ? 'Chỉ dùng các phiên/bar thật nằm trong hai ngày bạn chọn.'
+      : 'Lấy số phiên/bar thật gần nhất, tính lùi từ dữ liệu mới nhất của nguồn.';
+  }
+
+  const barLimitHelp = document.getElementById('barLimitHelp');
+  if (barLimitHelp) {
+    barLimitHelp.textContent = rangeMode === 'dates'
+      ? 'Không áp dụng khi đang chọn khoảng dữ liệu Theo ngày.'
+      : 'Tính lùi từ phiên/bar thật mới nhất; không cố định ngày bắt đầu.';
+  }
+
+  const confirmHelp = document.getElementById('confirmTimeframeHelp');
+  if (confirmHelp) {
+    const confirmName = timeframeNames[confirmTimeframe] || confirmTimeframe;
+    confirmHelp.textContent = confirmTimeframe
+      ? `Lọc bằng RSI ${confirmName} đã hoàn tất: tín hiệu tăng cần RSI dưới ngưỡng Min; tín hiệu giảm cần RSI trên ngưỡng Max.`
+      : 'Tắt: tín hiệu không bị lọc thêm bởi RSI của khung lớn.';
+  }
+
+  const trendHelp = document.getElementById('trendFilterHelp');
+  if (trendHelp) {
+    const descriptions = {
+      none: 'Tắt: không loại tín hiệu theo MA hoặc RSI chỉ số thị trường.',
+      ma50: 'Chỉ giữ tín hiệu khi giá cổ phiếu tại ngày tín hiệu không thấp hơn MA50.',
+      ma200: 'Chỉ giữ tín hiệu khi giá cổ phiếu tại ngày tín hiệu không thấp hơn MA200.',
+      rsi_bench: 'Dùng RSI của chỉ số đã chọn: tín hiệu tăng cần RSI < 50; tín hiệu giảm cần RSI > 50.',
+    };
+    trendHelp.textContent = descriptions[trendFilter] || descriptions.none;
+  }
+}
+
 /* ==========================================================================
    CHẠY BACKTEST
    ========================================================================== */
 async function runBacktest() {
   const symbol = document.getElementById('symbolInput').value.trim().toUpperCase();
   if (!symbol) { showError('Vui lòng nhập mã cổ phiếu'); return; }
+  const rangeMode = document.getElementById('rangeMode').value || 'bars';
 
   const params = {
-    start: document.getElementById('startDate').value || undefined,
-    end: document.getElementById('endDate').value || undefined,
+    start: rangeMode === 'dates' ? (document.getElementById('startDate').value || undefined) : undefined,
+    end: rangeMode === 'dates' ? (document.getElementById('endDate').value || undefined) : undefined,
+    timeframe: document.getElementById('timeframe').value || '1D',
+    bar_limit: rangeMode === 'bars' ? (parseInt(document.getElementById('barLimit').value) || 748) : undefined,
+    range_mode: rangeMode,
     initial_capital: parseCapitalInput(),
     rsi_period: parseInt(document.getElementById('rsiPeriod').value) || 14,
     lookback: parseInt(document.getElementById('lookback').value) || 20,
@@ -184,7 +265,7 @@ async function runBacktest() {
     market_index: document.getElementById('marketIndex').value,
   };
 
-  showLoading('Đang chạy kiểm định RSI cho ' + symbol + '...');
+  showLoading('Đang tính toán dựa trên dữ liệu ' + symbol + '...');
   hideError();
   document.getElementById('emptyState').classList.add('hidden');
   document.getElementById('resultsSection').classList.add('hidden');
@@ -202,7 +283,7 @@ async function runBacktest() {
     }
 
     backtestData = await resp.json();
-    if (backtestData.error) throw new Error(backtestData.error);
+    if (backtestData.error && !backtestData.data_quality) throw new Error(backtestData.error);
 
     hideLoading();
     renderResults(backtestData);
@@ -231,25 +312,30 @@ function renderResults(data) {
   }
 
   renderSummaryCards(data.summary, data);
-  renderEquityChart(data.equity_curve, data.trades);
+  renderEquityChart(data.equity_curve, data.trades, data);
   renderDistributionChart(data.trades, data);
-  renderDivergenceTable(data.divergences, showWeekly);
+  renderDivergenceTable(data.divergences, showWeekly, data);
   renderTradesTable(data.trades, data);
 }
 
 function renderSummaryCards(summary, data) {
   const container = document.getElementById('summaryCards');
 
-  if (!summary || summary.total_trades === 0) {
+  if (!summary || !summary.total_trades) {
     const state = getNoTradeState(data);
     const quality = data?.data_quality || {};
     const source = escapeHtml(quality.source || 'Không xác định');
-    const firstSession = escapeHtml(quality.first_session || '—');
-    const lastSession = escapeHtml(quality.last_session || '—');
-    const sessions = quality.verified_trading_sessions || 0;
-    const initialCapital = summary?.initial_capital || data?.parameters?.initial_capital || 0;
+    const firstSession = escapeHtml(quality.first_bar || quality.first_session || '—');
+    const lastSession = escapeHtml(quality.last_bar || quality.last_session || '—');
+    const sessions = quality.actual_bars || quality.verified_trading_sessions || 0;
+    const unit = getBarUnitLabel(quality.timeframe || data?.parameters?.timeframe || '1D');
+    const timeframe = escapeHtml(quality.timeframe || data?.parameters?.timeframe || '1D');
+    const transformText = quality.source_transform === 'resampled_from_daily'
+      ? ' · Tổng hợp từ nến ngày thật'
+      : '';
+    const initialCapital = summary?.initial_capital || data?.parameters?.initial_capital || parseCapitalInput() || 0;
     const zeroTradeCards = [
-      { label: 'Phiên thực đã xác minh', value: sessions, icon: 'fa-calendar-check', color: 'text-cyan-400' },
+      { label: `${unit === 'bar' ? 'Bar' : 'Phiên'} thực đã xác minh`, value: sessions, icon: 'fa-calendar-check', color: 'text-cyan-400' },
       { label: 'Tổng tín hiệu', value: summary?.total_signals || 0, icon: 'fa-wave-square', color: 'text-white' },
       { label: 'Phân kỳ tăng giá', value: summary?.bullish_signals || 0, icon: 'fa-arrow-trend-up', color: 'text-emerald-400' },
       { label: 'Phân kỳ giảm giá', value: summary?.bearish_signals || 0, icon: 'fa-arrow-trend-down', color: 'text-rose-400' },
@@ -265,7 +351,7 @@ function renderSummaryCards(summary, data) {
           <i class="fa-solid fa-circle-info mt-1 text-sky-700"></i>
           <div class="min-w-0">
             <p class="font-semibold text-slate-800">${state.message}</p>
-            <p class="mt-1 text-sm text-slate-500">Nguồn: ${source} · Phiên đầu: ${firstSession} · Phiên cuối: ${lastSession} · ${sessions} phiên đã xác minh.</p>
+            <p class="mt-1 text-sm text-slate-500">Nguồn: ${source}${transformText} · Khung: ${timeframe} · ${unit === 'bar' ? 'Bar đầu' : 'Phiên đầu'}: ${firstSession} · ${unit === 'bar' ? 'Bar cuối' : 'Phiên cuối'}: ${lastSession} · ${sessions} ${unit} đã xác minh.</p>
             ${state.cta}
           </div>
         </div>
@@ -319,7 +405,10 @@ function getNoTradeState(data) {
   const summary = data?.summary || {};
   const audit = data?.execution_audit || {};
   const skipped = audit.skipped || {};
-  const sessions = data?.data_quality?.verified_trading_sessions || 0;
+  const quality = data?.data_quality || {};
+  const timeframe = quality.timeframe || data?.parameters?.timeframe || '1D';
+  const unit = getBarUnitLabel(timeframe);
+  const sessions = quality.actual_bars || quality.verified_trading_sessions || 0;
   const total = summary.total_signals || audit.total_detected_signals || 0;
   const bullish = summary.bullish_signals || 0;
   const bearish = summary.bearish_signals || 0;
@@ -327,12 +416,20 @@ function getNoTradeState(data) {
   const cta = shortDisabled > 0 ? `
     <button type="button" onclick="enableShortAndRerun()"
       class="mt-3 inline-flex items-center gap-2 border border-rose-300 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 transition-colors">
-      <i class="fa-solid fa-rotate-right"></i>Bật mô phỏng Short (giả định) và chạy lại
-    </button>` : '';
+      <i class="fa-solid fa-rotate-right"></i>Bật mô phỏng Short giả định và chạy lại
+    </button>
+    <p class="mt-2 text-xs text-slate-500">Chỉ dùng để kiểm định kịch bản giá giảm, không phải khuyến nghị hay khả năng giao dịch thực tế trên cổ phiếu cơ sở.</p>` : '';
+
+  if (quality.timeframe_supported === false) {
+    return {
+      message: quality.unsupported_reason || data?.error || `Khung ${timeframe} chưa có dữ liệu OHLC thật đã xác minh.`,
+      cta: '',
+    };
+  }
 
   if (sessions > 0 && total === 0) {
     return {
-      message: `Đã kiểm tra ${sessions} phiên thực. Có dữ liệu giá nhưng không phát hiện phân kỳ theo cấu hình hiện tại.`,
+      message: `Đã kiểm tra ${sessions} ${unit} thực. Có dữ liệu giá nhưng không phát hiện phân kỳ theo cấu hình hiện tại.`,
       cta: '',
     };
   }
@@ -341,7 +438,7 @@ function getNoTradeState(data) {
       ? `${bearish} phân kỳ giảm giá`
       : `${total} tín hiệu (${bullish} tăng giá, ${bearish} giảm giá)`;
     return {
-      message: `Đã kiểm tra ${sessions} phiên thực, phát hiện ${signalText}. Không tạo giao dịch vì mô phỏng Short đang tắt.`,
+      message: `Đã kiểm tra ${sessions} ${unit} thực, phát hiện ${signalText}. Các tín hiệu này là chiều Short. Hiện cổ phiếu cơ sở Việt Nam chưa hỗ trợ bán khống phổ thông, nên hệ thống không tạo giao dịch thật; bạn chỉ có thể bật mô phỏng Short để kiểm định giả định.`,
       cta,
     };
   }
@@ -355,8 +452,8 @@ function getNoTradeState(data) {
   ].filter(([, count]) => count > 0).map(([label, count]) => `${count} ${label}`);
   return {
     message: sessions > 0
-      ? `Đã kiểm tra ${sessions} phiên thực và phát hiện ${total} tín hiệu, nhưng không tạo được giao dịch${reasons.length ? `: ${reasons.join(', ')}` : '.'}`
-      : 'Nguồn OHLC không trả đủ dữ liệu phiên thực để chạy kiểm định.',
+      ? `Đã kiểm tra ${sessions} ${unit} thực và phát hiện ${total} tín hiệu, nhưng không tạo được giao dịch${reasons.length ? `: ${reasons.join(', ')}` : '.'}`
+      : (data?.error || 'Nguồn OHLC không trả đủ dữ liệu thực để chạy kiểm định.'),
     cta,
   };
 }
@@ -369,55 +466,176 @@ function enableShortAndRerun() {
   runBacktest();
 }
 
+function pctChange(value, base) {
+  const number = Number(value);
+  const denominator = Number(base);
+  if (!Number.isFinite(number) || !Number.isFinite(denominator) || denominator === 0) return 0;
+  return ((number / denominator) - 1) * 100;
+}
+
+function formatPct(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  return `${number > 0 ? '+' : ''}${number.toFixed(digits)}%`;
+}
+
+function chartValueClass(value) {
+  const number = Number(value);
+  if (number > 0) return 'text-emerald-600';
+  if (number < 0) return 'text-rose-600';
+  return 'text-slate-600';
+}
+
+function resetChart(chartRef, container) {
+  if (chartRef) chartRef.destroy();
+  if (container) container.innerHTML = '';
+  return null;
+}
+
+function calculateEquityDrawdown(equityCurve) {
+  let peak = 0;
+  let maxDrawdown = 0;
+  let drawdownDate = null;
+
+  (equityCurve || []).forEach(point => {
+    const equity = Number(point?.equity);
+    if (!Number.isFinite(equity) || equity <= 0) return;
+    peak = Math.max(peak, equity);
+    if (peak <= 0) return;
+    const drawdown = ((equity / peak) - 1) * 100;
+    if (drawdown < maxDrawdown) {
+      maxDrawdown = drawdown;
+      drawdownDate = point.date;
+    }
+  });
+
+  return { value: maxDrawdown, date: drawdownDate };
+}
+
 /* ==========================================================================
    BIỂU ĐỒ ĐƯỜNG CONG VỐN
    ========================================================================== */
-function renderEquityChart(equityCurve, trades) {
+function renderEquityChart(equityCurve, trades, data) {
   const container = document.getElementById('equityChart');
   if (!equityCurve || equityCurve.length === 0) {
-    container.innerHTML = '<div class="flex items-center justify-center h-full text-slate-500">Không có dữ liệu</div>';
+    equityChart = resetChart(equityChart, container);
+    const state = data ? getNoTradeState(data) : null;
+    container.innerHTML = `<div class="flex items-center justify-center h-full px-5 text-center text-slate-500">${state?.message || 'Không có dữ liệu'}</div>`;
     return;
   }
 
-  const dates = equityCurve.map(d => d.date);
-  const equity = equityCurve.map(d => d.equity);
-  const benchmark = equityCurve.map(d => d.benchmark);
+  equityChart = resetChart(equityChart, container);
+
+  const initialCapital = data?.summary?.initial_capital
+    || data?.parameters?.initial_capital
+    || equityCurve[0]?.equity
+    || parseCapitalInput();
+  const lastPoint = equityCurve[equityCurve.length - 1];
+  const strategyReturn = pctChange(lastPoint?.equity, initialCapital);
+  const benchmarkReturn = pctChange(lastPoint?.benchmark, initialCapital);
+  const outperformance = strategyReturn - benchmarkReturn;
+  const equityDrawdown = calculateEquityDrawdown(equityCurve);
+  const tradeExitDates = new Map((trades || []).map(trade => [trade.exit_date, trade]));
+  const strategySeries = equityCurve.map(point => ({
+    x: point.date,
+    y: Number(pctChange(point.equity, initialCapital).toFixed(2)),
+    equity: point.equity,
+  }));
+  const benchmarkSeries = equityCurve.map(point => ({
+    x: point.date,
+    y: Number(pctChange(point.benchmark, initialCapital).toFixed(2)),
+    equity: point.benchmark,
+  }));
+  const exitMarkers = equityCurve
+    .map((point, index) => ({ point, index, trade: tradeExitDates.get(point.date) }))
+    .filter(item => item.trade)
+    .map(item => ({
+      seriesIndex: 0,
+      dataPointIndex: item.index,
+      fillColor: item.trade.pnl_pct >= 0 ? '#08713c' : '#c23b32',
+      strokeColor: '#fffaf0',
+      size: 5,
+    }));
+
+  container.innerHTML = `
+    <div class="chart-insight-grid" aria-label="Tóm tắt đường cong vốn">
+      <div class="chart-insight-card">
+        <span>Chiến lược RSI</span>
+        <strong class="${chartValueClass(strategyReturn)}">${formatPct(strategyReturn)}</strong>
+        <small>${formatVND(lastPoint?.equity)} đ cuối kỳ</small>
+      </div>
+      <div class="chart-insight-card">
+        <span>Mua &amp; nắm giữ</span>
+        <strong class="${chartValueClass(benchmarkReturn)}">${formatPct(benchmarkReturn)}</strong>
+        <small>Benchmark từ giá đóng cửa thật</small>
+      </div>
+      <div class="chart-insight-card">
+        <span>Chênh lệch</span>
+        <strong class="${chartValueClass(outperformance)}">${formatPct(outperformance)}</strong>
+        <small>${outperformance >= 0 ? 'Vượt' : 'Kém'} mua &amp; nắm giữ</small>
+      </div>
+      <div class="chart-insight-card">
+        <span>Sụt giảm vốn lớn nhất</span>
+        <strong class="${equityDrawdown.value < 0 ? 'text-rose-600' : 'text-slate-600'}">${formatPct(equityDrawdown.value)}</strong>
+        <small>${equityDrawdown.date ? `Chạm đáy ngày ${equityDrawdown.date}` : 'Không ghi nhận sụt giảm'}</small>
+      </div>
+    </div>
+    <div id="equityChartCanvas" class="chart-host"></div>
+  `;
 
   const options = {
     series: [
-      { name: trades && trades.length ? 'Vốn Backtest' : 'Tiền mặt (không có lệnh)', data: equity },
-      { name: 'Mua & Nắm giữ', data: benchmark }
+      { name: trades && trades.length ? 'Chiến lược RSI' : 'Tiền mặt (không có lệnh)', data: strategySeries },
+      { name: 'Mua & Nắm giữ', data: benchmarkSeries }
     ],
     chart: {
-      type: 'line', height: 280,
-      toolbar: { show: true, tools: { download: false, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true } },
+      type: 'line', height: 300,
+      toolbar: { show: true, tools: { download: false, selection: true, zoom: true, zoomin: true, zoomout: true, pan: true, reset: true } },
       zoom: { enabled: true }, animations: { enabled: true, speed: 300 }
     },
-    colors: ['#10b981', '#38bdf8'],
-    stroke: { curve: 'smooth', width: 2 },
-    fill: {
-      type: 'gradient', gradient: {
-        shadeIntensity: 1, opacityFrom: 0.3, opacityTo: 0.05, stops: [0, 90, 100]
-      }
-    },
+    colors: ['#08713c', '#0b5a78'],
+    stroke: { curve: 'straight', width: [3, 2], dashArray: [0, 5] },
     dataLabels: { enabled: false },
+    markers: { size: 0, discrete: exitMarkers, hover: { size: 6 } },
     xaxis: {
       type: 'datetime',
       labels: { style: { colors: '#64748b', fontSize: '11px' } },
       axisBorder: { show: false }, axisTicks: { show: false }
     },
-    yaxis: { labels: { style: { colors: '#64748b', fontSize: '11px' }, formatter: v => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(v) } },
-    legend: { show: true, position: 'top', horizontalAlign: 'right', labels: { colors: '#59656b' } },
-    grid: { borderColor: '#ded9cc', strokeDashArray: 4 },
-    tooltip: { theme: 'light', x: { format: 'dd MMM yyyy' }, y: { formatter: v => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(v) } },
+    yaxis: {
+      title: { text: '% so với vốn ban đầu', style: { color: '#64748b', fontSize: '11px' } },
+      labels: { style: { colors: '#64748b', fontSize: '11px' }, formatter: v => formatPct(v, 0) }
+    },
+    annotations: {
+      yaxis: [{ y: 0, borderColor: '#9aa7ad', strokeDashArray: 4, label: { text: 'Hòa vốn', style: { color: '#59656b', background: '#fffaf0' } } }]
+    },
+    legend: { show: true, position: 'top', horizontalAlign: 'left', labels: { colors: '#59656b' } },
+    grid: { borderColor: '#ded9cc', strokeDashArray: 4, padding: { left: 4, right: 12 } },
+    tooltip: {
+      theme: 'light',
+      shared: true,
+      x: { format: 'dd MMM yyyy' },
+      y: {
+        formatter: (value, context) => {
+          const point = context?.w?.config?.series?.[context.seriesIndex]?.data?.[context.dataPointIndex];
+          const capital = point?.equity;
+          return `${formatPct(value)}${Number.isFinite(Number(capital)) ? ` · ${formatVND(capital)} đ` : ''}`;
+        }
+      }
+    },
+    responsive: [{
+      breakpoint: 640,
+      options: {
+        chart: { height: 280, toolbar: { show: false } },
+        legend: { fontSize: '10px', itemMargin: { horizontal: 5, vertical: 2 } },
+        yaxis: { title: { text: undefined }, labels: { formatter: v => formatPct(v, 0) } },
+        grid: { padding: { left: 0, right: 6 } }
+      }
+    }]
   };
 
-  if (equityChart) {
-    equityChart.updateOptions(options, true);
-  } else {
-    equityChart = new ApexCharts(container, options);
-    equityChart.render();
-  }
+  equityChart = new ApexCharts(document.getElementById('equityChartCanvas'), options);
+  equityChart.render();
 }
 
 /* ==========================================================================
@@ -426,10 +644,7 @@ function renderEquityChart(equityCurve, trades) {
 function renderDistributionChart(trades, data) {
   const container = document.getElementById('distributionChart');
   if (!trades || trades.length === 0) {
-    if (distributionChart) {
-      distributionChart.destroy();
-      distributionChart = null;
-    }
+    distributionChart = resetChart(distributionChart, container);
     const state = getNoTradeState(data);
     container.innerHTML = `<div class="flex h-full flex-col items-center justify-center px-5 text-center text-slate-500">
       <i class="fa-solid fa-chart-column mb-3 text-xl text-slate-400"></i>
@@ -440,46 +655,212 @@ function renderDistributionChart(trades, data) {
     return;
   }
 
-  const pnls = trades.map(t => t.pnl_pct);
-  const binSize = 2;
-  const min = Math.floor(Math.min(...pnls) / binSize) * binSize;
-  const max = Math.ceil(Math.max(...pnls) / binSize) * binSize;
-  const bins = [];
+  distributionChart = resetChart(distributionChart, container);
 
-  for (let i = min; i < max; i += binSize) {
-    const count = pnls.filter(p => p >= i && p < i + binSize).length;
-    bins.push({ x: i + (binSize / 2), y: count, fillColor: i >= 0 ? '#10b981' : '#f87171' });
-  }
+  const sortedTrades = [...trades].sort((a, b) => compareTableValues(a.entry_date, b.entry_date, 'asc'));
+  const pnls = sortedTrades.map(t => Number(t.pnl_pct) || 0);
+  const avgPnl = pnls.reduce((sum, value) => sum + value, 0) / pnls.length;
+  const winCount = pnls.filter(value => value > 0).length;
+  const lossCount = pnls.filter(value => value < 0).length;
+  const flatCount = pnls.filter(value => value === 0).length;
+  const bestTrade = sortedTrades.reduce((best, trade) => (trade.pnl_pct > best.pnl_pct ? trade : best), sortedTrades[0]);
+  const worstTrade = sortedTrades.reduce((worst, trade) => (trade.pnl_pct < worst.pnl_pct ? trade : worst), sortedTrades[0]);
+
+  const rows = sortedTrades.map((trade, index) => {
+    const direction = trade.divergence_type === 'bullish' ? 'Long' : 'Short';
+    const pnlVal = Number(trade.pnl_pct) || 0;
+    const formattedPnl = formatPct(pnlVal);
+    return {
+      x: `#${index + 1} · ${trade.entry_date} (${formattedPnl})`,
+      y: pnlVal,
+      trade,
+      direction,
+      formattedPnl,
+    };
+  });
+
+  const chartHeight = Math.max(200, Math.min(520, rows.length * 48 + 70));
+  const minPnl = Math.min(...pnls, 0);
+  const maxPnl = Math.max(...pnls, 0);
+  const pnlSpan = maxPnl - minPnl;
+  const axisPadding = Math.max(pnlSpan * 0.15, 0.5);
+  const axisMin = pnlSpan === 0 ? -1 : minPnl - axisPadding;
+  const axisMax = pnlSpan === 0 ? 1 : maxPnl + axisPadding;
+  const axisDigits = pnlSpan < 5 ? 2 : (pnlSpan < 20 ? 1 : 0);
+
+  const averageAnnotation = Math.abs(avgPnl) > 0.005
+    ? [{
+        x: Number(avgPnl.toFixed(3)),
+        borderColor: '#0b5a78',
+        strokeDashArray: 4,
+        borderWidth: 2,
+        label: {
+          text: `TB ${formatPct(avgPnl)}`,
+          orientation: 'horizontal',
+          offsetY: -4,
+          style: {
+            color: '#ffffff',
+            background: '#0b5a78',
+            fontSize: '11px',
+            fontWeight: '700',
+            padding: { left: 6, right: 6, top: 2, bottom: 2 }
+          }
+        }
+      }]
+    : [];
+
+  container.innerHTML = `
+    <div class="chart-insight-grid" aria-label="Tóm tắt phân bổ lợi nhuận">
+      <div class="chart-insight-card">
+        <span>Lời / Lỗ / Hòa vốn</span>
+        <strong>
+          <span class="text-emerald-600">${winCount}</span> <span class="text-slate-400 font-normal">/</span>
+          <span class="text-rose-600">${lossCount}</span> <span class="text-slate-400 font-normal">/</span>
+          <span class="text-slate-500">${flatCount}</span>
+        </strong>
+        <small>${trades.length} giao dịch mô phỏng</small>
+      </div>
+      <div class="chart-insight-card">
+        <span>P&amp;L trung bình</span>
+        <strong class="${chartValueClass(avgPnl)}">${formatPct(avgPnl)}</strong>
+        <small>Trung bình mỗi lệnh</small>
+      </div>
+      <div class="chart-insight-card">
+        <span>Biên tốt / xấu</span>
+        <strong>
+          <span class="text-emerald-600">${formatPct(bestTrade.pnl_pct)}</span>
+          <span class="text-slate-400 font-normal">/</span>
+          <span class="text-rose-600">${formatPct(worstTrade.pnl_pct)}</span>
+        </strong>
+        <small>Giao dịch tốt nhất / kém nhất</small>
+      </div>
+    </div>
+    <div id="distributionChartCanvas" class="chart-host" style="min-height:${chartHeight}px"></div>
+  `;
 
   const options = {
-    series: [{ data: bins }],
-    chart: { type: 'bar', height: 280, toolbar: { show: false }, animations: { enabled: true, speed: 300 } },
-    plotOptions: { bar: { borderRadius: 4, columnWidth: '70%' } },
-    dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#59656b'] }, formatter: v => v > 0 ? v : '' },
+    series: [{ name: 'P&L mỗi giao dịch', data: rows }],
+    chart: {
+      type: 'bar',
+      height: chartHeight,
+      toolbar: { show: false },
+      animations: { enabled: true, speed: 300 }
+    },
+    colors: [({ value }) => (value > 0 ? '#059669' : (value < 0 ? '#e11d48' : '#64748b'))],
+    fill: { opacity: 0.92 },
+    plotOptions: {
+      bar: {
+        horizontal: true,
+        borderRadius: 4,
+        barHeight: rows.length <= 3 ? '54%' : '65%',
+        distributed: false
+      }
+    },
+    dataLabels: {
+      enabled: true,
+      formatter: (v) => (Math.abs(v) >= 2.5 ? formatPct(v) : ''),
+      textAnchor: 'middle',
+      style: {
+        fontSize: '11px',
+        fontWeight: '700',
+        colors: ['#ffffff']
+      },
+      dropShadow: {
+        enabled: true,
+        top: 1,
+        left: 1,
+        blur: 1,
+        color: '#000000',
+        opacity: 0.4
+      },
+      background: {
+        enabled: false
+      }
+    },
     legend: { show: false },
     xaxis: {
       type: 'numeric',
-      tickAmount: 8,
-      labels: { style: { colors: '#64748b', fontSize: '11px' }, formatter: v => v.toFixed(0) + '%' },
-      axisBorder: { show: false }, axisTicks: { show: false }
+      min: Number(axisMin.toFixed(3)),
+      max: Number(axisMax.toFixed(3)),
+      tickAmount: 5,
+      title: { text: 'Lãi / Lỗ từng giao dịch (%)', style: { color: '#64748b', fontSize: '11px' } },
+      labels: { style: { colors: '#64748b', fontSize: '11px' }, formatter: v => formatPct(v, axisDigits) },
+      axisBorder: { show: false },
+      axisTicks: { show: false }
     },
-    yaxis: { labels: { style: { colors: '#64748b', fontSize: '11px' } } },
-    grid: { borderColor: '#ded9cc', strokeDashArray: 4 },
-    tooltip: { theme: 'light', x: { formatter: v => v.toFixed(0) + '%' }, y: { formatter: v => v + ' giao dịch' } }
+    yaxis: {
+      labels: {
+        style: { colors: '#334155', fontSize: '11px', fontWeight: '600' },
+        maxWidth: 220
+      }
+    },
+    annotations: {
+      xaxis: [
+        {
+          x: 0,
+          borderColor: '#9aa7ad',
+          strokeDashArray: 0,
+          borderWidth: 1.5,
+          label: {
+            text: '0%',
+            orientation: 'horizontal',
+            offsetY: -4,
+            style: {
+              color: '#59656b',
+              background: '#fffaf0',
+              fontSize: '10px',
+              fontWeight: '600'
+            }
+          }
+        },
+        ...averageAnnotation
+      ]
+    },
+    grid: { borderColor: '#ded9cc', strokeDashArray: 4, padding: { left: 6, right: 20 } },
+    tooltip: {
+      theme: 'light',
+      custom: ({ dataPointIndex, w }) => {
+        const item = w.config.series[0].data[dataPointIndex];
+        const trade = item.trade;
+        const pnlVal = Number(trade.pnl_pct) || 0;
+        const pnlColor = pnlVal > 0 ? '#059669' : (pnlVal < 0 ? '#e11d48' : '#64748b');
+        return `
+          <div style="padding: 8px 12px; font-size: 12px; line-height: 1.45; color: #1e293b; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.12); pointer-events: none;">
+            <div style="font-weight: 700; color: ${pnlColor}; margin-bottom: 4px; border-bottom: 1px solid #f1f5f9; padding-bottom: 3px; font-size: 12px;">
+              Lệnh #${dataPointIndex + 1} (${item.direction}): ${formatPct(trade.pnl_pct)}
+            </div>
+            <div style="color: #334155;"><strong>Vào ngày:</strong> ${trade.entry_date} ${trade.entry_price ? `(${trade.entry_price.toLocaleString('vi-VN')} đ)` : ''}</div>
+            <div style="color: #334155;"><strong>Ra ngày:</strong> ${trade.exit_date} ${trade.exit_price ? `(${trade.exit_price.toLocaleString('vi-VN')} đ)` : ''}</div>
+            <div style="color: #334155;"><strong>Số ngày giữ:</strong> ${trade.holding_days} ngày</div>
+            <div style="margin-top: 4px; font-size: 11px; color: #64748b;">
+              Max DD: <span style="color:#e11d48; font-weight: 600;">${formatPct(trade.max_drawdown_pct)}</span> · Max Runup: <span style="color:#059669; font-weight: 600;">${formatPct(trade.max_runup_pct)}</span>
+            </div>
+          </div>
+        `;
+      }
+    },
+    responsive: [{
+      breakpoint: 640,
+      options: {
+        xaxis: {
+          tickAmount: 3,
+          labels: { style: { fontSize: '10px' }, formatter: v => formatPct(v, 1) }
+        },
+        yaxis: { labels: { maxWidth: 160, style: { fontSize: '10px' } } },
+        dataLabels: { style: { fontSize: '10px' } },
+        grid: { padding: { left: 0, right: 8 } }
+      }
+    }]
   };
 
-  if (distributionChart) {
-    distributionChart.updateOptions(options, true);
-  } else {
-    distributionChart = new ApexCharts(container, options);
-    distributionChart.render();
-  }
+  distributionChart = new ApexCharts(document.getElementById('distributionChartCanvas'), options);
+  distributionChart.render();
 }
 
 /* ==========================================================================
    BẢNG TÍN HIỆU PHÂN KỲ
    ========================================================================== */
-function renderDivergenceTable(divergences, showWeekly) {
+function renderDivergenceTable(divergences, showWeekly, data) {
   const tbody = document.getElementById('divergenceTableBody');
   const countEl = document.getElementById('divergenceCount');
   divergences = Array.isArray(divergences) ? divergences : [];
@@ -487,9 +868,13 @@ function renderDivergenceTable(divergences, showWeekly) {
   countEl.textContent = divergences.length;
 
   if (!divergences || divergences.length === 0) {
+    const quality = data?.data_quality || {};
+    const emptyText = quality.timeframe_supported === false
+      ? getNoTradeState(data).message
+      : 'Không có tín hiệu phân kỳ RSI nào được phát hiện';
     tbody.innerHTML = `
       <tr><td colspan="${showWeekly ? 7 : 6}" class="text-center py-6 text-slate-500">
-        Không có tín hiệu phân kỳ RSI nào được phát hiện
+        ${emptyText}
       </td></tr>
     `;
     return;
@@ -532,7 +917,8 @@ function sortDivergences(column) {
   }
   if (backtestData) renderDivergenceTable(
     backtestData.divergences,
-    Boolean(backtestData.parameters && backtestData.parameters.confirm_timeframe)
+    Boolean(backtestData.parameters && backtestData.parameters.confirm_timeframe),
+    backtestData
   );
 }
 
@@ -661,12 +1047,32 @@ function escapeHtml(value) {
 }
 
 function showLoading(message) {
-  document.getElementById('loadingText').textContent = message || 'Đang xử lý...';
-  document.getElementById('loading').classList.remove('hidden');
+  const loading = document.getElementById('loading');
+  const text = document.getElementById('loadingText');
+  const subtext = document.getElementById('loadingSubtext');
+  if (text) text.textContent = message || 'Đang tính toán dựa trên dữ liệu...';
+  if (subtext) subtext.textContent = 'Vui lòng chờ trong giây lát, hệ thống đang kiểm tra OHLC thật và tín hiệu RSI.';
+  if (loading) {
+    if (loadingHideTimer) {
+      window.clearTimeout(loadingHideTimer);
+      loadingHideTimer = null;
+    }
+    loading.classList.remove('hidden');
+    loading.setAttribute('aria-busy', 'true');
+    loading.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    requestAnimationFrame(() => loading.classList.add('active'));
+  }
 }
 
 function hideLoading() {
-  document.getElementById('loading').classList.add('hidden');
+  const loading = document.getElementById('loading');
+  if (!loading) return;
+  loading.classList.remove('active');
+  loading.setAttribute('aria-busy', 'false');
+  loadingHideTimer = window.setTimeout(() => {
+    loading.classList.add('hidden');
+    loadingHideTimer = null;
+  }, 220);
 }
 
 function formatVND(num) {
@@ -741,3 +1147,11 @@ function hideError() {
   document.getElementById('errorBanner').classList.add('hidden');
   document.getElementById('errorBanner').classList.remove('flex');
 }
+
+window.toggleAdvanced = toggleAdvanced;
+window.toggleSwitch = toggleSwitch;
+window.runBacktest = runBacktest;
+window.enableShortAndRerun = enableShortAndRerun;
+window.sortDivergences = sortDivergences;
+window.sortTrades = sortTrades;
+window.highlightTrade = highlightTrade;

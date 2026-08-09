@@ -12,6 +12,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+SUPPORTED_TIMEFRAMES = {"1H", "2H", "4H", "1D", "1W", "1M"}
+INTRADAY_TIMEFRAMES = {"1H", "2H", "4H"}
+DEFAULT_BAR_LIMIT = 748
+
 
 # ------------------------------------------------------------------
 # Utilities
@@ -94,6 +98,33 @@ def _enrich(frame: pd.DataFrame, rsi_period: int = 14) -> pd.DataFrame:
     result["ma50"] = _ma(result["close"], 50)
     result["ma200"] = _ma(result["close"], 200)
     return result
+
+
+def _resample_ohlc(frame: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    if frame.empty or timeframe not in ("1W", "1M"):
+        return frame.copy()
+
+    period_freq = "W-FRI" if timeframe == "1W" else "M"
+    work = frame.copy()
+    work["period_key"] = work["date"].dt.to_period(period_freq)
+    rows = []
+    for _, group in work.groupby("period_key", sort=True):
+        group = group.sort_values("date")
+        rows.append({
+            "date": group["date"].iloc[-1],
+            "open": group["open"].iloc[0],
+            "high": group["high"].max(),
+            "low": group["low"].min(),
+            "close": group["close"].iloc[-1],
+            "volume": group["volume"].sum() if "volume" in group else np.nan,
+        })
+    return pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+
+
+def _history_start_for_bar_limit(end_date: date, timeframe: str, bar_limit: int) -> date:
+    bars = max(int(bar_limit or DEFAULT_BAR_LIMIT), 50)
+    days_per_bar = {"1D": 3, "1W": 10, "1M": 35}.get(timeframe, 3)
+    return end_date - timedelta(days=bars * days_per_bar + 90)
 
 
 def _aligned_higher_timeframe_rsi(
@@ -742,6 +773,9 @@ def run_backtest(
     symbol: str,
     start: Optional[date] = None,
     end: Optional[date] = None,
+    timeframe: str = "1D",
+    bar_limit: Optional[int] = DEFAULT_BAR_LIMIT,
+    range_mode: str = "bars",
     rsi_period: int = 14,
     lookback: int = 20,
     exit_strategy: str = "time",
@@ -764,48 +798,117 @@ def run_backtest(
 ) -> Dict[str, Any]:
     from market_data_provider import Quote
 
-    end_date = end or datetime.now().date()
-    start_date = start or (end_date - timedelta(days=365 * 3))
+    timeframe = str(timeframe or "1D").upper().strip()
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        return _empty_result(symbol, start or datetime.now().date(), end or datetime.now().date(), {
+            "timeframe": timeframe, "bar_limit": bar_limit, "range_mode": range_mode,
+            "rsi_period": rsi_period, "lookback": lookback,
+            "exit_strategy": exit_strategy, "holding_days": holding_days,
+            "include_short": include_short, "position_mode": position_mode,
+            "confirm_timeframe": confirm_timeframe, "trend_filter": trend_filter,
+        }, "unsupported_timeframe", {
+            "source": "Không xác định",
+            "timeframe": timeframe,
+            "requested_bar_limit": bar_limit,
+            "actual_bars": 0,
+            "verified_trading_sessions": 0,
+            "timeframe_supported": False,
+            "unsupported_reason": f"Khung {timeframe} chưa nằm trong whitelist kiểm định.",
+            "first_bar": None,
+            "last_bar": None,
+        })
 
-    # Fetch daily data
+    end_date = end or datetime.now().date()
+    use_bar_limit = range_mode != "dates" and bar_limit is not None
+    requested_bar_limit = max(50, min(int(bar_limit or DEFAULT_BAR_LIMIT), 5000))
+    start_date = start or _history_start_for_bar_limit(end_date, timeframe, requested_bar_limit)
+
+    if timeframe in INTRADAY_TIMEFRAMES:
+        return _empty_result(symbol, start_date, end_date, {
+            "timeframe": timeframe, "bar_limit": requested_bar_limit, "range_mode": range_mode,
+            "rsi_period": rsi_period, "lookback": lookback,
+            "exit_strategy": exit_strategy, "holding_days": holding_days,
+            "include_short": include_short, "position_mode": position_mode,
+            "confirm_timeframe": confirm_timeframe, "trend_filter": trend_filter,
+        }, "unsupported_timeframe", {
+            "source": "Vietcap/KBS daily OHLC",
+            "timeframe": timeframe,
+            "requested_bar_limit": requested_bar_limit,
+            "actual_bars": 0,
+            "verified_trading_sessions": 0,
+            "timeframe_supported": False,
+            "unsupported_reason": f"Chưa có nguồn OHLC intraday thật đã xác minh cho khung {timeframe}; hệ thống không dựng bar giả từ dữ liệu ngày.",
+            "first_bar": None,
+            "last_bar": None,
+        })
+
+    # Fetch verified daily bars. Weekly/monthly bars are aggregated from these
+    # real sessions and explicitly marked in data_quality.
     raw_df = Quote(symbol=symbol).history(
         start=start_date.strftime("%Y-%m-%d"),
         end=end_date.strftime("%Y-%m-%d"),
+        interval="1D",
     )
     provider_rows = len(raw_df)
     provider_source = str(raw_df.attrs.get("source") or "Không xác định")
     df = _frame(raw_df.to_dict("records"), start=start_date, end=end_date)
+    source_transform = "native"
+    if timeframe in ("1W", "1M") and not df.empty:
+        df = _resample_ohlc(df, timeframe)
+        source_transform = "resampled_from_daily"
+    if use_bar_limit and not df.empty:
+        df = df.tail(requested_bar_limit).reset_index(drop=True)
 
     if df.empty:
         return _empty_result(symbol, start_date, end_date, {
+            "timeframe": timeframe, "bar_limit": requested_bar_limit, "range_mode": range_mode,
             "rsi_period": rsi_period, "lookback": lookback,
             "exit_strategy": exit_strategy, "holding_days": holding_days,
             "include_short": include_short, "position_mode": position_mode,
             "confirm_timeframe": confirm_timeframe, "trend_filter": trend_filter,
         }, "no_data", {
             "source": provider_source,
+            "timeframe": timeframe,
+            "requested_bar_limit": requested_bar_limit,
+            "actual_bars": 0,
             "provider_rows": provider_rows,
             "verified_trading_sessions": 0,
             "excluded_rows": provider_rows,
             "first_session": None,
             "last_session": None,
+            "first_bar": None,
+            "last_bar": None,
+            "timeframe_supported": True,
+            "unsupported_reason": None,
+            "source_transform": source_transform,
         })
 
     df = _enrich(df, rsi_period)
+    actual_start_date = pd.Timestamp(df["date"].iloc[0]).date()
+    actual_end_date = pd.Timestamp(df["date"].iloc[-1]).date()
 
     if len(df) < 50:
-        return _empty_result(symbol, start_date, end_date, {
+        return _empty_result(symbol, actual_start_date, actual_end_date, {
+            "timeframe": timeframe, "bar_limit": requested_bar_limit, "range_mode": range_mode,
             "rsi_period": rsi_period, "lookback": lookback,
             "exit_strategy": exit_strategy, "holding_days": holding_days,
             "include_short": include_short, "position_mode": position_mode,
             "confirm_timeframe": confirm_timeframe, "trend_filter": trend_filter,
         }, "insufficient_data", {
             "source": provider_source,
+            "timeframe": timeframe,
+            "requested_bar_limit": requested_bar_limit,
+            "actual_bars": len(df),
             "provider_rows": provider_rows,
             "verified_trading_sessions": len(df),
             "excluded_rows": max(provider_rows - len(df), 0),
             "first_session": df["date"].iloc[0].strftime("%Y-%m-%d"),
             "last_session": df["date"].iloc[-1].strftime("%Y-%m-%d"),
+            "first_bar": df["date"].iloc[0].strftime("%Y-%m-%d"),
+            "last_bar": df["date"].iloc[-1].strftime("%Y-%m-%d"),
+            "timeframe_supported": True,
+            "unsupported_reason": None,
+            "source_transform": source_transform,
         })
 
     # Completed higher-timeframe data aligned causally to each daily session.
@@ -818,10 +921,12 @@ def run_backtest(
     if trend_filter != "none" and market_index:
         try:
             bench_raw = Quote(symbol=market_index).history(
-                start=start_date.strftime("%Y-%m-%d"),
-                end=end_date.strftime("%Y-%m-%d"),
+                start=actual_start_date.strftime("%Y-%m-%d"),
+                end=actual_end_date.strftime("%Y-%m-%d"),
             )
-            benchmark_frame = _frame(bench_raw.to_dict("records"), start=start_date, end=end_date)
+            benchmark_frame = _frame(bench_raw.to_dict("records"), start=actual_start_date, end=actual_end_date)
+            if timeframe in ("1W", "1M") and not benchmark_frame.empty:
+                benchmark_frame = _resample_ohlc(benchmark_frame, timeframe)
             if not benchmark_frame.empty:
                 benchmark_frame = _enrich(benchmark_frame, rsi_period)
         except Exception:
@@ -881,8 +986,8 @@ def run_backtest(
         trades,
         divergences,
         filtered_count,
-        start_date.strftime("%Y-%m-%d"),
-        end_date.strftime("%Y-%m-%d"),
+        actual_start_date.strftime("%Y-%m-%d"),
+        actual_end_date.strftime("%Y-%m-%d"),
         initial_capital=initial_capital,
     )
 
@@ -892,10 +997,13 @@ def run_backtest(
     return {
         "symbol": symbol,
         "analysis_period": {
-            "start": start_date.isoformat(),
-            "end": end_date.isoformat(),
+            "start": actual_start_date.isoformat(),
+            "end": actual_end_date.isoformat(),
         },
         "parameters": {
+            "timeframe": timeframe,
+            "bar_limit": requested_bar_limit,
+            "range_mode": range_mode,
             "rsi_period": rsi_period,
             "lookback": lookback,
             "exit_strategy": exit_strategy,
@@ -917,17 +1025,26 @@ def run_backtest(
         },
         "data_quality": {
             "source": provider_source,
+            "timeframe": timeframe,
+            "requested_bar_limit": requested_bar_limit,
+            "actual_bars": len(df),
             "provider_rows": provider_rows,
             "verified_trading_sessions": len(df),
             "excluded_rows": max(provider_rows - len(df), 0),
             "first_session": df["date"].iloc[0].strftime("%Y-%m-%d"),
             "last_session": df["date"].iloc[-1].strftime("%Y-%m-%d"),
+            "first_bar": df["date"].iloc[0].strftime("%Y-%m-%d"),
+            "last_bar": df["date"].iloc[-1].strftime("%Y-%m-%d"),
+            "timeframe_supported": True,
+            "unsupported_reason": None,
+            "source_transform": source_transform,
             "rules": [
                 "Không tạo ngày thay thế khi nguồn thiếu ngày",
                 "Các dòng ngoài khoảng kiểm định không được đưa vào kết quả",
                 "Chỉ dùng OHLC dương, nhất quán và ngày thứ Hai-thứ Sáu",
                 "Loại phiên khối lượng 0 khi nguồn có dữ liệu khối lượng",
                 "Tín hiệu xác nhận sau pivot; lệnh vào ở giá mở cửa phiên kế tiếp",
+                "Intraday chỉ chạy khi có OHLC thật đã xác minh; không dựng bar giờ từ dữ liệu ngày",
             ],
         },
         "divergences": sorted(divergences, key=lambda item: item["date"], reverse=True),
@@ -957,6 +1074,10 @@ def _empty_result(
         "insufficient_data": (
             f"Cần tối thiểu 50 phiên giao dịch thực để kiểm định; "
             f"nguồn {source} chỉ trả {sessions} phiên hợp lệ trong khoảng đã chọn."
+        ),
+        "unsupported_timeframe": (
+            quality.get("unsupported_reason")
+            or f"Khung thời gian {params.get('timeframe') or ''} chưa được hỗ trợ bằng dữ liệu OHLC thật."
         ),
     }
     return {

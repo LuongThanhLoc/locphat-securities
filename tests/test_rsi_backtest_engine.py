@@ -11,8 +11,10 @@ from rsi_backtest_engine import (
     _calculate_metrics,
     _detect_divergences,
     _frame,
+    _resample_ohlc,
     _rsi,
     _simulate_trades,
+    run_backtest,
 )
 
 
@@ -145,7 +147,67 @@ class RsiTableContractTests(unittest.TestCase):
         self.assertIn('id="includeShortToggle" class="toggle-track"', html)
         self.assertIn("execution_audit", script)
         self.assertIn("Có dữ liệu giá nhưng không phát hiện phân kỳ", script)
-        self.assertIn("Bật mô phỏng Short (giả định) và chạy lại", script)
+        self.assertIn("Bật mô phỏng Short giả định và chạy lại", script)
+        self.assertIn("cổ phiếu cơ sở Việt Nam chưa hỗ trợ bán khống phổ thông", script)
+        self.assertIn('id="timeframe"', html)
+        self.assertIn('id="barLimit"', html)
+
+
+class RsiTimeframeAndRangeTests(unittest.TestCase):
+    def test_bar_limit_uses_most_recent_real_bars(self):
+        dates = pd.bdate_range("2023-01-02", periods=800)
+        rows = pd.DataFrame({
+            "time": dates.strftime("%Y-%m-%d"),
+            "open": np.linspace(50, 100, len(dates)),
+            "high": np.linspace(51, 101, len(dates)),
+            "low": np.linspace(49, 99, len(dates)),
+            "close": np.linspace(50, 100, len(dates)),
+            "volume": np.full(len(dates), 1000),
+        })
+        rows.attrs["source"] = "UnitTest"
+
+        class FakeQuote:
+            def __init__(self, symbol, **kwargs):
+                self.symbol = symbol
+
+            def history(self, **kwargs):
+                return rows
+
+        import market_data_provider
+        original = market_data_provider.Quote
+        market_data_provider.Quote = FakeQuote
+        try:
+            result = run_backtest("FPT", end=date(2026, 8, 8), bar_limit=748)
+        finally:
+            market_data_provider.Quote = original
+
+        expected_first = dates[-748].strftime("%Y-%m-%d")
+        expected_last = dates[-1].strftime("%Y-%m-%d")
+        self.assertEqual(result["data_quality"]["actual_bars"], 748)
+        self.assertEqual(result["data_quality"]["first_bar"], expected_first)
+        self.assertEqual(result["data_quality"]["last_bar"], expected_last)
+        self.assertEqual(result["analysis_period"]["start"], expected_first)
+
+    def test_intraday_timeframe_is_not_fabricated_from_daily(self):
+        result = run_backtest("FPT", timeframe="1H", bar_limit=748)
+        self.assertEqual(result["data_quality"]["timeframe"], "1H")
+        self.assertFalse(result["data_quality"]["timeframe_supported"])
+        self.assertIn("không dựng bar giả", result["data_quality"]["unsupported_reason"])
+        self.assertEqual(result["equity_curve"], [])
+
+    def test_weekly_monthly_resample_marks_source_transform(self):
+        frame = pd.DataFrame({
+            "date": pd.bdate_range("2026-01-05", periods=25),
+            "open": np.arange(25, dtype=float) + 10,
+            "high": np.arange(25, dtype=float) + 11,
+            "low": np.arange(25, dtype=float) + 9,
+            "close": np.arange(25, dtype=float) + 10.5,
+            "volume": np.full(25, 100),
+        })
+        weekly = _resample_ohlc(frame, "1W")
+        self.assertGreater(len(weekly), 0)
+        self.assertEqual(weekly.iloc[0]["open"], frame.iloc[0]["open"])
+        self.assertEqual(weekly.iloc[0]["close"], frame.iloc[4]["close"])
 
 
 if __name__ == "__main__":
