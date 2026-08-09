@@ -12,12 +12,16 @@
   border: 1px solid #34464e;
   background: #10191e;
   color: #dce7ea;
-  font: 700 12px 'Inter', sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
   cursor: pointer;
   margin-left: 8px;
   vertical-align: middle;
   white-space: nowrap;
-  border-radius: 4px;
+  border-radius: 6px;
   transition: all 0.2s;
 }
 .wl-toggle-btn:hover {
@@ -38,57 +42,79 @@
 .wl-inline-confirm {
   display: none;
   position: absolute;
-  top: 100%;
+  top: calc(100% + 8px);
   left: 0;
-  z-index: 100;
-  margin-top: 4px;
-  padding: 12px 16px;
-  background: #0e1519;
-  border: 1px solid #29383f;
-  font-size: 12px;
-  color: #8c9aa1;
-  min-width: 220px;
-  border-radius: 4px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  min-width: 230px;
+  padding: 14px 16px;
+  background: var(--lp-paper-strong, #fffdf7) !important;
+  border: 1px solid var(--lp-line, #c9c5ba) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 14px 36px rgba(35, 31, 24, 0.16) !important;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+  color: var(--lp-ink, #151817) !important;
 }
 .wl-inline-confirm.open {
   display: block;
 }
 .wl-inline-confirm p {
   margin: 0 0 10px;
-  font-weight: 700;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: var(--lp-ink, #151817) !important;
 }
 .wl-inline-confirm-actions {
   display: flex;
   gap: 8px;
 }
 .wl-inline-confirm-actions button {
-  padding: 6px 14px;
-  font-size: 11px;
-  font-weight: 800;
-  cursor: pointer;
-  border-radius: 4px;
+  padding: 6px 14px !important;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+#watchlistConfirmYes {
+  background: #be2d2a !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: 0 2px 6px rgba(190, 45, 42, 0.25) !important;
+}
+#watchlistConfirmYes:hover {
+  background: #9f2422 !important;
+}
+#watchlistConfirmNo {
+  background: var(--lp-paper-muted, #f0ebdf) !important;
+  color: var(--lp-ink-soft, #374047) !important;
+  border: 1px solid var(--lp-line, #c9c5ba) !important;
+}
+#watchlistConfirmNo:hover {
+  background: var(--lp-line-soft, #ded9cc) !important;
 }
 
 .wl-page-toast {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  z-index: 9999;
+  z-index: 100000;
   padding: 12px 20px;
-  font: 800 12px 'Inter', sans-serif;
-  color: #fff;
-  background: #0e1519;
-  border: 1px solid #2acb9b;
-  color: #35d2a0;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  animation: wl-toast-in 0.3s ease;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: var(--lp-navy, #064a6b) !important;
+  background: var(--lp-paper-strong, #fffdf7) !important;
+  border: 1px solid var(--lp-navy-soft, #a8c5d0) !important;
+  border-left: 4px solid var(--lp-positive, #08713c) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 12px 36px rgba(35, 31, 24, 0.14) !important;
   pointer-events: none;
-  border-radius: 6px;
 }
 .wl-page-toast.error {
-  border-color: #f43f5e;
-  color: #f43f5e;
+  border-left-color: #be2d2a !important;
+  color: #be2d2a !important;
 }
 .wl-page-toast.fadeout {
   animation: wl-toast-out 0.3s ease forwards;

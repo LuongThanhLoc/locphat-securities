@@ -164,16 +164,16 @@
 
       <!-- Stock Header Overview -->
       <div class="stock-header-card flex flex-wrap items-center justify-between gap-6 p-6 mb-6 bg-slate-900/70 border border-slate-800/80 rounded-2xl backdrop-blur-xl shadow-xl" id="stockHeader">
-        <div class="stock-title-area">
-          <h1 class="text-3xl font-extrabold text-white flex flex-wrap items-center gap-3">
+        <div class="stock-title-area flex flex-col gap-1.5">
+          <div class="flex flex-wrap items-center gap-3">
             <div id="companyLogoWrapper" class="company-logo-wrapper">
               <img id="companyLogo" class="company-logo" src="" alt="">
               <div id="companyLogoFallback" class="company-logo-fallback">
                 <span id="companyLogoInitials">--</span>
               </div>
             </div>
-            <span id="displaySymbol">---</span>
-            <span class="exchange-badge text-xs font-bold bg-sky-500/20 text-sky-400 border border-sky-500/40 px-3 py-1 rounded-md uppercase" id="displayExchange">HOSE</span>
+            <h1 class="stock-symbol-title text-3xl font-extrabold text-white" id="displaySymbol">---</h1>
+            <span class="exchange-badge" id="displayExchange">HOSE</span>
             <div style="position:relative;display:inline-block;">
               <button class="wl-toggle-btn" id="watchlistToggleBtn" type="button" style="display:none;">☆ Thêm vào theo dõi</button>
               <div class="wl-inline-confirm" id="watchlistInlineConfirm">
@@ -184,8 +184,8 @@
                 </div>
               </div>
             </div>
-          </h1>
-          <div class="organ-name text-sm text-slate-400 mt-1 font-medium" id="displayOrganName">Vui lòng nhập hoặc chọn mã cổ phiếu để bắt đầu phân tích</div>
+          </div>
+          <div class="organ-name text-sm text-slate-400 font-medium" id="displayOrganName">Vui lòng nhập hoặc chọn mã cổ phiếu để bắt đầu phân tích</div>
         </div>
 
         <div class="header-badges flex items-center gap-4 flex-wrap">
@@ -912,9 +912,9 @@
             </div>
             
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-              <div class="peer-add-input-group" style="display: flex; gap: 8px; align-items: center;">
-                <input type="text" id="addPeerInput" class="peer-input-field" placeholder="+ THÊM MÃ ĐỐI THỦ (VD: VND)..." style="width: 210px; height: 36px; padding: 0 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; background: var(--lp-paper); border: 1px solid var(--lp-line-strong); border-radius: 4px; color: var(--lp-ink);">
-                <button class="btn-peer-add" type="button" onclick="handleAddPeerSymbol()" style="height: 36px; padding: 0 16px; font-size: 12px; font-weight: 700; background: var(--lp-navy); color: #ffffff; border: 1px solid var(--lp-navy-deep); border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+              <div class="peer-add-input-group" style="display: inline-flex; align-items: center; background: var(--lp-paper-strong); border: 1px solid var(--lp-line); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+                <input type="text" id="addPeerInput" class="peer-input-field" placeholder="+ Thêm mã đối thủ (VD: VND)..." style="width: 210px; height: 36px; padding: 0 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; background: transparent; border: none; outline: none; color: var(--lp-ink);">
+                <button class="btn-peer-add" type="button" onclick="handleAddPeerSymbol()" style="height: 36px; padding: 0 16px; font-size: 12px; font-weight: 700; background: var(--lp-navy); color: #ffffff; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
                   <i class="fa-solid fa-plus"></i> Thêm
                 </button>
               </div>

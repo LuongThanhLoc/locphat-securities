@@ -262,6 +262,17 @@ def initialise_rrg_data_store():
         # fail-closed and will return 503 until PostgreSQL recovers.
         print(f"[RRG] PostgreSQL initialization failed: {exc}")
 
+
+@app.on_event("startup")
+def initialise_corporate_calendar_sync():
+    """Launch the idempotent Calendar v2 refresh scheduler."""
+    try:
+        from corporate_calendar_engine import start_calendar_background_sync
+        start_calendar_background_sync()
+    except Exception as exc:
+        # Calendar requests can still serve the validated last-known-good DB.
+        print(f"[Calendar] Background sync initialization failed: {exc}")
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     fav_path = os.path.join(static_dir, "favicon.ico")
@@ -513,7 +524,8 @@ def get_corporate_calendar_api(
 ):
     try:
         from corporate_calendar_engine import get_corporate_calendar
-        today = datetime.now().date()
+        from corporate_calendar_engine import _vietnam_today
+        today = _vietnam_today()
         start_date = start or (today - timedelta(days=7))
         end_date = end or (today + timedelta(days=7))
         response.headers["Cache-Control"] = "no-store"

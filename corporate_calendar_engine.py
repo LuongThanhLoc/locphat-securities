@@ -1,152 +1,52 @@
-"""Verified Vietnam corporate calendar with source-aware SQLite caching.
-   Comprehensive coverage: dividends, shareholder meetings, capital actions,
-   financial reports, trading halts, new listings, and delistings."""
+"""Source-aware Vietnamese corporate calendar.
+
+Calendar v2 is deliberately fail-honest:
+- it never invents a date role or time;
+- it stores one occurrence per observed milestone;
+- it keeps source evidence and measured coverage;
+- partial refreshes never replace the last-known-good dataset.
+"""
 
 from __future__ import annotations
 
-# Set timezone immediately — must be done before any datetime operations
-import os as _os
-_os.environ.setdefault("TZ", "Asia/Ho_Chi_Minh")
-
+import hashlib
 import json
 import math
-import re as _re
-import time as _time
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+import os
+import re
+import sqlite3
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional
 
-# sqlite3 is standard library but may be unavailable in some restricted environments
-try:
-    import sqlite3
-    _SQLITE3_AVAILABLE = True
-except ImportError:
-    sqlite3 = None  # type: ignore
-    _SQLITE3_AVAILABLE = False
+from market_data_provider import Listing, VCI_IQ, _get_json, _unwrap_data
 
-from market_data_provider import VCI_IQ, _get_json, _unwrap_data
 
-ENVIRONMENT_IS_RENDER = _os.environ.get("RENDER") == "true"
-MAX_WORKERS = 3 if ENVIRONMENT_IS_RENDER else 8
-WORKER_TIMEOUT_SECONDS = 12
-
+os.environ.setdefault("TZ", "Asia/Ho_Chi_Minh")
 VN_TZ = timezone(timedelta(hours=7))
+DB_PATH = os.path.join(os.path.dirname(__file__), "corporate_calendar.db")
+SNAPSHOT_PATH = os.path.join(os.path.dirname(__file__), "corporate_calendar_snapshot.json")
+SCHEMA_VERSION = 2
+MAX_QUERY_DAYS = 366
+FETCH_TIMEOUT_SECONDS = 12
+REPORT_WORKERS = 3 if os.environ.get("RENDER") == "true" else 8
+ACTION_REFRESH_SECONDS = 30 * 60
+REPORT_REFRESH_SECONDS = 6 * 60 * 60
+
+_SYNC_LOCK = threading.Lock()
+_SYNC_THREAD: Optional[threading.Thread] = None
+_WORKER_THREAD: Optional[threading.Thread] = None
+_WORKER_STOP = threading.Event()
+_REFRESH_STATE: Dict[str, Any] = {
+    "state": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
 
 
-def _vietnam_today() -> date:
-    return datetime.now(VN_TZ).date()
-
-
-DB_PATH = _os.path.join(_os.path.dirname(__file__), "corporate_calendar.db")
-SNAPSHOT_PATH = _os.path.join(_os.path.dirname(__file__), "corporate_calendar_snapshot.json")
-_MEMORY_DB_KEY = "__lpsec_inmemory__"  # sentinel to detect in-memory mode
-
-
-def _can_write_db() -> bool:
-    """Detect whether the filesystem allows SQLite writes."""
-    try:
-        dir_path = _os.path.dirname(DB_PATH)
-        if dir_path and not _os.path.exists(dir_path):
-            return False
-        if dir_path:
-            test_path = _os.path.join(dir_path, f".write_test_{_time.time()}")
-            with open(test_path, "w") as f:
-                f.write("test")
-            _os.remove(test_path)
-            return True
-        return False
-    except Exception:
-        return False
-
-
-def _connection() -> Optional[sqlite3.Connection]:
-    """Return a SQLite connection, using in-memory DB when disk writes are unavailable."""
-    if not _SQLITE3_AVAILABLE:
-        return None
-    try:
-        use_memory = not _can_write_db()
-        if use_memory:
-            # In-memory DB: share via attach to survive closing/reopening in same session
-            conn = sqlite3.connect(DB_PATH if not use_memory else ":memory:", timeout=10)
-        else:
-            conn = sqlite3.connect(DB_PATH, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("""CREATE TABLE IF NOT EXISTS corporate_events (
-            id TEXT PRIMARY KEY, symbol TEXT NOT NULL, event_date TEXT NOT NULL,
-            payload TEXT NOT NULL, updated_at TEXT NOT NULL
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS calendar_sync (
-            id INTEGER PRIMARY KEY CHECK(id=1), window_start TEXT NOT NULL,
-            window_end TEXT NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL
-        )""")
-        conn.commit()
-        if use_memory:
-            conn.execute("PRAGMA temp_store = MEMORY")
-            conn.execute("PRAGMA journal_mode = MEMORY")
-        return conn
-    except Exception:
-        return None
-
-DEFAULT_TOP_SYMBOLS = [
-    "FPT", "VNM", "HPG", "VCB", "SSI", "MWG", "TCB", "MBB", "STB", "VIC",
-    "VHM", "GAS", "MSN", "REE", "DGC", "ACB", "BID", "CTG", "PNJ", "KDH",
-    "NLG", "VPB", "TPB", "HDB", "SHB", "LPB", "VRE", "SAB", "GVR", "BCM",
-    "PLX", "POW", "VJC", "PVD", "PVS", "DCM", "DPM", "KBC", "IDC", "VCI",
-    "HCM", "VND", "EIB", "OCB", "VIB", "HSG", "NKG", "DXG", "DIG", "PDR",
-    "CEO", "VGC", "VHC", "ANV", "DGW", "FRT", "PET", "HAH", "GMD", "VTP",
-    "CTR", "VGI", "ACV", "FOX", "ABB", "NVB", "BAB", "BVB", "KLB", "SGB",
-    "VBB", "BSI", "FTS", "CTS", "AGR", "DSC", "IVS", "MBS", "SHS", "TVB",
-    "VDS", "TCH", "HQC", "IJC", "SJS", "SZC", "TDC", "AGG", "CRE", "HDG",
-    "ITC", "NBB", "SCR", "BAF", "DBC", "HAG", "HNG", "MCH", "MSB", "NAB",
-    "NT2", "QTP", "SBA", "SJD", "TMP", "VSH", "GEG", "PC1", "TV2", "HDC",
-]
-
-# Sự kiện cổ tức: tỷ lệ, ngày GDKHQ, thanh toán
-DIVIDEND_PATTERNS = (
-    r"cổ tức", r"chi trả.*tiền", r"tạm ứng cổ tức",
-    r"ngày đăng ký cuối cùng.*quyền", r"chia.*lợi nhuận",
-    r"quyền mua.*cổ phiếu", r"phát hành.*cổ tức",
-)
-
-# Đại hội đồng cổ đông: ĐHCĐ thường niên (AGM) và bất thường (EGM)
-MEETING_PATTERNS = (
-    r"đhđcđ", r"đại hội đồng cổ đông", r"đại hội cổ đông",
-    r"đại hội đồng.*bất thường", r"đhcđ",
-)
-
-# Hành động vốn: phát hành, ESOP, quyền mua, niêm yết bổ sung
-CAPITAL_PATTERNS = (
-    r"phát hành.*(?:cổ phiếu|\bcp\b)", r"cổ phiếu thưởng",
-    r"quyền mua", r"niêm yết bổ sung", r"esop",
-    r"phát hành.*cho.*(?:nhân viên|người lao động)",
-    r"chào bán.*(?:cổ phiếu|cp)",
-    r"giao dịch.*khối lượng lớn", r"block trade",
-)
-
-# Niêm yết mới / hủy niêm yết
-LISTING_PATTERNS = (
-    r"niêm yết", r"list.?ing", r"hủy niêm yết",
-    r"delist", r"giao dịch trở lại", r"tạm ngừng giao dịch",
-    r"chứng khoán hóa",
-)
-
-# Cổ tức bằng cổ phiếu (stock dividend)
-STOCK_DIVIDEND_PATTERNS = (
-    r"cổ phiếu thưởng", r"chia.*cổ phiếu", r"cổ tức.*bằng.*cp",
-    r"phát hành.*cổ phiếu.*thưởng",
-)
-
-# Báo cáo tài chính: quý, năm, KQKD
-REPORT_PATTERNS = (
-    r"\bbctc\b",
-    r"báo cáo tài chính",
-    r"\bkqkd\b",
-    r"kết quả kinh doanh",
-    r"thông cáo.*kinh doanh",
-    r"báo cáo quý", r"báo cáo năm",
-)
-
-# Loại trừ: báo cáo không phải sự kiện cốt lõi
 REPORT_EXCLUSION_PATTERNS = (
     r"(?:ký|kí|gia hạn|thay đổi).*hợp đồng.*kiểm toán",
     r"(?:lựa chọn|chọn|bổ nhiệm|thay đổi).*đơn vị kiểm toán",
@@ -154,38 +54,62 @@ REPORT_EXCLUSION_PATTERNS = (
     r"báo cáo quản trị",
     r"báo cáo phát triển bền vững",
     r"báo cáo kiểm toán nội bộ",
+    r"báo cáo tình hình quản trị",
+)
+FINANCIAL_REPORT_PATTERNS = (
+    r"\bbctc\b",
+    r"báo cáo tài chính",
+    r"giải trình.*(?:lnst|lợi nhuận).*bctc",
+)
+EARNINGS_RELEASE_PATTERNS = (
+    r"\bkqkd\b",
+    r"kết quả kinh doanh",
+    r"thông cáo.*kinh doanh",
+)
+STOCK_DIVIDEND_PATTERNS = (
+    r"cổ phiếu thưởng",
+    r"chia.*cổ phiếu",
+    r"cổ tức.*bằng.*(?:cp|cổ phiếu)",
+    r"phát hành.*cổ phiếu.*thưởng",
 )
 
+EVENT_CODES = "DIV,ISS,AGME,AGMR,EGME,EGMR,AIS,LIST,DELIST,SUSP,HALT"
+DATE_ROLE_LABELS = {
+    "ex_right": "Ngày GDKHQ",
+    "record": "Ngày ĐKCC",
+    "payment": "Ngày thanh toán",
+    "meeting": "Ngày họp ĐHĐCĐ",
+    "issue": "Ngày phát hành",
+    "listing": "Ngày niêm yết/GD đầu tiên",
+    "delisting": "Ngày hủy niêm yết",
+    "suspension_start": "Ngày tạm ngừng",
+    "publication": "Ngày công bố",
+    "provider_display": "Ngày theo nguồn",
+}
+ROLE_PRIORITY = {
+    "ex_right": 0,
+    "record": 1,
+    "meeting": 2,
+    "listing": 3,
+    "delisting": 4,
+    "suspension_start": 5,
+    "issue": 6,
+    "payment": 7,
+    "publication": 8,
+    "provider_display": 9,
+}
 
-def _connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""CREATE TABLE IF NOT EXISTS corporate_events (
-        id TEXT PRIMARY KEY, symbol TEXT NOT NULL, event_date TEXT NOT NULL,
-        payload TEXT NOT NULL, updated_at TEXT NOT NULL
-    )""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS calendar_sync (
-        id INTEGER PRIMARY KEY CHECK(id=1), window_start TEXT NOT NULL,
-        window_end TEXT NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL
-    )""")
-    conn.commit()
-    return conn
+
+def _vietnam_now() -> datetime:
+    return datetime.now(VN_TZ)
 
 
-def _classify(title: str) -> str | None:
-    """Strictly classify disclosures; generic business news is intentionally ignored."""
-    lowered = _re.sub(r"\s+", " ", str(title or "").lower()).strip()
-    if any(_re.search(pattern, lowered) for pattern in MEETING_PATTERNS):
-        return "shareholder_meeting"
-    if any(_re.search(pattern, lowered) for pattern in CAPITAL_PATTERNS):
-        return "capital_action"
-    if any(_re.search(pattern, lowered) for pattern in DIVIDEND_PATTERNS):
-        return "dividend"
-    if any(_re.search(pattern, lowered) for pattern in REPORT_EXCLUSION_PATTERNS):
-        return None
-    if any(_re.search(pattern, lowered) for pattern in REPORT_PATTERNS):
-        return "financial_report"
-    return None
+def _vietnam_today() -> date:
+    return _vietnam_now().date()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _clean(value: Any) -> Any:
@@ -194,7 +118,7 @@ def _clean(value: Any) -> Any:
     if isinstance(value, float) and math.isnan(value):
         return None
     text = str(value).strip()
-    if not text or text.lower() in {"nan", "nat", "none"}:
+    if not text or text.lower() in {"nan", "nat", "none", "null"}:
         return None
     return text
 
@@ -203,7 +127,7 @@ def _iso_date(value: Any) -> Optional[str]:
     text = _clean(value)
     if not text:
         return None
-    match = _re.match(r"^(\d{4}-\d{2}-\d{2})", text)
+    match = re.match(r"^(\d{4}-\d{2}-\d{2})", text)
     if not match:
         return None
     try:
@@ -212,128 +136,71 @@ def _iso_date(value: Any) -> Optional[str]:
         return None
 
 
+def _iso_time(value: Any) -> Optional[str]:
+    text = _clean(value)
+    if not text:
+        return None
+    match = re.search(r"T(\d{2}:\d{2})(?::\d{2})?", text)
+    return match.group(1) if match else None
+
+
 def _in_window(value: Optional[str], start: date, end: date) -> bool:
     return bool(value and start.isoformat() <= value <= end.isoformat())
 
 
 def _status(event_date: str) -> str:
-    today_iso = _vietnam_today().isoformat()
-    if event_date > today_iso:
+    today = _vietnam_today().isoformat()
+    if event_date > today:
         return "upcoming"
-    if event_date == today_iso:
+    if event_date == today:
         return "today"
     return "occurred"
+
+
+def _snake_case_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower(): value
+        for key, value in row.items()
+    }
+
+
+def _classify(title: str) -> Optional[str]:
+    """Classify only explicit financial disclosures.
+
+    Unknown items must stay unknown. They are never coerced to BCTC.
+    """
+    lowered = re.sub(r"\s+", " ", str(title or "").lower()).strip()
+    if any(re.search(pattern, lowered) for pattern in REPORT_EXCLUSION_PATTERNS):
+        return None
+    if any(re.search(pattern, lowered) for pattern in FINANCIAL_REPORT_PATTERNS):
+        return "financial_report"
+    if any(re.search(pattern, lowered) for pattern in EARNINGS_RELEASE_PATTERNS):
+        return "earnings_release"
+    return None
 
 
 def _event_kind(row: Dict[str, Any]) -> Optional[str]:
     code = str(_clean(row.get("event_code")) or "").upper()
     category = str(_clean(row.get("category")) or "").upper()
     title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "").lower()
-
-    # Cổ tức
     if code == "DIV":
-        # Phân biệt cổ tức tiền mặt và cổ phiếu thưởng
-        if any(_re.search(p, title) for p in STOCK_DIVIDEND_PATTERNS):
-            return "stock_dividend"
-        return "cash_dividend"
-
-    # Đại hội đồng cổ đông
+        return "stock_dividend" if any(re.search(p, title) for p in STOCK_DIVIDEND_PATTERNS) else "cash_dividend"
     if code in {"AGME", "AGMR"} or category == "SHAREHOLDER_MEETING":
         return "shareholder_meeting_annual"
-    if code in {"EGME", "EGMR"} or _re.search(r"bất thường|egm", title):
+    if code in {"EGME", "EGMR"} or re.search(r"bất thường|\begm\b", title):
         return "shareholder_meeting_extraordinary"
-
-    # Hành động vốn
     if code in {"ISS", "AIS"}:
         return "capital_action"
-
-    # Niêm yết / hủy niêm yết
     if code in {"LIST", "DELIST"}:
         return "listing_change"
-
-    # Tạm ngừng giao dịch
     if code in {"SUSP", "HALT"}:
         return "trading_halt"
-
-    return None
-
-
-def _dividend_type(row: Dict[str, Any]) -> str:
-    """Phân biệt cổ tức tiền mặt và cổ phiếu thưởng."""
-    title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "").lower()
-    if any(_re.search(p, title) for p in STOCK_DIVIDEND_PATTERNS):
-        return "stock"
-    return "cash"
-
-
-def _extract_dividend_amount(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Trích xuất thông tin cổ tức chi tiết."""
-    result = {}
-
-    # Giá trị cổ tức
-    amount = _clean(row.get("value_per_share"))
-    if amount:
-        try:
-            result["amount_per_share"] = float(amount)
-            result["dividend_type"] = _dividend_type(row)
-        except ValueError:
-            pass
-
-    # Tỷ lệ pha loãng (với phát hành quyền)
-    ratio = _clean(row.get("exercise_ratio"))
-    if ratio:
-        try:
-            result["exercise_ratio"] = float(ratio)
-        except ValueError:
-            pass
-
-    # Giá phát hành (cho phát hành quyền)
-    price = _clean(row.get("issue_price"))
-    if price:
-        try:
-            result["issue_price"] = float(price)
-        except ValueError:
-            pass
-
-    return result if result else None
-
-
-def _ratio_label(row: Dict[str, Any], kind: str) -> Optional[str]:
-    amount = _clean(row.get("value_per_share"))
-    if kind in ("cash_dividend", "dividend") and amount:
-        try:
-            return f"{float(amount):,.0f} VND/cp"
-        except ValueError:
-            pass
-
-    ratio = _clean(row.get("exercise_ratio"))
-    if ratio:
-        try:
-            value = float(ratio)
-            return f"Tỷ lệ {value * 100:.2f}%" if value <= 20 else f"Tỷ lệ {value:.2f}%"
-        except ValueError:
-            return f"Tỷ lệ {ratio}"
-    return None
-
-
-def _meeting_location(row: Dict[str, Any]) -> Optional[str]:
-    """Trích xuất địa điểm họp ĐHĐCĐ."""
-    location = _clean(row.get("meeting_location") or row.get("event_location"))
-    if location:
-        return location
-
-    # Thử trích xuất từ title
-    title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "")
-    match = _re.search(r"(?:tại|@)\s*([A-ZÀ-ỹ][A-ZÀ-ỹ0-9\s,.-]{5,50})", title, _re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
     return None
 
 
 def _event_priority(event_type: str) -> int:
-    """Ưu tiên hiển thị sự kiện theo tầm quan trọng."""
-    priority_map = {
-        "trading_halt": 0,      # Quan trọng nhất
+    return {
+        "trading_halt": 0,
         "listing_change": 1,
         "cash_dividend": 2,
         "stock_dividend": 3,
@@ -341,573 +208,729 @@ def _event_priority(event_type: str) -> int:
         "shareholder_meeting_extraordinary": 5,
         "capital_action": 6,
         "financial_report": 7,
-    }
-    return priority_map.get(event_type, 99)
+        "earnings_release": 8,
+    }.get(event_type, 99)
 
 
-def _impact_level(event_type: str, has_high_value: bool = False) -> str:
-    """Xác định mức độ tác động của sự kiện."""
-    high_impact = {"trading_halt", "listing_change", "cash_dividend", "stock_dividend"}
-    medium_impact = {"shareholder_meeting_annual", "shareholder_meeting_extraordinary", "capital_action"}
+def _ratio_label(row: Dict[str, Any], kind: str) -> Optional[str]:
+    amount = _clean(row.get("value_per_share"))
+    if kind == "cash_dividend" and amount:
+        try:
+            return f"{float(amount):,.0f} VND/cp"
+        except (TypeError, ValueError):
+            return None
+    ratio = _clean(row.get("exercise_ratio"))
+    if ratio:
+        try:
+            value = float(ratio)
+            return f"Tỷ lệ {value * 100:.2f}%" if value <= 20 else f"Tỷ lệ {value:.2f}%"
+        except (TypeError, ValueError):
+            return f"Tỷ lệ {ratio}"
+    return None
 
-    if event_type in high_impact:
-        return "high"
-    if event_type in medium_impact:
-        return "medium"
-    return "low"
 
-
-def _corporate_action_event(row: Dict[str, Any], start: date, end: date) -> Optional[Dict[str, Any]]:
-    kind = _event_kind(row)
-    symbol = str(_clean(row.get("ticker")) or "").upper()
-    if not kind or not _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+def _float_or_none(value: Any) -> Optional[float]:
+    clean = _clean(value)
+    if clean is None:
+        return None
+    try:
+        return float(clean)
+    except (TypeError, ValueError):
         return None
 
-    exright_date = _iso_date(row.get("exright_date"))
-    record_date = _iso_date(row.get("record_date"))
-    payout_date = _iso_date(row.get("payout_date"))
-    issue_date = _iso_date(row.get("issue_date"))
-    listing_date = _iso_date(row.get("listing_date"))
-    delist_date = _iso_date(row.get("delist_date"))
-    display_date = _iso_date(row.get("display_date1"))
 
-    # Xác định ngày sự kiện chính và vai trò dựa trên loại
-    if kind in ("cash_dividend", "stock_dividend"):
-        event_date = exright_date or display_date or record_date
-        date_role = "Ngày GDKHQ"
-        impact = "high"
-        priority = _event_priority(kind)
-    elif kind in ("shareholder_meeting_annual", "shareholder_meeting_extraordinary"):
-        event_date = issue_date or display_date or exright_date
-        date_role = "Ngày họp ĐHĐCĐ"
-        impact = "medium"
-        priority = _event_priority(kind)
+def _canonical_hash(*parts: Any) -> str:
+    raw = "|".join(str(part or "") for part in parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _provider_evidence(raw_id: Any, published_at: Any, source_url: Any = None) -> Dict[str, Any]:
+    clean_url = _clean(source_url)
+    official_hosts = ("vsd.vn", "hsx.vn", "hnx.vn", "ssc.gov.vn")
+    is_official = bool(clean_url and any(host in str(clean_url).lower() for host in official_hosts))
+    return {
+        "source_name": "Nguồn công bố chính thức" if is_official else "Vietcap public REST",
+        "source_tier": "official" if is_official else "aggregator",
+        "source_url": clean_url,
+        "raw_id": _clean(raw_id),
+        "published_at": _clean(published_at),
+        "observed_at": _utc_now_iso(),
+    }
+
+
+def _verification(evidence: list[Dict[str, Any]], *, stale: bool = False) -> Dict[str, Any]:
+    official = [item for item in evidence if item.get("source_tier") == "official"]
+    status = "cross_checked" if official and len(evidence) > 1 else "official" if official else "provider_only"
+    return {
+        "status": status,
+        "sources": evidence,
+        "conflict_fields": [],
+        "stale": bool(stale),
+    }
+
+
+def _related_dates(row: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    return {
+        "publication_date": _iso_date(row.get("public_date")),
+        "ex_right_date": _iso_date(row.get("exright_date")),
+        "record_date": _iso_date(row.get("record_date")),
+        "payment_date": _iso_date(row.get("payout_date")),
+        "meeting_date": _iso_date(row.get("meeting_date")),
+        "issue_date": _iso_date(row.get("issue_date")),
+        "listing_date": _iso_date(row.get("listing_date")),
+        "delisting_date": _iso_date(row.get("delist_date")),
+        "provider_display_date": _iso_date(row.get("display_date1")),
+    }
+
+
+def _structured_milestones(kind: str, dates: Dict[str, Optional[str]]) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, Optional[str]]] = []
+    if kind in {"cash_dividend", "stock_dividend"}:
+        candidates = [
+            ("ex_right", dates["ex_right_date"]),
+            ("record", dates["record_date"]),
+            ("payment", dates["payment_date"]),
+        ]
+    elif kind.startswith("shareholder_meeting"):
+        candidates = [
+            ("meeting", dates["meeting_date"]),
+            ("ex_right", dates["ex_right_date"]),
+            ("record", dates["record_date"]),
+        ]
     elif kind == "listing_change":
-        event_date = listing_date or display_date
-        date_role = "Ngày niêm yết" if listing_date else "Ngày hủy niêm yết"
-        impact = "high"
-        priority = _event_priority(kind)
+        candidates = [
+            ("listing", dates["listing_date"]),
+            ("delisting", dates["delisting_date"]),
+        ]
     elif kind == "trading_halt":
-        event_date = display_date or issue_date
-        date_role = "Ngày tạm ngừng"
-        impact = "high"
-        priority = _event_priority(kind)
-    else:  # capital_action
-        event_date = listing_date or issue_date or exright_date or display_date
-        date_role = "Ngày niêm yết" if listing_date else "Ngày hiệu lực"
-        impact = "medium"
-        priority = _event_priority(kind)
+        candidates = [("suspension_start", dates["issue_date"])]
+    else:
+        candidates = [
+            ("listing", dates["listing_date"]),
+            ("issue", dates["issue_date"]),
+            ("ex_right", dates["ex_right_date"]),
+            ("record", dates["record_date"]),
+        ]
 
-    if not _in_window(event_date, start, end):
-        return None
-
-    title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "Sự kiện doanh nghiệp")
-    title = _re.sub(rf"^{_re.escape(symbol)}\s*[-:]\s*", "", title, flags=_re.IGNORECASE).strip()
-
-    # Enrich dữ liệu cổ tức
-    dividend_info = None
-    if kind in ("cash_dividend", "stock_dividend"):
-        dividend_info = _extract_dividend_amount(row)
-
-    # Enrich dữ liệu ĐHĐCĐ
-    meeting_info = None
-    if "shareholder_meeting" in kind:
-        location = _meeting_location(row)
-        meeting_info = {
-            "location": location,
-            "type": "annual" if kind == "shareholder_meeting_annual" else "extraordinary",
-        }
-
-    # Enrich dữ liệu phát hành
-    capital_info = None
-    if kind == "capital_action":
-        ratio = _clean(row.get("exercise_ratio"))
-        price = _clean(row.get("issue_price"))
-        capital_info = {
-            "exercise_ratio": float(ratio) if ratio else None,
-            "issue_price": float(price) if price else None,
-        }
-
-    event_id = str(_clean(row.get("id")) or f"vci-{symbol}-{kind}-{event_date}-{title.lower()}")
-
-    result = {
-        "id": f"action:{event_id}",
-        "symbol": symbol,
-        "event_date": event_date,
-        "published_at": _clean(row.get("public_date")),
-        "type": kind,
-        "title": title,
-        "status": _status(event_date),
-        "date_role": date_role,
-        "priority": priority,
-        "record_date": record_date,
-        "exright_date": exright_date,
-        "payout_date": payout_date,
-        "listing_date": listing_date,
-        "delist_date": delist_date,
-        "ratio_label": _ratio_label(row, kind),
-        "impact": impact,
-        "source": "VCI structured corporate events",
-        "source_url": None,
-        "source_verified": True,
-    }
-
-    # Thêm dữ liệu enrichment
-    if dividend_info:
-        result["dividend_info"] = dividend_info
-    if meeting_info:
-        result["meeting_info"] = meeting_info
-    if capital_info:
-        result["capital_info"] = capital_info
-
+    result = [(role, value) for role, value in candidates if value]
+    # displayDate is explicitly generic. Use it only when the source exposes no
+    # semantically named milestone; never relabel it as GDKHQ or meeting date.
+    if not result and dates.get("provider_display_date"):
+        result.append(("provider_display", str(dates["provider_display_date"])))
     return result
 
 
+def _corporate_action_occurrences(row: Dict[str, Any], start: date, end: date) -> list[Dict[str, Any]]:
+    kind = _event_kind(row)
+    symbol = str(_clean(row.get("ticker")) or "").upper()
+    if not kind or not re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+        return []
+
+    raw_id = str(_clean(row.get("id")) or _canonical_hash(symbol, kind, row.get("event_title_vi")))
+    title = str(_clean(row.get("event_title_vi")) or _clean(row.get("event_name_vi")) or "Sự kiện doanh nghiệp")
+    title = re.sub(rf"^{re.escape(symbol)}\s*[-:]\s*", "", title, flags=re.IGNORECASE).strip()
+    dates = _related_dates(row)
+    evidence = [_provider_evidence(raw_id, row.get("public_date"))]
+    canonical_event_id = f"vci:{raw_id}"
+    ratio_label = _ratio_label(row, kind)
+    details = {
+        "cash_per_share": _float_or_none(row.get("value_per_share")) if kind == "cash_dividend" else None,
+        "exercise_ratio": _float_or_none(row.get("exercise_ratio")),
+        "issue_price": _float_or_none(row.get("issue_price")),
+        "meeting_location": _clean(row.get("meeting_location") or row.get("event_location")),
+    }
+
+    occurrences = []
+    for role, event_date in _structured_milestones(kind, dates):
+        if not _in_window(event_date, start, end):
+            continue
+        occurrence_id = f"{canonical_event_id}:{role}:{event_date}"
+        occurrences.append({
+            "id": occurrence_id,
+            "canonical_event_id": canonical_event_id,
+            "symbol": symbol,
+            "exchange": _clean(row.get("exchange")),
+            "event_date": event_date,
+            "event_time": None,
+            "date_role": DATE_ROLE_LABELS[role],
+            "date_role_code": role,
+            "date_role_label": DATE_ROLE_LABELS[role],
+            "type": kind,
+            "title": title,
+            "status": _status(event_date),
+            "priority": _event_priority(kind),
+            "related_dates": dates,
+            "details": details,
+            "verification": _verification(evidence),
+            "source": "Vietcap public REST",
+            "source_url": None,
+            "source_verified": False,
+            # Compatibility fields retained for current consumers.
+            "published_at": _clean(row.get("public_date")),
+            "record_date": dates["record_date"],
+            "exright_date": dates["ex_right_date"],
+            "payout_date": dates["payment_date"],
+            "listing_date": dates["listing_date"],
+            "delist_date": dates["delisting_date"],
+            "ratio_label": ratio_label,
+            "impact": "high" if kind in {"trading_halt", "listing_change", "cash_dividend", "stock_dividend"} else "medium",
+        })
+    return occurrences
+
+
+def _corporate_action_event(row: Dict[str, Any], start: date, end: date) -> Optional[Dict[str, Any]]:
+    """Compatibility helper returning the highest-priority observed occurrence."""
+    occurrences = _corporate_action_occurrences(row, start, end)
+    if not occurrences:
+        return None
+    return sorted(occurrences, key=lambda item: (ROLE_PRIORITY.get(item["date_role_code"], 99), item["event_date"]))[0]
+
+
+def _report_period(title: str) -> Optional[str]:
+    lowered = str(title or "").lower()
+    quarter = re.search(r"quý\s*([1-4ivx]+)\s*[/\-]?\s*(20\d{2})", lowered)
+    if quarter:
+        roman = {"i": "1", "ii": "2", "iii": "3", "iv": "4"}
+        q = roman.get(quarter.group(1), quarter.group(1))
+        return f"{quarter.group(2)}-Q{q}"
+    year = re.search(r"(?:năm|cả năm)\s*(20\d{2})", lowered)
+    return year.group(1) if year else None
+
+
 def _disclosure_event(item: Dict[str, Any], symbol_hint: str, start: date, end: date) -> Optional[Dict[str, Any]]:
-    title = str(_clean(item.get("newsTitle")) or "")
-    kind = _classify(title)
-    # AGM/dividend/capital dates from news are publication dates, not effective dates.
-    # Those categories are sourced from the structured corporate-action dataset instead.
-    if kind == "financial_report":
-        pass  # Process financial reports
-    elif kind in ("shareholder_meeting", "dividend", "capital_action"):
-        # Các loại này đã có trong corporate action dataset
+    raw_title = str(_clean(item.get("newsTitle")) or "")
+    kind = _classify(raw_title)
+    if kind is None:
         return None
 
-    match = _re.match(r"^([A-Z][A-Z0-9]{1,5})\s*[:\-–]\s*(.+)$", title)
-    symbol = (match.group(1) if match else symbol_hint or _clean(item.get("ticker")) or "").upper()
-    clean_title = match.group(2) if match else title
-    if not _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+    match = re.match(r"^([A-Z][A-Z0-9]{1,5})\s*[:\-–]\s*(.+)$", raw_title)
+    explicit_ticker = str(_clean(item.get("ticker")) or "").upper()
+    hint = str(symbol_hint or "").upper()
+    # A per-symbol response without a ticker is accepted only when the title
+    # explicitly starts with that symbol. This rejects generic media stories.
+    if match:
+        symbol = match.group(1)
+        title = match.group(2).strip()
+    elif explicit_ticker and explicit_ticker == hint:
+        symbol = explicit_ticker
+        title = raw_title
+    else:
         return None
-    published_at = str(_clean(item.get("publicDate")) or _clean(item.get("displayDate")) or "")
+    if not re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+        return None
+
+    published_at = _clean(item.get("publicDate") or item.get("displayDate"))
     event_date = _iso_date(published_at)
     if not _in_window(event_date, start, end):
         return None
-
-    # Trích xuất thêm thông tin từ content nếu có
-    content = str(_clean(item.get("content")) or "")
-    enriched_info = {}
-
-    # Tìm số liệu cổ tức trong content
-    div_match = _re.search(r"(\d[\d.,]*)\s*(?:VND|vnd)\s*(?:/cp|/cổ phiếu)?", content)
-    if div_match:
-        try:
-            enriched_info["dividend_announced"] = float(div_match.group(1).replace(",", ""))
-        except ValueError:
-            pass
-
-    # Tìm ngày họp ĐHĐCĐ trong content
-    agm_match = _re.search(r"(?:ngày|họp)\s*(?:ĐHĐCĐ|đại hội)\s*[:\-]?\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})", content, _re.IGNORECASE)
-    if agm_match:
-        try:
-            day, month, year = agm_match.groups()
-            enriched_info["meeting_date_announced"] = f"{year}-{int(month):02d}-{int(day):02d}"
-        except (ValueError, IndexError):
-            pass
-
-    event_id = str(_clean(item.get("id")) or f"news-{symbol}-{event_date}-{clean_title.lower()}")
-
-    clean_title = _re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", clean_title).strip()
-    result = {
-        "id": f"disclosure:{event_id}",
+    raw_id = str(_clean(item.get("id")) or _canonical_hash(symbol, kind, event_date, title))
+    source_url = _clean(item.get("newsSourceLink"))
+    evidence = [_provider_evidence(raw_id, published_at, source_url)]
+    canonical_event_id = f"disclosure:{raw_id}"
+    verification = _verification(evidence)
+    period = _report_period(title)
+    scope = "parent" if re.search(r"công ty mẹ|riêng", title, re.IGNORECASE) else "consolidated" if re.search(r"hợp nhất", title, re.IGNORECASE) else None
+    return {
+        "id": f"{canonical_event_id}:publication:{event_date}",
+        "canonical_event_id": canonical_event_id,
         "symbol": symbol,
+        "exchange": None,
         "event_date": event_date,
-        "published_at": published_at,
-        "type": kind or "financial_report",
-        "title": clean_title,
+        "event_time": _iso_time(published_at),
+        "date_role": DATE_ROLE_LABELS["publication"],
+        "date_role_code": "publication",
+        "date_role_label": DATE_ROLE_LABELS["publication"],
+        "type": kind,
+        "title": re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", title).strip(),
         "status": "published",
-        "date_role": "Ngày công bố",
+        "priority": _event_priority(kind),
+        "related_dates": {
+            "publication_date": event_date,
+            "ex_right_date": None,
+            "record_date": None,
+            "payment_date": None,
+            "meeting_date": None,
+            "issue_date": None,
+            "listing_date": None,
+            "delisting_date": None,
+            "provider_display_date": None,
+        },
+        "details": {"report_period": period, "report_scope": scope},
+        "verification": verification,
+        "source": "Vietcap public REST",
+        "source_url": source_url,
+        "source_verified": verification["status"] in {"official", "cross_checked"},
+        "published_at": published_at,
         "record_date": None,
         "exright_date": None,
         "payout_date": None,
         "listing_date": None,
         "delist_date": None,
         "ratio_label": None,
-        "priority": 7,
         "impact": "high" if kind == "financial_report" else "medium",
-        "source": str(_clean(item.get("newsSource")) or "Vietcap disclosure feed"),
-        "source_url": _clean(item.get("newsSourceLink")),
-        "source_verified": True,
     }
-
-    if enriched_info:
-        result["enriched_info"] = enriched_info
-
-    return result
-
-
-def _symbols_for_calendar() -> list[str]:
-    symbols = set(DEFAULT_TOP_SYMBOLS)
-    try:
-        from heatmap_engine import get_latest_snapshot
-        snapshot = get_latest_snapshot() or {}
-        stocks = [stock for sector in snapshot.get("sectors", []) for stock in sector.get("stocks", [])]
-        stocks.sort(key=lambda stock: float(stock.get("market_cap") or 0), reverse=True)
-        for stock in stocks[:220]:
-            symbol = str(stock.get("symbol") or "").upper()
-            if _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
-                symbols.add(symbol)
-    except Exception:
-        pass
-    return sorted(symbols)
-
-
-def _snake_case_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        _re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower(): value
-        for key, value in row.items()
-    }
-
-
-def _fetch_symbol(symbol: str, start: date, end: date) -> tuple[list[Dict[str, Any]], Dict[str, bool]]:
-    events: list[Dict[str, Any]] = []
-    health = {"actions": False, "disclosures": False}
-    fetch_start = _time.monotonic()
-    try:
-        action_start = start - timedelta(days=365)
-        body = _unwrap_data(_get_json(
-            f"{VCI_IQ}/v1/events",
-            params={
-                "ticker": symbol,
-                "fromDate": action_start.strftime("%Y%m%d"),
-                "toDate": end.strftime("%Y%m%d"),
-                "eventCode": "DIV,ISS,AGME,AGMR,EGME,AIS",
-                "page": 0,
-                "size": 100,
-            },
-            timeout=WORKER_TIMEOUT_SECONDS,
-        )) or {}
-        raw_rows = body.get("content", []) if isinstance(body, dict) else body
-        health["actions"] = True
-        for row in raw_rows or []:
-            event = _corporate_action_event(_snake_case_row(row), start, end)
-            if event:
-                events.append(event)
-    except Exception:
-        pass
-
-    # Abort second fetch if first already consumed most of the timeout
-    elapsed = _time.monotonic() - fetch_start
-    remaining = WORKER_TIMEOUT_SECONDS - elapsed
-    if remaining <= 2:
-        return events, health
-
-    try:
-        body = _unwrap_data(_get_json(
-            f"{VCI_IQ}/v1/news",
-            params={
-                "ticker": symbol,
-                "fromDate": start.strftime("%Y%m%d"),
-                "toDate": end.strftime("%Y%m%d"),
-                "languageId": 1,
-                "page": 0,
-                "size": 100,
-            },
-            timeout=max(remaining, 3),
-        )) or {}
-        rows = body.get("content", []) if isinstance(body, dict) else body
-        health["disclosures"] = True
-        for item in rows or []:
-            event = _disclosure_event(item, symbol, start, end)
-            if event:
-                events.append(event)
-    except Exception:
-        pass
-    return events, health
-
-
-def fetch_price_affecting_actions(symbol: str, start: date, end: date) -> list[Dict[str, Any]]:
-    """Return VCI structured actions that can mechanically affect price.
-
-    This intentionally excludes meetings and generic disclosures.  Unlike the
-    calendar UI fetcher, failures are allowed to propagate so a data-quality
-    consumer can distinguish a verified empty result from an unavailable feed.
-    """
-    symbol = str(symbol or "").upper().strip()
-    if not _re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
-        raise ValueError("Mã chứng khoán không hợp lệ")
-    body = _unwrap_data(_get_json(
-        f"{VCI_IQ}/v1/events",
-        params={
-            "ticker": symbol,
-            "fromDate": start.strftime("%Y%m%d"),
-            "toDate": end.strftime("%Y%m%d"),
-            "eventCode": "DIV,ISS,AIS,LIST,DELIST,SUSP,HALT",
-            "page": 0,
-            "size": 200,
-        },
-        timeout=WORKER_TIMEOUT_SECONDS,
-    )) or {}
-    raw_rows = body.get("content", []) if isinstance(body, dict) else body
-    price_affecting = {
-        "cash_dividend", "stock_dividend", "capital_action",
-        "listing_change", "trading_halt",
-    }
-    events: list[Dict[str, Any]] = []
-    for raw in raw_rows or []:
-        event = _corporate_action_event(_snake_case_row(raw), start, end)
-        if event and event.get("type") in price_affecting:
-            events.append(event)
-    return _deduplicate(events)
 
 
 def _normalize_title_key(title: str) -> str:
-    cleaned = _re.sub(r"(?i)\b(\w+(?:\s+\w+)?)\s+\1\b", r"\1", str(title or ""))
-    return _re.sub(r"\W+", "", cleaned.lower())
+    return re.sub(r"\W+", "", str(title or "").lower())
 
 
 def _deduplicate(events: Iterable[Dict[str, Any]]) -> list[Dict[str, Any]]:
     result: list[Dict[str, Any]] = []
     seen = set()
     for event in events:
-        key = (
-            event.get("symbol"),
-            event.get("type"),
-            event.get("event_date"),
-            _normalize_title_key(event.get("title")),
+        key = event.get("id") or (
+            event.get("symbol"), event.get("type"), event.get("event_date"),
+            event.get("date_role_code"), _normalize_title_key(event.get("title", "")),
         )
         if key in seen:
             continue
         seen.add(key)
         result.append(event)
-    # Sắp xếp theo: ngày, priority, symbol, loại sự kiện
     return sorted(result, key=lambda row: (
-        row["event_date"],
+        row.get("event_date") or "9999-12-31",
         row.get("priority", 99),
-        row["symbol"],
-        row["type"],
-        row["title"]
+        row.get("symbol") or "",
+        row.get("date_role_code") or "",
+        row.get("title") or "",
     ))
 
 
-def _fetch(start: date, end: date) -> Dict[str, Any]:
-    symbols = _symbols_for_calendar()
+def _listed_universe() -> tuple[list[str], Dict[str, str]]:
+    frame = Listing(source="VCI").symbols_by_industries()
+    if frame is None or frame.empty:
+        raise RuntimeError("Nguồn danh sách niêm yết trả rỗng")
+    symbols: list[str] = []
+    exchange_by_symbol: Dict[str, str] = {}
+    for _, row in frame.iterrows():
+        symbol = str(row.get("symbol") or "").upper().strip()
+        security_type = str(row.get("com_type_code") or "").upper().strip()
+        exchange = str(row.get("exchange") or "").upper().strip()
+        if security_type == "QU" or exchange not in {"HOSE", "HNX", "UPCOM"}:
+            continue
+        if not re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+            continue
+        symbols.append(symbol)
+        exchange_by_symbol[symbol] = exchange
+    symbols = sorted(set(symbols))
+    if len(symbols) < 300:
+        raise RuntimeError(f"Universe niêm yết không đầy đủ ({len(symbols)} mã)")
+    return symbols, exchange_by_symbol
+
+
+def _fetch_global_actions(start: date, end: date) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
     events: list[Dict[str, Any]] = []
-    action_success = disclosure_success = 0
-    event_type_counts = {
-        "cash_dividend": 0, "stock_dividend": 0,
-        "shareholder_meeting_annual": 0, "shareholder_meeting_extraordinary": 0,
-        "capital_action": 0, "listing_change": 0, "trading_halt": 0,
-        "financial_report": 0,
+    page = 0
+    page_size = 200
+    total_pages = 1
+    # An old announcement may contain a payment milestone inside the requested
+    # window, so the provider query intentionally looks back one year.
+    from_date = start - timedelta(days=366)
+    while page < total_pages:
+        body = _unwrap_data(_get_json(
+            f"{VCI_IQ}/v1/events",
+            params={
+                "fromDate": from_date.strftime("%Y%m%d"),
+                "toDate": end.strftime("%Y%m%d"),
+                "eventCode": EVENT_CODES,
+                "page": page,
+                "size": page_size,
+            },
+            timeout=FETCH_TIMEOUT_SECONDS,
+        )) or {}
+        rows = body.get("content", []) if isinstance(body, dict) else []
+        total_pages = max(int(body.get("totalPages") or 1), 1) if isinstance(body, dict) else 1
+        for raw in rows:
+            events.extend(_corporate_action_occurrences(_snake_case_row(raw), start, end))
+        page += 1
+    return _deduplicate(events), {
+        "pages_fetched": page,
+        "pages_total": total_pages,
+        "records_received": int(body.get("totalElements") or len(events)) if isinstance(body, dict) else len(events),
     }
 
-    batch_size = MAX_WORKERS
-    total_symbols = len(symbols)
 
-    for batch_start in range(0, total_symbols, batch_size):
-        batch = symbols[batch_start: batch_start + batch_size]
-        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-            futures = {pool.submit(_fetch_symbol, symbol, start, end): symbol for symbol in batch}
-            done_futures = set()
-            try:
-                # Wait for futures with a global batch timeout to avoid indefinite hangs
-                for future in as_completed(futures, timeout=WORKER_TIMEOUT_SECONDS * 2):
-                    done_futures.add(future)
-                    try:
-                        rows, health = future.result(timeout=2)
-                        events.extend(rows)
-                        action_success += int(health["actions"])
-                        disclosure_success += int(health["disclosures"])
-                        for row in rows:
-                            event_type = row.get("type", "")
-                            if event_type in event_type_counts:
-                                event_type_counts[event_type] += 1
-                    except Exception:
-                        continue
-            except FuturesTimeoutError:
-                # Some futures may not have completed — abandon them and continue
-                # to avoid blocking indefinitely on a slow symbol
-                pass
+def _fetch_symbol_reports(symbol: str, start: date, end: date) -> tuple[list[Dict[str, Any]], bool, int]:
+    body = _unwrap_data(_get_json(
+        f"{VCI_IQ}/v1/news",
+        params={
+            "ticker": symbol,
+            "fromDate": start.strftime("%Y%m%d"),
+            "toDate": end.strftime("%Y%m%d"),
+            "languageId": 1,
+            "page": 0,
+            "size": 100,
+        },
+        timeout=FETCH_TIMEOUT_SECONDS,
+    )) or {}
+    rows = body.get("content", []) if isinstance(body, dict) else []
+    accepted = [event for event in (_disclosure_event(item, symbol, start, end) for item in rows) if event]
+    return accepted, True, len(rows)
 
+
+def _fetch(start: date, end: date, *, include_reports: bool = True) -> Dict[str, Any]:
+    symbols, exchange_by_symbol = _listed_universe()
+    actions, action_meta = _fetch_global_actions(start, end)
+    events = list(actions)
+    report_symbols_scanned = report_sources_ok = raw_disclosures = 0
+    if include_reports:
+        with ThreadPoolExecutor(max_workers=REPORT_WORKERS, thread_name_prefix="lp-calendar") as pool:
+            futures = {pool.submit(_fetch_symbol_reports, symbol, start, end): symbol for symbol in symbols}
+            for future in as_completed(futures):
+                report_symbols_scanned += 1
+                symbol = futures[future]
+                try:
+                    rows, ok, raw_count = future.result()
+                    report_sources_ok += int(ok)
+                    raw_disclosures += raw_count
+                    for item in rows:
+                        item["exchange"] = exchange_by_symbol.get(symbol)
+                    events.extend(rows)
+                except Exception:
+                    continue
+    for item in events:
+        item["exchange"] = item.get("exchange") or exchange_by_symbol.get(str(item.get("symbol") or ""))
     events = _deduplicate(events)
-    source_coverage = round(max(action_success, disclosure_success) / len(symbols) * 100, 1) if symbols else 0.0
-
-    high_impact_count = sum(1 for e in events if e.get("impact") == "high")
-    upcoming_count = sum(1 for e in events if e.get("status") in ("upcoming", "today"))
-
+    rejected = max(raw_disclosures - sum(1 for event in events if event["type"] in {"financial_report", "earnings_release"}), 0)
+    partial = include_reports and report_symbols_scanned < len(symbols)
+    fetched_at = _utc_now_iso()
     return {
+        "schema_version": SCHEMA_VERSION,
         "events": events,
         "coverage": {
-            "mode": "verified_event_dates",
-            "confirmed_events": len(events),
-            "issuer_universe": len(symbols),
-            "action_sources_ok": action_success,
-            "disclosure_sources_ok": disclosure_success,
-            "source_coverage_pct": source_coverage,
-            "event_type_counts": event_type_counts,
-            "high_impact_events": high_impact_count,
-            "upcoming_events": upcoming_count,
-            "coverage_note": "Corporate action dùng ngày GDKHQ/ĐKCC/thanh toán; BCTC dùng ngày công bố chính thức.",
-            "warning": "Không dự đoán ngày BCTC chưa được doanh nghiệp công bố.",
+            "mode": "measured_source_coverage",
+            "universe_total": len(symbols),
+            "universe_scanned": report_symbols_scanned if include_reports else 0,
+            "action_pages_fetched": action_meta["pages_fetched"],
+            "action_pages_total": action_meta["pages_total"],
+            "action_records_received": action_meta["records_received"],
+            "report_sources_ok": report_sources_ok,
+            "accepted_events": len(events),
+            "rejected_items": rejected,
+            "conflicts": 0,
+            "partial": partial or not include_reports,
+            "coverage_note": "Độ phủ là số nguồn/trang đã quét, không phải cam kết có đủ mọi công bố.",
         },
-        "source": "VCI structured corporate events + Vietcap exchange disclosures",
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "data_quality": {
+            "no_synthetic_data": True,
+            "as_of": fetched_at,
+            "stale": False,
+            "partial": partial or not include_reports,
+        },
+        "source": "Vietcap public REST; đối chiếu nguồn chính thức khi có URL bằng chứng",
+        "fetched_at": fetched_at,
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
     }
 
 
-def _save_snapshot(snapshot_data: Dict[str, Any]) -> None:
-    try:
-        with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-            json.dump(snapshot_data, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+def _connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=15, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""CREATE TABLE IF NOT EXISTS corporate_events_v2 (
+        id TEXT PRIMARY KEY,
+        canonical_event_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        event_date TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        date_role TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_v2_date ON corporate_events_v2(event_date, symbol)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS calendar_sync_runs_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        status TEXT NOT NULL,
+        requested INTEGER NOT NULL DEFAULT 0,
+        received INTEGER NOT NULL DEFAULT 0,
+        accepted INTEGER NOT NULL DEFAULT 0,
+        rejected INTEGER NOT NULL DEFAULT 0,
+        conflicts INTEGER NOT NULL DEFAULT 0,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        error TEXT,
+        meta TEXT NOT NULL DEFAULT '{}'
+    )""")
+    conn.execute("CREATE TABLE IF NOT EXISTS calendar_meta_v2 (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.commit()
+    _migrate_strict_legacy_reports(conn)
+    return conn
 
 
-def _load_snapshot() -> Optional[Dict[str, Any]]:
-    if _os.path.exists(SNAPSHOT_PATH):
-        try:
-            with open(SNAPSHOT_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return None
-
-
-def _seed_db_from_snapshot(conn: Optional[sqlite3.Connection], force: bool = False) -> bool:
-    if conn is None:
-        return False
-    snapshot_data = _load_snapshot()
-    if not snapshot_data or not snapshot_data.get("events"):
-        return False
-    db_count = conn.execute("SELECT COUNT(*) FROM corporate_events").fetchone()[0]
-    snapshot_count = len(snapshot_data["events"])
-    if not force and db_count >= min(500, snapshot_count // 2):
-        return False
-
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute("DELETE FROM corporate_events")
-    for event in snapshot_data["events"]:
-        conn.execute("INSERT OR REPLACE INTO corporate_events VALUES (?,?,?,?,?)", (
-            event["id"], event["symbol"], event["event_date"], json.dumps(event, ensure_ascii=False), now,
-        ))
-    meta = {key: value for key, value in snapshot_data.items() if key != "events"}
-    window_start = snapshot_data.get("window_start") or "2026-01-01"
-    window_end = snapshot_data.get("window_end") or "2026-12-31"
-    conn.execute("INSERT OR REPLACE INTO calendar_sync VALUES (1,?,?,?,?)", (
-        window_start, window_end, json.dumps(meta, ensure_ascii=False), now,
+def _migrate_strict_legacy_reports(conn: sqlite3.Connection) -> None:
+    marker = conn.execute("SELECT value FROM calendar_meta_v2 WHERE key='legacy_migration'").fetchone()
+    if marker:
+        return
+    old_exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='corporate_events'").fetchone()
+    now = _utc_now_iso()
+    accepted = 0
+    if old_exists:
+        for row in conn.execute("SELECT payload FROM corporate_events"):
+            try:
+                item = json.loads(row["payload"])
+            except Exception:
+                continue
+            if item.get("type") not in {"financial_report", "earnings_release"}:
+                continue
+            symbol = str(item.get("symbol") or "").upper()
+            kind = _classify(f"{symbol}: {item.get('title') or ''}")
+            event_date = _iso_date(item.get("event_date"))
+            if kind not in {"financial_report", "earnings_release"} or not event_date:
+                continue
+            item["type"] = kind
+            item["event_time"] = _iso_time(item.get("published_at"))
+            item["date_role"] = DATE_ROLE_LABELS["publication"]
+            item["date_role_code"] = "publication"
+            item["date_role_label"] = DATE_ROLE_LABELS["publication"]
+            item["canonical_event_id"] = item.get("canonical_event_id") or f"legacy:{_canonical_hash(symbol, kind, event_date, item.get('title'))}"
+            item["id"] = f"{item['canonical_event_id']}:publication:{event_date}"
+            item["verification"] = _verification([_provider_evidence(item.get("id"), item.get("published_at"), item.get("source_url"))], stale=True)
+            item["source_verified"] = False
+            item["related_dates"] = item.get("related_dates") or {"publication_date": event_date}
+            item["details"] = item.get("details") or {"report_period": _report_period(item.get("title") or ""), "report_scope": None}
+            conn.execute("INSERT OR IGNORE INTO corporate_events_v2 VALUES (?,?,?,?,?,?,?,?,?)", (
+                item["id"], item["canonical_event_id"], symbol, event_date, kind, "publication",
+                json.dumps(item, ensure_ascii=False), now, now,
+            ))
+            accepted += 1
+    conn.execute("INSERT OR REPLACE INTO calendar_meta_v2 VALUES ('legacy_migration', ?)", (
+        json.dumps({"at": now, "accepted_strict_reports": accepted}, ensure_ascii=False),
     ))
     conn.commit()
-    return True
 
 
-def _events_from_db(conn: Optional[sqlite3.Connection], start: date, end: date) -> list[Dict[str, Any]]:
-    if conn is None:
-        return []
-    return [json.loads(item["payload"]) for item in conn.execute(
-        "SELECT payload FROM corporate_events WHERE event_date BETWEEN ? AND ? ORDER BY event_date, symbol",
+def _write_snapshot(snapshot: Dict[str, Any]) -> None:
+    temp_path = f"{SNAPSHOT_PATH}.tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle, ensure_ascii=False, indent=2)
+        os.replace(temp_path, SNAPSHOT_PATH)
+    except Exception:
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
+
+
+def _promote_snapshot(snapshot: Dict[str, Any]) -> None:
+    events = snapshot.get("events") or []
+    coverage = snapshot.get("coverage") or {}
+    if not events or int(coverage.get("action_pages_fetched") or 0) < int(coverage.get("action_pages_total") or 0):
+        raise RuntimeError("Nguồn structured events chưa tải đủ trang; giữ nguyên last-known-good")
+    conn = _connection()
+    now = _utc_now_iso()
+    started_at = snapshot.get("fetched_at") or now
+    with conn:
+        cursor = conn.execute("""INSERT INTO calendar_sync_runs_v2 (
+            source,window_start,window_end,status,requested,received,accepted,rejected,conflicts,started_at,finished_at,error,meta
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            "calendar_v2", snapshot["window_start"], snapshot["window_end"], "success",
+            int(coverage.get("universe_total") or 0),
+            int(coverage.get("action_records_received") or 0),
+            len(events), int(coverage.get("rejected_items") or 0), int(coverage.get("conflicts") or 0),
+            started_at, now, None, json.dumps({key: value for key, value in snapshot.items() if key != "events"}, ensure_ascii=False),
+        ))
+        sync_id = cursor.lastrowid
+        for event in events:
+            conn.execute("""INSERT INTO corporate_events_v2 (
+                id,canonical_event_id,symbol,event_date,event_type,date_role,payload,first_seen_at,last_seen_at
+            ) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                payload=excluded.payload,last_seen_at=excluded.last_seen_at,event_type=excluded.event_type,date_role=excluded.date_role
+            """, (
+                event["id"], event["canonical_event_id"], event["symbol"], event["event_date"],
+                event["type"], event.get("date_role_code") or "provider_display", json.dumps(event, ensure_ascii=False), now, now,
+            ))
+        conn.execute("INSERT OR REPLACE INTO calendar_meta_v2 VALUES ('active_sync_id', ?)", (str(sync_id),))
+    conn.close()
+    _write_snapshot(snapshot)
+
+
+def _events_from_db(conn: sqlite3.Connection, start: date, end: date) -> list[Dict[str, Any]]:
+    return [json.loads(row["payload"]) for row in conn.execute(
+        "SELECT payload FROM corporate_events_v2 WHERE event_date BETWEEN ? AND ? ORDER BY event_date,event_type,symbol",
         (start.isoformat(), end.isoformat()),
     )]
 
 
-def _nearby_from_db(conn: Optional[sqlite3.Connection], today: date) -> list[Dict[str, Any]]:
-    if conn is None:
-        return []
-    return [json.loads(item["payload"]) for item in conn.execute(
-        "SELECT payload FROM corporate_events ORDER BY ABS(julianday(event_date)-julianday(?)), event_date LIMIT 12",
+def _nearby_from_db(conn: sqlite3.Connection, today: date) -> list[Dict[str, Any]]:
+    return [json.loads(row["payload"]) for row in conn.execute(
+        "SELECT payload FROM corporate_events_v2 ORDER BY ABS(julianday(event_date)-julianday(?)), event_date LIMIT 12",
         (today.isoformat(),),
     )]
 
 
-def _response(meta: Dict[str, Any], events: list[Dict[str, Any]], nearby: list[Dict[str, Any]], cache: str) -> Dict[str, Any]:
+def _latest_meta(conn: sqlite3.Connection) -> Dict[str, Any]:
+    row = conn.execute("SELECT meta,finished_at FROM calendar_sync_runs_v2 WHERE status='success' ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return {}
+    meta = json.loads(row["meta"] or "{}")
+    meta["last_success_at"] = row["finished_at"]
+    return meta
+
+
+def _refresh_snapshot(*, include_reports: bool) -> None:
+    global _REFRESH_STATE
+    if not _SYNC_LOCK.acquire(blocking=False):
+        return
+    started = _utc_now_iso()
+    _REFRESH_STATE = {"state": "running", "started_at": started, "finished_at": None, "error": None}
+    try:
+        today = _vietnam_today()
+        snapshot = _fetch(today - timedelta(days=62), today + timedelta(days=365), include_reports=include_reports)
+        _promote_snapshot(snapshot)
+        _REFRESH_STATE = {"state": "complete", "started_at": started, "finished_at": _utc_now_iso(), "error": None}
+    except Exception as exc:
+        _REFRESH_STATE = {"state": "error", "started_at": started, "finished_at": _utc_now_iso(), "error": str(exc)}
+        try:
+            conn = _connection()
+            with conn:
+                conn.execute("""INSERT INTO calendar_sync_runs_v2 (
+                    source,window_start,window_end,status,started_at,finished_at,error
+                ) VALUES (?,?,?,?,?,?,?)""", (
+                    "calendar_v2", _vietnam_today().isoformat(), (_vietnam_today() + timedelta(days=365)).isoformat(),
+                    "error", started, _utc_now_iso(), str(exc),
+                ))
+            conn.close()
+        except Exception:
+            pass
+    finally:
+        _SYNC_LOCK.release()
+
+
+def request_calendar_refresh(*, include_reports: bool = True) -> Dict[str, Any]:
+    global _SYNC_THREAD
+    if _SYNC_THREAD and _SYNC_THREAD.is_alive():
+        return dict(_REFRESH_STATE)
+    _SYNC_THREAD = threading.Thread(
+        target=_refresh_snapshot,
+        kwargs={"include_reports": include_reports},
+        daemon=True,
+        name="corporate-calendar-refresh",
+    )
+    _SYNC_THREAD.start()
+    return dict(_REFRESH_STATE)
+
+
+def _worker_loop() -> None:
+    last_actions = last_reports = 0.0
+    while not _WORKER_STOP.is_set():
+        now = time.time()
+        include_reports = now - last_reports >= REPORT_REFRESH_SECONDS
+        if now - last_actions >= ACTION_REFRESH_SECONDS:
+            request_calendar_refresh(include_reports=include_reports)
+            last_actions = now
+            if include_reports:
+                last_reports = now
+        _WORKER_STOP.wait(60)
+
+
+def start_calendar_background_sync() -> None:
+    global _WORKER_THREAD
+    if _WORKER_THREAD and _WORKER_THREAD.is_alive():
+        return
+    _WORKER_STOP.clear()
+    _WORKER_THREAD = threading.Thread(target=_worker_loop, daemon=True, name="corporate-calendar-scheduler")
+    _WORKER_THREAD.start()
+
+
+def _response(start: date, end: date, events: list[Dict[str, Any]], nearby: list[Dict[str, Any]], meta: Dict[str, Any]) -> Dict[str, Any]:
     coverage = dict(meta.get("coverage") or {})
-    coverage["returned_events"] = len(events)
-    coverage["returned_symbols"] = len({event.get("symbol") for event in events})
-    return {**meta, "coverage": coverage, "events": events, "nearby_events": nearby, "cache": cache}
+    coverage.update({
+        "returned_events": len(events),
+        "returned_symbols": len({event.get("symbol") for event in events}),
+    })
+    fetched_at = meta.get("fetched_at") or meta.get("last_success_at")
+    stale = True
+    if fetched_at:
+        try:
+            observed = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+            stale = datetime.now(timezone.utc) - observed.astimezone(timezone.utc) > timedelta(hours=24)
+        except (TypeError, ValueError):
+            stale = True
+    data_quality = dict(meta.get("data_quality") or {})
+    data_quality.update({
+        "no_synthetic_data": True,
+        "as_of": fetched_at,
+        "stale": stale,
+        "partial": bool(coverage.get("partial", True)),
+    })
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "range": {"start": start.isoformat(), "end": end.isoformat()},
+        "events": events,
+        "nearby_events": nearby,
+        "conflicts": [],
+        "coverage": coverage,
+        "data_quality": data_quality,
+        "refresh": dict(_REFRESH_STATE),
+        "no_synthetic_data": True,
+        "source": meta.get("source") or "Calendar v2 verified cache",
+        "fetched_at": fetched_at,
+        "cache": "stale" if stale else "hit",
+    }
 
 
 def get_corporate_calendar(start: date, end: date, force_refresh: bool = False) -> Dict[str, Any]:
-    if end < start or (end - start).days > 62:
-        raise ValueError("Khoảng lịch phải từ 0 đến 62 ngày.")
-
-    # Warn if timezone is not set correctly
-    tz = _os.environ.get("TZ", "")
-    if tz != "Asia/Ho_Chi_Minh":
-        import sys
-        print(
-            f"[lpsec calendar] WARNING: TZ='{tz}' (expected 'Asia/Ho_Chi_Minh'). "
-            f"Date boundaries may be incorrect. Set TZ env var or set it in app.py.",
-            file=sys.stderr
-        )
-
-    today = _vietnam_today()
-    monday = today - timedelta(days=today.weekday())
-    window_start = min(start, monday - timedelta(days=14))
-    window_end = max(end, monday + timedelta(days=27))
-
+    if end < start or (end - start).days > MAX_QUERY_DAYS:
+        raise ValueError(f"Khoảng lịch phải từ 0 đến {MAX_QUERY_DAYS} ngày.")
     conn = _connection()
-    if conn is not None:
-        _seed_db_from_snapshot(conn)
+    events = _events_from_db(conn, start, end)
+    nearby = _nearby_from_db(conn, _vietnam_today())
+    meta = _latest_meta(conn)
+    total_v2 = conn.execute("SELECT COUNT(*) FROM corporate_events_v2").fetchone()[0]
+    conn.close()
 
-        if not force_refresh:
+    if force_refresh:
+        request_calendar_refresh(include_reports=True)
+    elif not meta or meta.get("data_quality", {}).get("stale"):
+        request_calendar_refresh(include_reports=not bool(total_v2))
+
+    # A fresh installation may have no last-known-good yet. Fetch only the
+    # paginated structured feed synchronously; the expensive report scan stays
+    # in the background.
+    if total_v2 == 0:
+        today = _vietnam_today()
+        try:
+            bootstrap = _fetch(today - timedelta(days=62), today + timedelta(days=365), include_reports=False)
+            _promote_snapshot(bootstrap)
+            conn = _connection()
             events = _events_from_db(conn, start, end)
-            row = conn.execute("SELECT payload FROM calendar_sync WHERE id=1").fetchone()
-            meta = json.loads(row["payload"]) if row else {}
             nearby = _nearby_from_db(conn, today)
+            meta = _latest_meta(conn)
             conn.close()
-            return _response(meta, events, nearby, "hit")
+        except Exception:
+            pass
+    return _response(start, end, events, nearby, meta)
 
-    # If force_refresh is explicitly requested, attempt live fetch with safety try-except
-    try:
-        snapshot = _fetch(window_start, window_end)
-        now = datetime.now(timezone.utc).isoformat()
-        source_ok = max(
-            int(snapshot.get("coverage", {}).get("action_sources_ok") or 0),
-            int(snapshot.get("coverage", {}).get("disclosure_sources_ok") or 0),
-        )
-        fetched_events_count = len(snapshot.get("events") or [])
 
-        if source_ok > 0 and fetched_events_count > 0:
-            fresh_conn = _connection()
-            if fresh_conn is not None:
-                fresh_conn.execute("DELETE FROM corporate_events")
-                for event in snapshot["events"]:
-                    fresh_conn.execute("INSERT OR REPLACE INTO corporate_events VALUES (?,?,?,?,?)", (
-                        event["id"], event["symbol"], event["event_date"], json.dumps(event, ensure_ascii=False), now,
-                    ))
-                meta = {key: value for key, value in snapshot.items() if key != "events"}
-                fresh_conn.execute("INSERT OR REPLACE INTO calendar_sync VALUES (1,?,?,?,?)", (
-                    "2020-01-01", "2030-12-31", json.dumps(meta, ensure_ascii=False), now,
-                ))
-                fresh_conn.commit()
-                events = _events_from_db(fresh_conn, start, end)
-                nearby = _nearby_from_db(fresh_conn, today)
-                fresh_conn.close()
-            else:
-                events = snapshot.get("events", [])
-                nearby = []
-
-            snapshot_export = {
-                **snapshot,
-                "window_start": window_start.isoformat(),
-                "window_end": window_end.isoformat(),
-            }
-            _save_snapshot(snapshot_export)
-
-            response = _response(meta, events, nearby, "refreshed")
-            response["retention"] = f"{window_start.isoformat()} đến {window_end.isoformat()}"
-            return response
-    except Exception as exc:
-        print(f"[lpsec calendar] Live fetch failed, falling back to snapshot: {exc}")
-
-    # Instant fallback to snapshot if live fetch fails or is slow
-    fallback_conn = _connection()
-    _seed_db_from_snapshot(fallback_conn, force=True)
-    events = _events_from_db(fallback_conn, start, end)
-    nearby = _nearby_from_db(fallback_conn, today)
-    if fallback_conn is not None:
-        fallback_conn.close()
-
-    now = datetime.now(timezone.utc).isoformat()
-    fallback_meta = {
-        "coverage": {
-            "mode": "cached_verified_events",
-            "confirmed_events": len(events),
-            "issuer_universe": len(DEFAULT_TOP_SYMBOLS),
-            "source_coverage_pct": 100.0,
-            "coverage_note": "Hiển thị dữ liệu sự kiện doanh nghiệp đã xác minh.",
-            "warning": "Dữ liệu được cập nhật từ snapshot mới nhất.",
+def fetch_price_affecting_actions(symbol: str, start: date, end: date) -> list[Dict[str, Any]]:
+    """Return observed price-affecting occurrences for Market Bubbles."""
+    symbol = str(symbol or "").upper().strip()
+    if not re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", symbol):
+        raise ValueError("Mã chứng khoán không hợp lệ")
+    body = _unwrap_data(_get_json(
+        f"{VCI_IQ}/v1/events",
+        params={
+            "ticker": symbol,
+            "fromDate": (start - timedelta(days=366)).strftime("%Y%m%d"),
+            "toDate": end.strftime("%Y%m%d"),
+            "eventCode": "DIV,ISS,AIS,LIST,DELIST,SUSP,HALT",
+            "page": 0,
+            "size": 200,
         },
-        "source": "Verified event snapshot",
-        "fetched_at": now,
-    }
-    return _response(fallback_meta, events, nearby, "fallback")
+        timeout=FETCH_TIMEOUT_SECONDS,
+    )) or {}
+    rows = body.get("content", []) if isinstance(body, dict) else []
+    accepted_types = {"cash_dividend", "stock_dividend", "capital_action", "listing_change", "trading_halt"}
+    events: list[Dict[str, Any]] = []
+    for raw in rows:
+        for event in _corporate_action_occurrences(_snake_case_row(raw), start, end):
+            if event.get("type") in accepted_types:
+                events.append(event)
+    return _deduplicate(events)

@@ -743,6 +743,11 @@ async function fetchStockData(symbol) {
     return;
   }
   hideError();
+
+  const welcomeState = document.getElementById('welcomeState');
+  if (welcomeState) welcomeState.style.display = 'none';
+  document.body.classList.remove('is-welcome-page');
+
   showLoading(true, `Đang tải dữ liệu cho mã ${sym}...`);
 
   try {
@@ -752,12 +757,16 @@ async function fetchStockData(symbol) {
     if (!res.ok) {
       const errorMsg = data.detail || `Bạn đã nhập sai mã cổ phiếu! Mã '${sym}' không tồn tại trên thị trường chứng khoán.`;
       showError(errorMsg);
+      if (welcomeState) welcomeState.style.display = 'flex';
+      document.body.classList.add('is-welcome-page');
       return;
     }
     
     renderDashboard(data);
   } catch (err) {
     showError(`Bạn đã nhập sai mã cổ phiếu! Mã '${sym}' không tồn tại trên thị trường chứng khoán Việt Nam.`);
+    if (welcomeState) welcomeState.style.display = 'flex';
+    document.body.classList.add('is-welcome-page');
   } finally {
     showLoading(false);
   }
@@ -894,22 +903,20 @@ async function refreshDnseRealtimePrice(symbol) {
     }
 
     if (data.status === 'live') {
-      setDnseRealtimeStatus('Nguồn: DNSE WebSocket realtime', 'live');
+      setDnseRealtimeStatus('Nguồn: Dữ liệu giao dịch khớp lệnh trực tiếp (DNSE)', 'live');
     } else if (data.status === 'rest_fallback') {
-      setDnseRealtimeStatus('Nguồn: DNSE latest trade (ngoài phiên/chưa có tick WS)', 'fallback');
+      setDnseRealtimeStatus('Nguồn: Giá khớp lệnh mới nhất (DNSE)', 'fallback');
     } else if (data.authenticated && data.subscribed) {
-      setDnseRealtimeStatus('DNSE WebSocket đã subscribe, đang chờ tick mới', 'fallback');
-    } else if (data.status === 'config_error') {
-      setDnseRealtimeStatus('DNSE chưa cấu hình API key/secret', 'error');
-    } else if (data.status === 'auth_error') {
-      setDnseRealtimeStatus('DNSE auth thất bại, kiểm tra API key/secret', 'error');
+      setDnseRealtimeStatus('Nguồn: Đang chờ phiên giao dịch tiếp theo', 'fallback');
+    } else if (data.status === 'config_error' || data.status === 'auth_error') {
+      setDnseRealtimeStatus('Nguồn: Dữ liệu giá thị trường mới nhất', 'fallback');
     } else {
-      setDnseRealtimeStatus(`DNSE WebSocket: ${data.status || 'chưa có dữ liệu'}`, 'neutral');
+      setDnseRealtimeStatus('Nguồn: Dữ liệu giao dịch DNSE', 'neutral');
     }
   } catch (err) {
     if (err.name === 'AbortError') return;
     console.warn('DNSE realtime error:', err);
-    setDnseRealtimeStatus('DNSE realtime tạm thời chưa khả dụng', 'error');
+    setDnseRealtimeStatus('Nguồn: Dữ liệu giá thị trường mới nhất', 'neutral');
   }
 }
 

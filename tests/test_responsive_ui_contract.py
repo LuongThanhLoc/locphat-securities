@@ -240,6 +240,36 @@ class ResponsiveUiContractTests(unittest.TestCase):
         self.assertIn("history_sessions", script)
         self.assertNotIn("fallback qua DNSE", script)
 
+    def test_calendar_v2_truth_personalisation_and_export_contract(self):
+        html = (STATIC / "calendar.html").read_text(encoding="utf-8")
+        script = (STATIC / "calendar.js").read_text(encoding="utf-8")
+        engine = (ROOT / "corporate_calendar_engine.py").read_text(encoding="utf-8")
+        methodology = (ROOT / "DATA_METHODOLOGY.md").read_text(encoding="utf-8")
+
+        self.assertIn('id="watchlistFilter"', html)
+        self.assertIn('id="verificationFilter"', html)
+        self.assertIn('id="eventDialog"', html)
+        self.assertIn('id="exportCalendar"', html)
+        self.assertIn("lps_personal_watchlist_v1", script)
+        self.assertIn("VALUE=DATE", script)
+        self.assertIn("calendar-dialog-open", script)
+        self.assertIn("event.key === 'Escape'", script)
+        self.assertIn("focusTarget.focus({ preventScroll: true })", script)
+        self.assertNotIn("T09:30:00", script)
+        self.assertNotIn("countdownSecs", script)
+        self.assertIn('"no_synthetic_data": True', engine)
+        self.assertIn('"provider_display"', engine)
+        self.assertIn("Hợp đồng dữ liệu Corporate Calendar", methodology)
+
+    def test_calendar_dialog_and_grid_follow_responsive_overlay_rules(self):
+        css = (STATIC / "calendar.css").read_text(encoding="utf-8")
+        self.assertIn("position:fixed", css)
+        self.assertIn("100dvh", css)
+        self.assertIn("env(safe-area-inset-top)", css)
+        self.assertIn("body.calendar-dialog-open", css)
+        self.assertIn("grid-template-columns:repeat(7,minmax(0,1fr))", css)
+        self.assertIn("width:clamp(20rem,72vi,48rem)", css)
+
 
 if __name__ == "__main__":
     unittest.main()

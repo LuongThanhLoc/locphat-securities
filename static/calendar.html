@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
-  <link rel="stylesheet" href="/static/calendar.css?v=20260805_mobile_card_v3">
+  <link rel="stylesheet" href="/static/calendar.css?v=20260809_calendar_v2">
   <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
 </head>
 <body class="lp-editorial lp-page-calendar">
@@ -19,119 +19,123 @@
       <div>
         <p class="eyebrow">THỊ TRƯỜNG VIỆT NAM</p>
         <h1>Lịch doanh nghiệp</h1>
-        <span>Ngày GDKHQ, ngày đăng ký cuối cùng, thanh toán cổ tức, ĐHĐCĐ và BCTC đã xác minh.</span>
+        <span>Các mốc sự kiện quan sát được từ nguồn công bố; thiếu dữ liệu được để trống, không dự đoán.</span>
+      </div>
+      <div class="calendar-heading-actions">
+        <button class="secondary-btn" id="exportCalendar" type="button" aria-label="Xuất lịch ICS">
+          <svg class="btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>Xuất lịch ICS</span>
+        </button>
+        <button class="refresh-icon-btn" id="refreshCalendar" type="button" aria-label="Làm mới dữ liệu" title="Làm mới dữ liệu">
+          <svg class="refresh-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21.5 2v6h-6"></path>
+            <path d="M2.5 22v-6h6"></path>
+            <path d="M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8"></path>
+            <path d="M22 12.5a10 10 0 0 1-18.8 4.3L2.5 16"></path>
+          </svg>
+          <span>Làm mới</span>
+        </button>
       </div>
     </header>
 
     <section class="calendar-kpis" aria-label="Tổng quan lịch">
-      <div><span>TRONG KHOẢNG</span><strong id="totalEvents">--</strong><small id="totalSymbols">-- mã</small></div>
-      <div><span>BCTC / KQKD</span><strong id="reportEvents">--</strong><small>Ngày công bố</small></div>
-      <div><span>CỔ TỨC</span><strong id="dividendEvents">--</strong><small>Ưu tiên GDKHQ</small></div>
-      <div><span>SẮP DIỄN RA</span><strong id="upcomingEvents">--</strong><small>Từ hôm nay</small></div>
+      <div><span>SẮP TỚI</span><strong id="upcomingEvents">--</strong><small id="upcomingWindow">Trong khoảng chọn</small></div>
+      <div><span>WATCHLIST</span><strong id="watchlistEvents">--</strong><small>Sự kiện mã đang theo dõi</small></div>
+      <div><span>ĐÃ ĐỐI CHIẾU</span><strong id="verifiedEvents">--</strong><small>Nguồn chính thức/đa nguồn</small></div>
+      <div><span>CẦN KIỂM TRA</span><strong id="reviewEvents">--</strong><small>Provider-only hoặc xung đột</small></div>
     </section>
 
-    <section class="countdown-banner" id="countdownBanner" style="display:none;">
-      <div class="countdown-title">Sự kiện tiếp theo trong</div>
-      <div class="countdown-display">
-        <span id="countdownDays">--</span><small>ngày</small>
-        <span id="countdownHours">--</span><small>giờ</small>
-        <span id="countdownMins">--</span><small>phút</small>
-        <span id="countdownSecs">--</span><small>giây</small>
-      </div>
-      <div class="countdown-event" id="countdownEvent"></div>
+    <section class="next-event-banner" id="nextEventBanner" hidden aria-live="polite">
+      <div><span>SỰ KIỆN TIẾP THEO</span><strong id="nextEventDistance"></strong></div>
+      <div id="nextEventSummary"></div>
     </section>
 
     <div class="calendar-toolbar">
       <nav class="date-tabs" id="dateTabs" aria-label="Khoảng thời gian">
-        <button data-range="prev">Tuần trước</button>
-        <button data-range="today">Hôm nay</button>
-        <button class="active" data-range="current">Tuần này</button>
-        <button data-range="next">Tuần sau</button>
-        <button data-range="forward">30 ngày tới</button>
+        <button data-range="today" type="button">Hôm nay</button>
+        <button data-range="current" type="button">Tuần này</button>
+        <button data-range="next" type="button">Tuần sau</button>
+        <button class="active" data-range="forward" type="button">30 ngày tới</button>
+        <button data-range="custom" type="button">Tùy chọn</button>
       </nav>
-
-      <div class="calendar-actions-bar">
-        <div class="view-segmented" id="viewSegmented" aria-label="Chế độ xem">
-          <button class="active" data-view="list" type="button" title="Dạng danh sách">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>
-            </svg>
-            <span>Danh sách</span>
-          </button>
-          <button data-view="grid" type="button" title="Dạng lưới lịch">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
-            </svg>
-            <span>Lịch</span>
-          </button>
-        </div>
-
-        <button class="refresh-icon-btn" id="refreshCalendar" type="button" title="Làm mới dữ liệu">
-          <svg class="refresh-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-          </svg>
-          <span class="btn-text">Làm mới</span>
-        </button>
+      <div class="view-segmented" id="viewSegmented" aria-label="Chế độ xem">
+        <button class="active" data-view="list" type="button" aria-pressed="true">Danh sách</button>
+        <button data-view="grid" type="button" aria-pressed="false">Lịch</button>
       </div>
     </div>
 
-    <section class="calendar-filter">
-      <div class="segmented" aria-label="Loại sự kiện">
-        <button class="active" data-type="all">Tất cả</button>
-        <button data-type="financial_report">BCTC</button>
-        <button data-type="cash_dividend">Cổ tức TM</button>
-        <button data-type="stock_dividend">Cổ tức CP</button>
-        <button data-type="shareholder_meeting_annual">ĐHĐCĐ</button>
-        <button data-type="capital_action">Phát hành</button>
-        <button data-type="listing_change">Niêm yết</button>
-      </div>
-      <label class="symbol-filter"><span>Tìm mã</span><input id="calendarSymbol" maxlength="6" autocomplete="off" placeholder="FPT, PNJ..."></label>
-      <div class="coverage" id="coverageText">Đang xác minh nguồn...</div>
+    <section class="custom-range" id="customRange" hidden aria-label="Khoảng ngày tùy chọn">
+      <label>Từ ngày <input id="customStart" type="date"></label>
+      <label>Đến ngày <input id="customEnd" type="date"></label>
+      <button id="applyCustomRange" type="button">Áp dụng</button>
     </section>
 
-    <!-- List View -->
+    <section class="calendar-filter" aria-label="Bộ lọc lịch">
+      <div class="filter-row filter-types" id="typeFilters" aria-label="Loại sự kiện">
+        <button class="active" data-type="all" type="button" aria-pressed="true">Tất cả</button>
+        <button data-type="financial" type="button" aria-pressed="false">BCTC / KQKD</button>
+        <button data-type="dividend" type="button" aria-pressed="false">Cổ tức</button>
+        <button data-type="meeting" type="button" aria-pressed="false">ĐHĐCĐ</button>
+        <button data-type="capital_action" type="button" aria-pressed="false">Phát hành</button>
+        <button data-type="listing_change" type="button" aria-pressed="false">Niêm yết</button>
+        <button data-type="trading_halt" type="button" aria-pressed="false">Tạm ngừng</button>
+      </div>
+      <div class="filter-row filter-fields">
+        <label class="symbol-filter"><span>Mã CK</span><input id="calendarSymbol" maxlength="6" autocomplete="off" placeholder="FPT"></label>
+        <label><span>Sàn</span><select id="exchangeFilter"><option value="all">Tất cả</option><option value="HOSE">HOSE</option><option value="HNX">HNX</option><option value="UPCOM">UPCoM</option></select></label>
+        <label><span>Xác minh</span><select id="verificationFilter"><option value="all">Tất cả</option><option value="verified">Đã đối chiếu</option><option value="provider_only">Một nguồn</option><option value="conflict">Xung đột</option></select></label>
+        <button class="watchlist-filter" id="watchlistFilter" type="button" aria-pressed="false">
+          <svg class="star-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+          <span>Chỉ mã theo dõi</span>
+        </button>
+        <button class="clear-filter" id="clearFilters" type="button"><span>Xóa lọc</span></button>
+      </div>
+      <div class="coverage" id="coverageText" role="status">Đang đọc độ phủ nguồn...</div>
+    </section>
+
+    <section class="data-quality-banner" id="dataQualityBanner" hidden></section>
+
     <section id="calendarList" class="calendar-list" aria-live="polite">
-      <div class="calendar-loading"><span></span><strong>Đang đối chiếu lịch doanh nghiệp...</strong></div>
+      <div class="calendar-loading"><span></span><strong>Đang đọc lịch doanh nghiệp...</strong></div>
     </section>
+    <button class="load-more-btn" id="loadMore" type="button" hidden>Xem thêm</button>
 
-    <!-- Calendar Grid View (hidden by default) -->
-    <section id="calendarGrid" class="calendar-grid" style="display:none;" aria-label="Lịch dạng lưới">
+    <section id="calendarGrid" class="calendar-grid" hidden aria-label="Lịch dạng lưới">
       <div class="calendar-month-header" id="calendarMonthHeader"></div>
-      <div class="calendar-weekdays">
-        <span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span>
-      </div>
-      <div class="calendar-days" id="calendarDays"></div>
+      <div class="calendar-weekdays" aria-hidden="true"><span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span></div>
+      <div class="calendar-days" id="calendarDays" role="grid"></div>
     </section>
 
     <div class="data-lineage" id="dataLineage">
-      <span>Nguồn dữ liệu đang tải</span>
-      <span>Ngày sự kiện và ngày công bố được tách riêng</span>
+      <span>Nguồn dữ liệu đang tải</span><span>Không dùng dữ liệu tổng hợp</span>
     </div>
-
-    <!-- Event Type Legend -->
-    <section class="event-legend">
-      <span class="legend-item"><span class="legend-dot cash-div"></span>Cổ tức tiền mặt</span>
-      <span class="legend-item"><span class="legend-dot stock-div"></span>Cổ tức cổ phiếu</span>
-      <span class="legend-item"><span class="legend-dot meeting"></span>ĐHĐCĐ thường niên</span>
-      <span class="legend-item"><span class="legend-dot meeting-egm"></span>ĐHĐCĐ bất thường</span>
-      <span class="legend-item"><span class="legend-dot capital"></span>Phát hành</span>
-      <span class="legend-item"><span class="legend-dot listing"></span>Niêm yết/Hủy NY</span>
-      <span class="legend-item"><span class="legend-dot report"></span>BCTC</span>
-      <span class="legend-item"><span class="legend-dot halt"></span>Tạm ngừng</span>
-    </section>
-
     <footer class="calendar-note">
-      <strong>Quy ước:</strong> cổ tức dùng ngày GDKHQ khi có; ĐHĐCĐ dùng ngày họp; BCTC dùng ngày công bố. Hệ thống không tự dự đoán lịch chưa xác nhận.
+      <strong>Quy ước dữ liệu:</strong> mỗi mốc ngày giữ đúng vai trò nguồn cung cấp. “Ngày theo nguồn” nghĩa là nguồn chưa định danh đây là GDKHQ, ĐKCC hay ngày thực hiện.
     </footer>
   </main>
-  
-  <button id="scrollToTopBtn" class="scroll-to-top-btn" type="button" aria-label="Cuộn lên đầu trang" title="Cuộn lên đầu trang">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 19V5M5 12l7-7 7 7"/>
-    </svg>
-  </button>
 
+  <div class="event-dialog" id="eventDialog" hidden aria-hidden="true">
+    <div class="event-dialog-backdrop" data-close-dialog></div>
+    <section class="event-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="eventDialogTitle">
+      <header>
+        <div><span id="eventDialogEyebrow"></span><h2 id="eventDialogTitle">Chi tiết sự kiện</h2></div>
+        <button class="dialog-close" id="eventDialogClose" type="button" aria-label="Đóng chi tiết sự kiện">×</button>
+      </header>
+      <div class="event-dialog-content" id="eventDialogContent"></div>
+      <footer><button id="exportSingleEvent" type="button">Thêm vào lịch</button><button data-close-dialog type="button">Đóng</button></footer>
+    </section>
+  </div>
+
+  <button id="scrollToTopBtn" class="scroll-to-top-btn" type="button" aria-label="Cuộn lên đầu trang" title="Cuộn lên đầu trang">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
   <script src="/static/site-nav.js?v=20260809_market_visuals_v1"></script>
-  <script src="/static/calendar.js?v=20260806_no_rsi_v2"></script>
+  <script src="/static/calendar.js?v=20260809_calendar_v2"></script>
 </body>
 </html>

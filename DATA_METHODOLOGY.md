@@ -51,3 +51,15 @@ Hồ sơ công bố được bổ sung có kiểm duyệt trong `COMPANY_DISCLOS
 - Bản PostgreSQL tốt gần nhất chỉ được phục vụ tối đa ba phiên benchmark và phải gắn trạng thái `stale_valid`.
 - Dataset chỉ được trả khi coverage của mã đủ chuẩn bằng 100%; nếu không, API trả `503 data_incomplete`.
 - Khởi tạo/backfill bằng `python rrg_sync.py backfill`; kiểm tra độ phủ bằng `python rrg_sync.py audit` sau khi cấu hình `DATABASE_URL`.
+
+## Hợp đồng dữ liệu Corporate Calendar
+
+- Calendar chỉ hiển thị dữ kiện quan sát được từ nguồn. Trường thiếu phải là `null`/`N/A`; không thay bằng 0, không dùng AI hoặc heuristic để tạo ngày, giờ, tỷ lệ hay địa điểm.
+- Ngày công bố, ngày GDKHQ, ngày đăng ký cuối cùng, ngày thanh toán, ngày họp, ngày phát hành và ngày giao dịch đầu tiên là các occurrence độc lập. Không đổi tên một loại ngày thành loại khác để lấp dữ liệu.
+- `displayDate` của nhà cung cấp chỉ được gắn vai trò `provider_display`/“Ngày theo nguồn” khi không có trường ngày mang ngữ nghĩa rõ ràng. Nó không mặc nhiên là GDKHQ hoặc ngày họp.
+- Chỉ gắn giờ khi nguồn trả timestamp có giờ. Sự kiện chỉ có ngày phải xuất ICS dạng all-day bằng `VALUE=DATE`.
+- Công bố BCTC/KQKD dùng whitelist xác định và phải gắn được mã chứng khoán từ trường ticker hoặc tiền tố tiêu đề. Tin không khớp phải bị loại và được tính trong `rejected_items`, không được mặc định thành BCTC.
+- Mỗi occurrence phải có evidence gồm nguồn, cấp nguồn, raw ID, URL chứng từ nếu có, thời điểm công bố và thời điểm quan sát. Không có URL chứng từ thì không được gắn `source_verified=true`.
+- Nguồn chính thức của VSDC/HOSE/HNX/SSC hoặc doanh nghiệp được ưu tiên hơn nguồn tổng hợp. Bất đồng cùng cấp phải gắn `conflict`, liệt kê trường bất đồng và không chọn giá trị âm thầm.
+- Coverage là số mã/trang/nguồn đã quét thành công, không phải tuyên bố dữ liệu đầy đủ tuyệt đối. Cache cũ hoặc partial phải hiển thị `stale`/`partial` cùng thời điểm last-known-good.
+- Refresh không được xóa last-known-good khi nguồn lỗi hoặc trả thiếu trang. Dataset mới chỉ được promote sau khi vượt qua kiểm tra schema, pagination và data-quality gate.
