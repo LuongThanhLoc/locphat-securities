@@ -12,6 +12,7 @@ PAGES = (
     "heatmap.html",
     "rrg.html",
     "backtest.html",
+    "bubbles.html",
 )
 
 
@@ -82,7 +83,7 @@ class ResponsiveUiContractTests(unittest.TestCase):
         html_pages = [(name, (STATIC / name).read_text(encoding="utf-8")) for name in PAGES]
         scripts = "\n".join(
             (STATIC / name).read_text(encoding="utf-8")
-            for name in ("app.js", "backtest.js", "rrg.js", "heatmap.js")
+            for name in ("app.js", "backtest.js", "rrg.js", "heatmap.js", "bubbles.js")
         )
 
         for page_name, html in html_pages:
@@ -128,6 +129,71 @@ class ResponsiveUiContractTests(unittest.TestCase):
     def test_business_api_contracts_are_not_redeclared_in_presentation_layer(self):
         css = (STATIC / "editorial.css").read_text(encoding="utf-8")
         self.assertIsNone(re.search(r"/api/", css))
+
+    def test_market_bubbles_navigation_canvas_and_responsive_contract(self):
+        html = (STATIC / "bubbles.html").read_text(encoding="utf-8")
+        script = (STATIC / "bubbles.js").read_text(encoding="utf-8")
+        css = (STATIC / "bubbles.css").read_text(encoding="utf-8")
+        nav = (STATIC / "site-nav.js").read_text(encoding="utf-8")
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("Trực quan thị trường", nav)
+        self.assertIn("Bong bóng thị trường", nav)
+        self.assertIn("path.startsWith('/bubbles')", nav)
+        self.assertIn('@app.get("/bubbles"', app)
+        self.assertIn('@app.get("/api/market-bubbles/data"', app)
+        self.assertIn('id="bubbleCanvas"', html)
+        self.assertIn('id="bubbleTooltip"', html)
+        self.assertNotIn('id="bubbleAccessibleList"', html)
+        self.assertIn('id="bubbleRankPage"', html)
+        self.assertIn('id="bubbleQuickView"', html)
+        self.assertIn('id="bubbleQuickCta"', html)
+        self.assertIn('<span>Khung thời gian</span>', html)
+        self.assertIn('id="bubbleEvidenceCurrent"', html)
+        self.assertIn('id="bubbleEvidenceHistory"', html)
+        self.assertIn('id="bubbleMethodContent"', html)
+        self.assertIn('Nguồn &amp; phương pháp', html)
+        self.assertIn("d3.forceCollide", script)
+        self.assertIn("d3.scaleLog", script)
+        self.assertIn("pageSizeForWidth", script)
+        self.assertIn("width <= 359", script)
+        self.assertIn("width <= 767", script)
+        self.assertIn("width <= 1023", script)
+        self.assertIn("width <= 1535", script)
+        for page_size in (50, 70, 90, 110, 140):
+            self.assertIn(f"return {page_size}", script)
+        self.assertIn("* .52", script)
+        self.assertIn(".velocityDecay(.58)", script)
+        self.assertIn("initialAlpha = .28", script)
+        self.assertIn(".alpha(initialAlpha)", script)
+        self.assertIn(".alpha(.06).restart()", script)
+        self.assertIn(".alphaTarget(.02)", script)
+        self.assertIn("distributedHome", script)
+        self.assertIn("gentleDriftForce", script)
+        self.assertIn(".alphaTarget(state.reducedMotion ? 0 : .012)", script)
+        self.assertIn("item.is_vn30", script)
+        self.assertIn('<option value="VN30">VN30</option>', script)
+        self.assertNotIn(".velocityDecay(.32)", script)
+        self.assertIn("live ? 5000 : 60000", script)
+        self.assertIn("applyRealtimePayload(payload)", script)
+        self.assertIn("Minh chứng phép tính", script)
+        self.assertIn("calculationText(node)", script)
+        self.assertIn("no_synthetic_data", (ROOT / "market_bubble_engine.py").read_text(encoding="utf-8"))
+        self.assertNotIn("addEventListener('wheel'", script)
+        self.assertNotIn("drawImage", script)
+        self.assertNotIn("logoFor", script)
+        self.assertNotIn("pulseAt", script)
+        self.assertNotIn("screenRadius", script)
+        self.assertIn("openQuickView(pointer.node, canvas)", script)
+        self.assertIn("document.body.classList.add('bubble-dialog-open')", script)
+        self.assertIn("trapDialogFocus", script)
+        self.assertIn("requestFullscreen", script)
+        self.assertIn("prefers-reduced-motion", script)
+        self.assertIn("100dvh", css)
+        self.assertIn("env(safe-area-inset-top)", css)
+        self.assertIn("z-index: 100150", css)
+        self.assertIn("z-index: 100250", css)
+        self.assertIn("body.bubble-dialog-open", css)
 
     def test_lp_rrg_sort_radar_and_pin_contract_is_wired(self):
         html = (STATIC / "rrg.html").read_text(encoding="utf-8")

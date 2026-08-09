@@ -7,6 +7,8 @@ __pycache__/
 *.tmp
 .env
 *.db
+*.db-shm
+*.db-wal
 .dbg/
 image.png
 .kombai/

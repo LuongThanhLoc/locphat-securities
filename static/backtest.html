@@ -91,7 +91,7 @@
 
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-    input:focus, select:focus { outline: none; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3); }
+    input:focus, select:focus, textarea:focus { outline: none !important; box-shadow: none !important; border-color: rgba(51, 65, 85, 0.8) !important; }
     .summary-card { transition: transform 0.15s ease, box-shadow 0.15s ease; }
     .summary-card:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
 
@@ -545,7 +545,7 @@
   </div>
 
   <!-- Site Navigation Script -->
-  <script src="/static/site-nav.js?v=20260808_light_v2"></script>
+  <script src="/static/site-nav.js?v=20260809_market_visuals_v1"></script>
 
   <!-- Backtest Page Script -->
   <script src="/static/backtest.js?v=20260808_rsi_advanced_help_v9"></script>

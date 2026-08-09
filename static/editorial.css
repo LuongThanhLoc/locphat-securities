@@ -193,12 +193,28 @@ body.lp-editorial {
   font-size: 12px;
   font-weight: 650;
 }
+.lp-editorial .lp-dropdown-toggle .lp-caret {
+  color: var(--lp-ink-soft);
+}
 .lp-editorial .lp-nav-link:hover,
-.lp-editorial .lp-nav-link.active {
+.lp-editorial .lp-nav-dropdown:hover > .lp-dropdown-toggle {
+  color: var(--lp-navy);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.lp-editorial .lp-nav-dropdown:hover > .lp-dropdown-toggle .lp-caret {
+  color: var(--lp-navy);
+}
+.lp-editorial .lp-nav-link.active,
+.lp-editorial .lp-nav-dropdown.active > .lp-dropdown-toggle {
   color: var(--lp-navy);
   background: transparent;
   border-color: transparent;
   box-shadow: inset 0 -2px var(--lp-navy);
+}
+.lp-editorial .lp-nav-dropdown.active > .lp-dropdown-toggle .lp-caret {
+  color: var(--lp-navy);
 }
 .lp-editorial .lp-nav-pill-badge {
   background: var(--lp-positive);
@@ -1013,6 +1029,7 @@ body.lp-editorial {
 .lp-page-heatmap .summary-grid {
   background: var(--lp-paper-strong);
   border-color: var(--lp-line);
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(230px, 1.25fr);
 }
 .lp-page-heatmap .summary-item {
   min-height: 98px;
@@ -1026,7 +1043,46 @@ body.lp-editorial {
   font-size: clamp(1.45rem, 2vw, 2.3rem);
 }
 .lp-page-heatmap .summary-score strong { color: var(--lp-warning); }
-.lp-page-heatmap .market-counts span { background: var(--lp-paper-muted); }
+.lp-page-heatmap .market-counts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  padding: 6px 8px;
+  align-content: center;
+}
+.lp-page-heatmap .market-counts span {
+  background: var(--lp-paper-muted);
+  border: 1px solid var(--lp-line-soft);
+  border-radius: 6px;
+  height: 38px;
+  padding: 3px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+.lp-page-heatmap .market-counts span b {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin: 0;
+  padding: 0;
+  display: block;
+}
+.lp-page-heatmap .market-counts span small {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--lp-muted);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  display: block;
+}
 .lp-page-heatmap .controlbar {
   min-height: 64px;
   padding: 10px;
@@ -2972,3 +3028,21 @@ body.lp-editorial {
   .lp-page-calendar .calendar-shell,
   .lp-page-rrg > main { width: 100% !important; max-width: none !important; }
 }
+
+/* Remove outer focus ring / box-shadow for all in-page module inputs and selects (excluding nav header search) */
+:not(.lp-search-head) > input:focus,
+:not(.lp-search-head) > input:focus-visible,
+:not(.lp-search-head) > select:focus,
+:not(.lp-search-head) > select:focus-visible,
+:not(.lp-search-head) > textarea:focus,
+:not(.lp-search-head) > textarea:focus-visible,
+.lp-editorial :not(.lp-search-head) input:focus,
+.lp-editorial :not(.lp-search-head) input:focus-visible,
+.lp-editorial :not(.lp-search-head) select:focus,
+.lp-editorial :not(.lp-search-head) select:focus-visible,
+.lp-editorial :not(.lp-search-head) textarea:focus,
+.lp-editorial :not(.lp-search-head) textarea:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+

@@ -118,12 +118,14 @@
   white-space: nowrap !important;
   transition: all 0.18s ease;
 }
-.lp-nav-link:hover {
+.lp-nav-link:hover,
+.lp-nav-dropdown:hover > .lp-dropdown-toggle {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.08);
 }
-.lp-nav-link.active {
+.lp-nav-link.active,
+.lp-nav-dropdown.active > .lp-dropdown-toggle {
   color: #ffffff;
   background: linear-gradient(135deg, rgba(34, 201, 151, 0.18) 0%, rgba(16, 185, 129, 0.1) 100%);
   border-color: rgba(34, 201, 151, 0.4);

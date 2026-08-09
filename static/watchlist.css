@@ -176,8 +176,10 @@ img {
   outline: none;
   border-radius: 4px;
 }
-.symbol-filter input:focus {
+.symbol-filter input:focus, .symbol-filter input:focus-visible {
   border-color: #2acb9b;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .wl-add-btn {

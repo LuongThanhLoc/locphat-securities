@@ -124,6 +124,13 @@ def read_heatmap():
         return FileResponse(heatmap_path, headers=_cache_busting_headers_for_file(heatmap_path))
     raise HTTPException(status_code=404, detail="Trang Bản Đồ Nhiệt chưa sẵn sàng")
 
+@app.get("/bubbles", response_class=HTMLResponse)
+def read_market_bubbles():
+    bubbles_path = os.path.join(static_dir, "bubbles.html")
+    if os.path.exists(bubbles_path):
+        return FileResponse(bubbles_path, headers=_cache_busting_headers_for_file(bubbles_path))
+    raise HTTPException(status_code=404, detail="Trang Bong Bóng Thị Trường chưa sẵn sàng")
+
 @app.get("/stock/{symbol}", response_class=HTMLResponse)
 def read_stock(symbol: str):
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,5}", symbol):
@@ -524,6 +531,23 @@ def get_heatmap_data(response: Response, refresh: bool = False):
         return fetch_market_heatmap_data(force_refresh=refresh)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi lấy dữ liệu bản đồ nhiệt: {str(e)}")
+
+
+@app.get("/api/market-bubbles/data")
+def get_market_bubbles_data(response: Response, range: str = "1D", refresh: bool = False):
+    """Return the deduplicated, active common-stock bubble universe."""
+    from market_bubble_engine import build_market_bubble_dataset
+
+    try:
+        response.headers["Cache-Control"] = "no-store"
+        return build_market_bubble_dataset(range, force_refresh=refresh)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Dữ liệu bong bóng thị trường tạm thời chưa sẵn sàng: {exc}",
+        ) from exc
 
 
 def _summarize_intraday_for_timeline(payload: Dict[str, Any]) -> Dict[str, Any]:

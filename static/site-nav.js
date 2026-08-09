@@ -72,10 +72,23 @@ if (!window.handleLogoFallback) {
         description: 'Phân tích và tra cứu cổ phiếu',
       },
       {
-        key: 'heatmap',
-        href: '/heatmap',
-        label: 'Bản đồ nhiệt',
-        description: 'Theo dõi sức mạnh toàn thị trường',
+        key: 'visual-market',
+        label: 'Trực quan thị trường',
+        isDropdown: true,
+        children: [
+          {
+            key: 'heatmap',
+            href: '/heatmap',
+            label: 'Bản đồ nhiệt',
+            description: 'Theo dõi sức mạnh toàn thị trường',
+          },
+          {
+            key: 'bubbles',
+            href: '/bubbles',
+            label: 'Bong bóng thị trường',
+            description: 'Quan sát biến động cổ phiếu dạng bong bóng',
+          },
+        ],
       },
       {
         key: 'calendar',
@@ -113,6 +126,7 @@ if (!window.handleLogoFallback) {
     const path = location.pathname.toLowerCase().replace(/\/$/, '') || '/';
     const active = path.startsWith('/stock') ? 'home'
       : path.startsWith('/heatmap') ? 'heatmap'
+      : path.startsWith('/bubbles') ? 'bubbles'
       : path.startsWith('/backtest') ? 'backtest'
       : path.startsWith('/rrg') ? 'rrg'
       : path.startsWith('/calendar') ? 'calendar'
