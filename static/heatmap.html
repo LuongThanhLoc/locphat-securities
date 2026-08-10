@@ -116,8 +116,8 @@
         </select>
       </label>
       <label class="field-control sector-control">
-        <span>Ngành</span>
-        <select id="sectorFilter"><option value="ALL">Tất cả ngành</option></select>
+        <span>Ngành / chỉ số</span>
+        <select id="sectorFilter"><option value="ALL">Tất cả ngành / chỉ số</option></select>
       </label>
       <label class="toggle-control">
         <input id="activeOnly" type="checkbox">
@@ -239,17 +239,19 @@
 
   <dialog class="method-dialog" id="methodDialog">
     <div class="method-dialog-body">
-      <header><h2>Phương pháp Market Radar 3.2</h2><button class="icon-button" id="closeMethodDialog"><i data-lucide="x"></i></button></header>
+      <header><h2>Phương pháp Market Radar 4.0</h2><button class="icon-button" id="closeMethodDialog"><i data-lucide="x"></i></button></header>
       <dl>
         <div><dt>Nhiệt thị trường</dt><dd>38% độ rộng, 22% biến động theo vốn hóa, 18% tỷ lệ mã có giao dịch, 8% độ phân tán thanh khoản và 14% độ ổn định độ rộng.</dd></div>
         <div><dt>Điểm dòng tiền cổ phiếu</dt><dd>24% biến động giá + 14% thanh khoản + 8% xác nhận khối lượng-giá + 6% vị trí trong range.</dd></div>
         <div><dt>Điểm dòng tiền ngành</dt><dd>6% biến động + 22% độ rộng + 8% tỷ lệ giao dịch + 6% thanh khoản tương đối + 8% độ ổn định độ rộng + 6% phân bổ dòng tiền.</dd></div>
+        <div><dt>Diện tích khi GTGD bằng 0</dt><dd>Nếu cả nhóm chưa giao dịch, các mã được chia đều. Nếu nhóm trộn mã đã và chưa giao dịch, 10% diện tích dành cho các mã GTGD bằng 0; 90% còn lại phân bổ theo GTGD thực tế. Đây chỉ là diện tích hiển thị tối thiểu, không thay đổi số liệu.</dd></div>
+        <div><dt>Thành viên đa ngành</dt><dd>Toàn thị trường vẽ mỗi mã một lần tại ngành chính. Khi chọn riêng một ngành, bộ lọc dùng toàn bộ ngành mà mã đó thuộc về; thống kê Ngành dẫn dắt cũng dùng membership đầy đủ.</dd></div>
         <div><dt>Giới hạn</dt><dd>Heatmap là ảnh chụp một phiên. Không thể suy ra chắc chắn giao dịch tổ chức, catalyst hay xu hướng nhiều phiên nếu chưa có dữ liệu tương ứng.</dd></div>
       </dl>
     </div>
   </dialog>
 
   <script src="/static/site-nav.js?v=20260809_market_visuals_v1"></script>
-  <script src="/static/heatmap.js?v=20260808_quant_v4" defer></script>
+  <script src="/static/heatmap.js?v=20260810_schema_v9" defer></script>
 </body>
 </html>

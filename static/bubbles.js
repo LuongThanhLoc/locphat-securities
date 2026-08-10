@@ -42,7 +42,14 @@
     CORPORATE_ACTION_SOURCE_ERROR: 'Nguồn sự kiện doanh nghiệp không khả dụng',
     CORPORATE_ACTION_UNVERIFIED: 'Có sự kiện doanh nghiệp chưa xác minh',
     INVALID_SESSION_REFERENCE: 'Thiếu giá tham chiếu cùng snapshot',
+    SESSION_NOT_STARTED: 'Phiên mới chưa bắt đầu',
   }[status] || status || 'Chưa xác minh');
+  const sessionLabel = (phase) => ({
+    PRE_OPEN: 'Chờ mở cửa', ATO: 'Phiên ATO', CONTINUOUS: 'Khớp lệnh liên tục',
+    MORNING: 'Phiên sáng', LUNCH_BREAK: 'Nghỉ trưa', AFTERNOON: 'Phiên chiều',
+    ATC: 'Phiên ATC', POST_CLOSE_TRADING: 'Giao dịch sau giờ',
+    CLOSED: 'Thị trường đóng cửa', WEEKEND: 'Nghỉ cuối tuần', HOLIDAY: 'Nghỉ lễ',
+  }[phase] || 'Trạng thái chưa xác định');
   const basisLabel = (basis) => basis === 'SESSION_REFERENCE'
     ? 'Giá khớp / tham chiếu cùng phiên'
     : basis === 'SOURCE_REPORTED_OHLC' ? 'OHLC do nguồn công bố · giá mở cửa phiên mốc' : 'Chưa xác định';
@@ -61,6 +68,51 @@
     return 140;
   };
   const metricLabel = () => state.sizeMetric === 'trading_value' ? 'Giá trị giao dịch' : 'Vốn hóa';
+  const itemSectorNames = (item) => {
+    const names = (item.sector_memberships || []).map((membership) => (
+      typeof membership === 'string' ? membership : membership?.sector || membership?.name
+    )).filter(Boolean);
+    if (!names.length && item.sector) names.push(item.sector);
+    return [...new Set(names)];
+  };
+  const normalizedGroupKey = (value) => {
+    if (!value || value === 'ALL') return 'ALL';
+    if (value === 'VN30') return 'INDEX:VN30';
+    if (value.startsWith('INDEX:') || value.startsWith('SECTOR:')) return value;
+    return `SECTOR:${value}`;
+  };
+  const itemMatchesGroup = (item, groupKey) => {
+    const key = normalizedGroupKey(groupKey);
+    if (key === 'ALL') return true;
+    if (key === 'INDEX:VN30') return Boolean(item.is_vn30 || (item.index_memberships || []).includes('VN30'));
+    if (key.startsWith('SECTOR:')) return itemSectorNames(item).includes(key.slice('SECTOR:'.length));
+    return false;
+  };
+  const fallbackFilterGroups = (data) => {
+    const items = data.items || [];
+    const sectors = new Map();
+    items.forEach((item) => itemSectorNames(item).forEach((name) => {
+      const counts = sectors.get(name) || { total_count: 0, active_count: 0 };
+      counts.total_count += 1; counts.active_count += Number(Boolean(item.is_active)); sectors.set(name, counts);
+    }));
+    const vn30Items = items.filter((item) => itemMatchesGroup(item, 'INDEX:VN30'));
+    return [{
+      key: 'ALL', type: 'all', label: 'Tất cả ngành / chỉ số', total_count: items.length,
+      active_count: items.filter((item) => item.is_active).length, enabled: items.length > 0,
+    }, {
+      key: 'INDEX:VN30', type: 'index', label: 'VN30', total_count: vn30Items.length,
+      active_count: vn30Items.filter((item) => item.is_active).length, enabled: vn30Items.length > 0,
+      stale: Boolean(data.indices?.VN30?.stale),
+    }, ...[...sectors.entries()].map(([name, counts]) => ({
+      key: `SECTOR:${name}`, type: 'sector', label: name, ...counts, enabled: true,
+    }))];
+  };
+  const filterGroups = (data = currentDataset()) => Array.isArray(data?.filter_groups)
+    ? data.filter_groups : fallbackFilterGroups(data || { items: [] });
+  const groupLabel = (key, data = currentDataset()) => (
+    filterGroups(data).find((group) => group.key === normalizedGroupKey(key))?.label
+    || (normalizedGroupKey(key).startsWith('SECTOR:') ? normalizedGroupKey(key).slice(7) : 'Toàn thị trường')
+  );
   const distributedHome = (index, total, width, height, radius = 0) => {
     const padding = Math.max(12, radius + 4);
     const usableWidth = Math.max(1, width - padding * 2);
@@ -121,10 +173,9 @@
     const query = state.query.trim().toUpperCase();
     return data.items.filter((item) => {
       if (state.exchange !== 'ALL' && item.exchange !== state.exchange) return false;
-      if (state.sector === 'VN30' && !item.is_vn30) return false;
-      if (state.sector !== 'ALL' && state.sector !== 'VN30' && item.sector !== state.sector) return false;
+      if (!itemMatchesGroup(item, state.sector)) return false;
       if (query && !item.symbol.includes(query) && !String(item.name || '').toUpperCase().includes(query)) return false;
-      return Number(item[state.sizeMetric] || 0) > 0;
+      return true;
     });
   }
 
@@ -152,24 +203,37 @@
     state.pageIndex = clamp(state.pageIndex, 0, pageCount - 1);
     const pageStart = state.pageIndex * state.pageSize;
     state.filtered = state.ranked.slice(pageStart, pageStart + state.pageSize);
-    const metrics = state.filtered.map((item) => Number(item[state.sizeMetric] || 0)).filter((value) => value > 0);
+    const metricValues = state.filtered.map((item) => Math.max(0, Number(item[state.sizeMetric] || 0)));
+    const metrics = metricValues.filter((value) => value > 0);
     const minMetric = d3.min(metrics) || 1;
-    const maxMetric = d3.max(metrics) || minMetric + 1;
+    const maxMetric = d3.max(metrics) || minMetric;
     const shortSide = Math.min(state.width || 800, state.height || 600);
     const minRadius = innerWidth <= 767 ? 6 : 8;
     const maxRadius = Math.max(minRadius, shortSide * .22);
     const logMin = Math.log(Math.max(1, minMetric));
     const logSpread = Math.max(.001, Math.log(Math.max(minMetric * 1.01, maxMetric)) - logMin);
-    const rawRadii = metrics.map((metric) => 1 + 2.6 * clamp((Math.log(Math.max(1, metric)) - logMin) / logSpread, 0, 1));
+    const rawRadii = metricValues.map((metric) => metric > 0
+      ? 1 + 2.6 * clamp((Math.log(Math.max(1, metric)) - logMin) / logSpread, 0, 1)
+      : .65);
     const rawArea = rawRadii.reduce((sum, radius) => sum + Math.PI * radius * radius, 0) || 1;
     const areaScale = Math.sqrt(((state.width || 800) * (state.height || 600) * .52) / rawArea);
     const radius = d3.scaleLog().domain([minMetric, Math.max(minMetric * 1.01, maxMetric)]).range([areaScale, areaScale * 3.6]).clamp(true);
+    const equalRadius = clamp(Math.sqrt(
+      ((state.width || 800) * (state.height || 600) * .52)
+      / (Math.max(1, state.filtered.length) * Math.PI)
+    ), minRadius, maxRadius);
+    const radiusFor = (value) => {
+      if (!metrics.length) return equalRadius;
+      if (value <= 0) return minRadius;
+      return clamp(radius(value), minRadius, maxRadius);
+    };
     state.nodes = state.filtered.map((item, index) => {
       const old = previous.get(item.symbol);
-      const home = distributedHome(index, state.filtered.length, state.width, state.height, clamp(radius(Math.max(minMetric, Number(item[state.sizeMetric] || 0))), minRadius, maxRadius));
+      const itemRadius = radiusFor(Math.max(0, Number(item[state.sizeMetric] || 0)));
+      const home = distributedHome(index, state.filtered.length, state.width, state.height, itemRadius);
       return {
         ...item,
-        r: clamp(radius(Math.max(minMetric, Number(item[state.sizeMetric] || 0))), minRadius, maxRadius),
+        r: itemRadius,
         ...home,
         driftSeed: [...String(item.symbol)].reduce((sum, char) => sum + char.charCodeAt(0), 0) * .173,
         x: old?.x ?? home.homeX,
@@ -201,17 +265,30 @@
         }
         draw();
       });
-    $('bubbleEmpty').hidden = state.nodes.length > 0;
+    const empty = $('bubbleEmpty');
+    empty.hidden = state.nodes.length > 0;
+    if (!state.nodes.length) {
+      const details = [state.exchange !== 'ALL' ? `sàn ${state.exchange}` : '', state.query ? `từ khóa “${state.query.trim()}”` : ''].filter(Boolean);
+      empty.textContent = `Không có mã thuộc ${groupLabel(state.sector)}${details.length ? ` phù hợp với ${details.join(' và ')}` : ''}.`;
+    }
     const rankEnd = Math.min(state.totalFiltered, pageStart + state.filtered.length);
-    $('bubbleRankSummary').textContent = state.totalFiltered ? `Hạng ${(pageStart + 1).toLocaleString('vi-VN')}–${rankEnd.toLocaleString('vi-VN')} theo ${metricLabel()}` : `Không có hạng theo ${metricLabel()}`;
+    const equalSize = state.totalFiltered > 0 && state.ranked.every((item) => Number(item[state.sizeMetric] || 0) <= 0);
+    $('bubbleRankSummary').textContent = equalSize
+      ? `Chưa phát sinh ${metricLabel().toLocaleLowerCase('vi-VN')} · kích thước chia đều`
+      : state.totalFiltered ? `Hạng ${(pageStart + 1).toLocaleString('vi-VN')}–${rankEnd.toLocaleString('vi-VN')} theo ${metricLabel()}` : `Không có hạng theo ${metricLabel()}`;
     $('bubbleCount').textContent = `${state.nodes.length.toLocaleString('vi-VN')}/${state.totalFiltered.toLocaleString('vi-VN')} mã`;
-    $('bubbleBoardTitle').textContent = `${state.sector === 'ALL' ? 'Toàn thị trường' : state.sector} · ${state.range}`;
+    $('bubbleBoardTitle').textContent = `${groupLabel(state.sector)} · ${state.range}`;
     renderRankPages();
     draw();
   }
 
   function renderRankPages() {
     const select = $('bubbleRankPage');
+    if (!state.totalFiltered) {
+      select.innerHTML = '<option value="0">Không có mã</option>';
+      select.value = '0'; select.disabled = true;
+      return;
+    }
     const pageCount = Math.max(1, Math.ceil(state.totalFiltered / state.pageSize));
     select.innerHTML = Array.from({ length: pageCount }, (_, index) => {
       const start = index * state.pageSize + 1;
@@ -325,6 +402,7 @@
 
   function calculationText(node) {
     if (!isVerified(node)) return node.reason_message || statusLabel(node.reason_code || node.calculation_status);
+    if (node.session_reset) return 'Phiên mới chưa bắt đầu; biến động, khối lượng và giá trị giao dịch được đặt về 0.';
     if (node.reference_price_field === 'open') {
       return `(${formatPrice(node.last_price)} − ${formatPrice(node.anchor_open)}) / |${formatPrice(node.anchor_open)}| = ${signed(node.change_pct)}`;
     }
@@ -446,9 +524,18 @@
 
   function populateSectors(data) {
     const select = $('bubbleSector'); const current = state.sector;
-    const sectors = [...new Set(data.items.map((item) => item.sector).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
-    select.innerHTML = '<option value="ALL">Tất cả ngành</option><option value="VN30">VN30</option>' + sectors.map((sector) => `<option value="${esc(sector)}">${esc(sector)}</option>`).join('');
-    if (current === 'VN30' || sectors.includes(current)) select.value = current; else { state.sector = 'ALL'; select.value = 'ALL'; }
+    const groups = filterGroups(data);
+    const all = groups.find((group) => group.type === 'all') || { key: 'ALL', label: 'Tất cả ngành / chỉ số', total_count: data.items.length, enabled: true };
+    const indices = groups.filter((group) => group.type === 'index');
+    const sectors = groups.filter((group) => group.type === 'sector').sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+    const option = (group) => `<option value="${esc(group.key)}"${group.enabled === false ? ' disabled' : ''}>${esc(group.label)} (${Number(group.total_count || 0).toLocaleString('vi-VN')})${group.stale ? ' · cache' : ''}</option>`;
+    select.innerHTML = option(all)
+      + (indices.length ? `<optgroup label="Chỉ số">${indices.map(option).join('')}</optgroup>` : '')
+      + (sectors.length ? `<optgroup label="Ngành">${sectors.map(option).join('')}</optgroup>` : '');
+    const normalizedCurrent = normalizedGroupKey(current);
+    const selected = groups.find((group) => group.key === normalizedCurrent && group.enabled !== false);
+    state.sector = selected ? normalizedCurrent : 'ALL';
+    select.value = state.sector;
   }
 
   function renderMethodology(data) {
@@ -474,8 +561,14 @@
     $('bubbleAsOf').textContent = `Dữ liệu ${data.as_of || '--'}`;
     const session = data.market_session || {};
     const live = Boolean(session.is_live_matching);
+    const phase = session.phase;
+    const waiting = phase === 'PRE_OPEN';
+    const closed = Boolean(data.market_closed || ['CLOSED', 'WEEKEND', 'HOLIDAY'].includes(phase));
     const updatedAt = formatDateTime(data.methodology?.current_observed_at || data.generated_at || new Date().toISOString());
-    $('bubbleSession').innerHTML = `<span class="bubble-live-dot ${live ? 'live' : ''}"></span><strong>${esc(live ? 'Đang giao dịch' : 'Dữ liệu gần nhất')}</strong><small>Phiên ${esc(data.as_of || '--')} · ${esc(updatedAt)}</small>`;
+    const storageLabel = data.snapshot_frozen ? 'snapshot DB cuối phiên' : 'dữ liệu thị trường';
+    const sessionDate = data.session_date || data.as_of || '--';
+    const dotClass = live ? 'live' : (waiting || closed ? 'closed' : 'paused');
+    $('bubbleSession').innerHTML = `<span class="bubble-live-dot ${dotClass}"></span><strong>${esc(sessionLabel(phase))}</strong><small>Phiên ${esc(sessionDate)} · ${esc(storageLabel)} · ${esc(updatedAt)}</small><em>${esc(session.detail_label || '')}</em>`;
     $('bubbleEvidenceCurrent').textContent = sourceLabel(data.methodology?.current_source);
     $('bubbleEvidenceHistory').textContent = data.range === '1D'
       ? 'Cùng bảng giá phiên hiện tại'
@@ -485,25 +578,23 @@
     const missing = Number(coverage.missing || 0);
     const unverified = Number(coverage.unverified || 0);
     const unavailable = Number(coverage.unavailable || 0);
+    const vn30Group = filterGroups(data).find((group) => group.key === 'INDEX:VN30');
+    const vn30Unavailable = vn30Group && vn30Group.enabled === false;
     const status = $('bubbleStatus');
-    status.className = `bubble-status ${missing ? 'warning' : ''}`;
-    status.textContent = missing
+    status.className = `bubble-status ${missing || vn30Unavailable ? 'warning' : ''}`;
+    status.textContent = vn30Unavailable
+      ? 'Danh sách VN30 hiện chưa có dữ liệu hợp lệ; lựa chọn VN30 đã được tạm khóa để tránh hiển thị biểu đồ rỗng.'
+      : data.session_reset_applied
+      ? `Phiên mới chưa bắt đầu: toàn bộ biến động 1D, khối lượng và giá trị giao dịch đang ở 0; bong bóng vẫn giữ theo danh sách niêm yết.`
+      : missing
       ? `${missing.toLocaleString('vi-VN')} cảnh báo: ${unverified.toLocaleString('vi-VN')} chưa xác minh, ${unavailable.toLocaleString('vi-VN')} không có dữ liệu. Các bong bóng này hiện dấu ! và không công bố %.${live ? ' Giá hiện tại vẫn cập nhật mỗi 5 giây.' : ''}`
       : `Đã xác minh đủ ${Number(coverage.verified || coverage.available || 0).toLocaleString('vi-VN')} mã · ${live ? 'giá hiện tại cập nhật mỗi 5 giây.' : 'không có cảnh báo chất lượng.'}`;
   }
 
-  function applyRealtimePayload(payload) {
-    const freshBySymbol = new Map(payload.items.map((item) => [item.symbol, item]));
-    state.nodes.forEach((node) => {
-      const fresh = freshBySymbol.get(node.symbol);
-      if (!fresh) return;
-      const { x, y, vx, vy, r, homeX, homeY, driftSeed, index } = node;
-      Object.assign(node, fresh, { x, y, vx, vy, r, homeX, homeY, driftSeed, index });
-    });
-    state.ranked = state.ranked.map((item) => freshBySymbol.get(item.symbol) || item);
-    state.filtered = state.filtered.map((item) => freshBySymbol.get(item.symbol) || item);
+  function applyRealtimePayload(payload, _previousPayload) {
+    populateSectors(payload);
     updateMeta(payload);
-    draw();
+    buildNodes({ preserveCamera: true, initialAlpha: .16 });
   }
 
   function armMarketRefresh() {
@@ -532,11 +623,11 @@
       const response = await fetch(`/api/market-bubbles/data?range=${encodeURIComponent(rangeKey)}`, { cache: 'no-store' });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      const previousPayload = state.datasets.get(rangeKey);
       state.datasets.set(rangeKey, payload);
       if (state.range !== rangeKey) return;
-      populateSectors(payload);
-      if (realtime && state.nodes.length) applyRealtimePayload(payload);
-      else { updateMeta(payload); buildNodes({ initialAlpha: .28 }); }
+      if (realtime && state.nodes.length) applyRealtimePayload(payload, previousPayload);
+      else { populateSectors(payload); updateMeta(payload); buildNodes({ initialAlpha: .28 }); }
       if (payload.refreshing && Number(payload.coverage?.missing || 0) > 0 && rangeKey !== '1D') {
         state.retryTimer = setTimeout(() => { if (state.range === rangeKey) loadRange(rangeKey, { force: true, silent: true }); }, 8000);
       }
@@ -613,6 +704,9 @@
 
   window.__LP_BUBBLES_TEST__ = {
     pageSizeForWidth,
+    itemSectorNames,
+    itemMatchesGroup,
+    fallbackFilterGroups,
     snapshot: () => ({
       alpha: state.simulation?.alpha() || 0,
       pageIndex: state.pageIndex,

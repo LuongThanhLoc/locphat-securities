@@ -11,11 +11,14 @@ import pandas as pd
 import market_bubble_engine as bubbles
 
 
-def stock(symbol, *, trading_value=1_000_000, volume=100, instrument="STOCK", sector="NGÂN HÀNG"):
+def stock(
+    symbol, *, trading_value=1_000_000, volume=100, instrument="STOCK",
+    sector="NGÂN HÀNG", exchange="HOSE", sector_memberships=None,
+):
     return {
         "symbol": symbol,
         "name": f"Công ty {symbol}",
-        "exchange": "HOSE",
+        "exchange": exchange,
         "instrument_type": instrument,
         "volume": volume,
         "trading_value": trading_value,
@@ -25,6 +28,7 @@ def stock(symbol, *, trading_value=1_000_000, volume=100, instrument="STOCK", se
         "change_pct": 10,
         "status": "GAIN",
         "sector": sector,
+        "sector_memberships": sector_memberships or [{"sector": sector, "archetype": "TEST"}],
     }
 
 
@@ -82,7 +86,119 @@ class MarketBubbleEngineTests(unittest.TestCase):
         self.assertEqual([row["symbol"] for row in result], ["VCB"])
         self.assertEqual(result[0]["trading_value"], 50)
 
-    def test_dataset_v4_only_exposes_verified_change(self):
+    def test_full_universe_keeps_idle_stocks_and_merges_all_sector_memberships(self):
+        sectors = [
+            {"name": "Ngân hàng", "stocks": [stock(
+                "VCB", trading_value=0, volume=0,
+                sector="Ngân hàng",
+                sector_memberships=[{"sector": "Ngân hàng", "archetype": "BANK"}],
+            )]},
+            {"name": "VN30", "stocks": [stock(
+                "VCB", trading_value=0, volume=0,
+                sector="Ngân hàng",
+                sector_memberships=[{"sector": "Bluechip", "archetype": "LARGE_CAP"}],
+            )]},
+        ]
+        result = bubbles.dedupe_common_stocks(sectors, require_active=False)
+        self.assertEqual([row["symbol"] for row in result], ["VCB"])
+        self.assertFalse(result[0]["is_active"])
+        self.assertEqual(
+            {membership["sector"] for membership in result[0]["sector_memberships"]},
+            {"Ngân hàng", "Bluechip"},
+        )
+
+    def test_every_market_phase_keeps_idle_vn30_and_filter_counts_reconcile(self):
+        phases = ("PRE_OPEN", "ATO", "CONTINUOUS", "LUNCH_BREAK", "ATC", "CLOSED")
+        for phase in phases:
+            with self.subTest(phase=phase):
+                snapshot = {
+                    "sectors": [{"name": "Ngân hàng", "stocks": [
+                        stock("VCB", trading_value=0, volume=0),
+                        stock("SHS", trading_value=500, volume=5, exchange="HNX"),
+                    ]}],
+                    "data_lineage": {
+                        "latest_trading_date": "2026-08-10", "price_source": "test-board",
+                        "fetched_at": "2026-08-10T09:10:00+07:00",
+                    },
+                    "market_session": {
+                        "phase": phase, "calendar_date": "2026-08-10",
+                        "is_live_matching": phase in {"ATO", "CONTINUOUS", "ATC"},
+                    },
+                    "market_closed": phase == "CLOSED",
+                }
+                with patch.object(bubbles, "fetch_market_heatmap_data", return_value=snapshot), \
+                     patch.object(bubbles, "_load_reference_bars", return_value={}), \
+                     patch.object(bubbles, "get_vn30_members", return_value=({"VCB"}, {"source": "test", "stale": False})), \
+                     patch.object(bubbles, "start_history_warmup", return_value=False):
+                    payload = bubbles.build_market_bubble_dataset("1D")
+
+                self.assertEqual(payload["schema_version"], 5)
+                self.assertEqual({item["symbol"] for item in payload["items"]}, {"VCB", "SHS"})
+                rows = {item["symbol"]: item for item in payload["items"]}
+                self.assertFalse(rows["VCB"]["is_active"])
+                self.assertEqual(rows["VCB"]["index_memberships"], ["VN30"])
+                self.assertEqual(rows["VCB"]["sector_memberships"][0]["sector"], "NGÂN HÀNG")
+                groups = {group["key"]: group for group in payload["filter_groups"]}
+                self.assertEqual(groups["INDEX:VN30"]["total_count"], 1)
+                self.assertEqual(groups["INDEX:VN30"]["active_count"], 0)
+                self.assertEqual(groups["SECTOR:NGÂN HÀNG"]["total_count"], 2)
+                self.assertEqual(groups["SECTOR:NGÂN HÀNG"]["active_count"], 1)
+
+    def test_pre_open_1d_keeps_idle_stocks_and_resets_session_metrics(self):
+        snapshot = {
+            "sectors": [{"name": "Ngân hàng", "stocks": [
+                stock("VCB", trading_value=0, volume=0),
+                stock("BID", trading_value=0, volume=0),
+            ]}],
+            "data_lineage": {
+                "latest_trading_date": "2026-08-07", "price_source": "test-board",
+                "fetched_at": "2026-08-10T08:45:00+07:00",
+            },
+            "market_session": {
+                "phase": "PRE_OPEN", "calendar_date": "2026-08-10",
+                "is_live_matching": False,
+            },
+            "market_closed": False,
+            "snapshot_frozen": True,
+            "served_from": "SQLITE_CLOSE_SNAPSHOT",
+        }
+        with patch.object(bubbles, "fetch_market_heatmap_data", return_value=snapshot), \
+             patch.object(bubbles, "_load_reference_bars", return_value={}), \
+             patch.object(bubbles, "get_vn30_members", return_value=(set(), {"source": "test"})), \
+             patch.object(bubbles, "start_history_warmup", return_value=False):
+            payload = bubbles.build_market_bubble_dataset("1D")
+
+        self.assertTrue(payload["session_reset_applied"])
+        self.assertEqual(payload["session_date"], "2026-08-10")
+        self.assertEqual(payload["coverage"]["total"], 2)
+        self.assertEqual({item["symbol"] for item in payload["items"]}, {"VCB", "BID"})
+        for item in payload["items"]:
+            self.assertEqual(item["change_pct"], 0.0)
+            self.assertEqual(item["volume"], 0.0)
+            self.assertEqual(item["trading_value"], 0.0)
+            self.assertEqual(item["status"], "REF")
+            self.assertEqual(item["calculation_status"], "SESSION_NOT_STARTED")
+            self.assertEqual(item["market_cap"], 20_000_000)
+
+    def test_pre_open_historical_range_keeps_historical_performance(self):
+        snapshot = {
+            "sectors": [{"name": "Ngân hàng", "stocks": [stock("VCB", trading_value=0, volume=0)]}],
+            "data_lineage": {"latest_trading_date": "2026-08-07", "price_source": "test-board"},
+            "market_session": {"phase": "PRE_OPEN", "calendar_date": "2026-08-10", "is_live_matching": False},
+        }
+        anchors = {"VCB": bar()}
+        latest = {"VCB": bar("2026-08-07", 109.0, 110.0)}
+        with patch.object(bubbles, "fetch_market_heatmap_data", return_value=snapshot), \
+             patch.object(bubbles, "_load_reference_bars", side_effect=[anchors, latest, anchors]), \
+             patch.object(bubbles, "_load_action_audits", return_value={"VCB": {"status": "OK", "events": []}}), \
+             patch.object(bubbles, "get_vn30_members", return_value=(set(), {"source": "test"})), \
+             patch.object(bubbles, "start_history_warmup", return_value=False):
+            payload = bubbles.build_market_bubble_dataset("1M")
+
+        self.assertFalse(payload["session_reset_applied"])
+        self.assertEqual(payload["items"][0]["change_pct"], 10.0)
+
+    def test_dataset_v5_only_exposes_verified_change(self):
         snapshot = {
             "sectors": [{"name": "Ngân hàng", "stocks": [stock("VCB"), stock("BID")]}],
             "data_lineage": {
@@ -101,7 +217,7 @@ class MarketBubbleEngineTests(unittest.TestCase):
              patch.object(bubbles, "start_history_warmup", return_value=True):
             payload = bubbles.build_market_bubble_dataset("1M")
 
-        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(payload["schema_version"], 5)
         self.assertEqual(payload["metric_definition"], "TRADINGVIEW_SCREENER_PERFORMANCE")
         self.assertEqual(payload["anchor_field"], "open")
         self.assertEqual(payload["formula"], bubbles.HISTORY_CHANGE_FORMULA)
@@ -197,7 +313,7 @@ class MarketBubbleEngineTests(unittest.TestCase):
             payload = bubbles.build_market_bubble_dataset("1D", force_refresh=True)
         fetch.assert_called_once_with(force_refresh=True)
         self.assertEqual(payload["refresh_interval_seconds"], 5)
-        self.assertEqual(payload["schema_version"], 4)
+        self.assertEqual(payload["schema_version"], 5)
         self.assertEqual(payload["metric_definition"], "SESSION_CHANGE")
         self.assertEqual(payload["items"][0]["calculation_status"], "OK")
         self.assertEqual(payload["items"][0]["data_confidence"], "VERIFIED")

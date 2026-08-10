@@ -17,8 +17,11 @@
 .bubble-session { display: grid; grid-template-columns: auto auto; gap: 2px 8px; min-width: 220px; padding: 12px 16px; border: 1px solid #d5d0c5; background: #fffdf7; }
 .bubble-session strong { font-size: 13px; }
 .bubble-session small { grid-column: 2; color: #6e7774; font-size: 11px; }
+.bubble-session em { grid-column: 1 / -1; margin-top: 4px; color: #68736f; font-size: 9px; font-style: normal; line-height: 1.35; }
 .bubble-live-dot { width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: #8b9491; }
 .bubble-live-dot.live { background: #16a36f; box-shadow: 0 0 0 4px rgba(22,163,111,.12); }
+.bubble-live-dot.closed { background: #c93439; box-shadow: 0 0 0 4px rgba(201,52,57,.1); }
+.bubble-live-dot.paused { background: #d59a20; box-shadow: 0 0 0 4px rgba(213,154,32,.12); }
 .bubble-filter-toggle { display: none; }
 .bubble-controls { display: grid; grid-template-columns: auto minmax(150px, 1.1fr) repeat(4, minmax(125px, .76fr)) auto auto; align-items: end; gap: 10px; padding: 12px; border: 1px solid #d4cfc4; background: rgba(255,253,247,.94); box-shadow: 0 8px 24px rgba(24,31,28,.05); }
 .bubble-range-field { min-width: 232px; }
@@ -135,7 +138,7 @@ body.bubble-dialog-open { overflow: hidden; }
   .bubble-shell { padding: 12px; }
   .bubble-hero { align-items: flex-start; }
   .bubble-session { min-width: 0; padding: 9px 10px; }
-  .bubble-session small, .bubble-intro { display: none; }
+  .bubble-session small, .bubble-session em, .bubble-intro { display: none; }
   .bubble-filter-toggle { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #cec8bd; background: #fffdf7; padding: 0 12px; color: #34413c; font: 800 12px Inter, sans-serif; }
   .bubble-controls { display: none; margin-top: -1px; grid-template-columns: 1fr 1fr; }
   .bubble-controls.is-mobile-open { display: grid; }
@@ -153,8 +156,9 @@ body.bubble-dialog-open { overflow: hidden; }
   .bubble-quick-head { position: sticky; top: 0; z-index: 2; }
 }
 @media (max-width: 479px) {
+  .bubble-hero { display: grid; grid-template-columns: 1fr; gap: 10px; }
   .bubble-hero h1 { font-size: 25px; }
-  .bubble-session { display: none; }
+  .bubble-session { width: 100%; }
   .bubble-controls { grid-template-columns: 1fr; }
   .bubble-controls > * { grid-column: 1 !important; }
   .bubble-range-field { grid-column: 1 !important; min-width: 0; }

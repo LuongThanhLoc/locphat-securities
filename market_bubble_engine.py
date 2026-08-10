@@ -281,8 +281,40 @@ def _finite_number(value: Any) -> Optional[float]:
     return number if math.isfinite(number) else None
 
 
-def dedupe_active_stocks(sectors: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return one currently traded common-stock record per symbol."""
+def _normalized_sector_memberships(
+    stock: Dict[str, Any], sector: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, str]]:
+    """Return stable, unique sector memberships for one stock record."""
+    sector = sector or {}
+    raw_memberships = stock.get("sector_memberships") or []
+    if not isinstance(raw_memberships, (list, tuple)):
+        raw_memberships = []
+    candidates = list(raw_memberships)
+    candidates.append({
+        "sector": stock.get("sector") or sector.get("name") or "Khác",
+        "archetype": stock.get("sector_code") or sector.get("code") or "OTHER",
+    })
+    memberships: List[Dict[str, str]] = []
+    seen = set()
+    for raw in candidates:
+        if isinstance(raw, str):
+            name, archetype = raw.strip(), "OTHER"
+        elif isinstance(raw, dict):
+            name = str(raw.get("sector") or raw.get("name") or "").strip()
+            archetype = str(raw.get("archetype") or raw.get("code") or "OTHER").strip()
+        else:
+            continue
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        memberships.append({"sector": name, "archetype": archetype or "OTHER"})
+    return memberships or [{"sector": "Khác", "archetype": "OTHER"}]
+
+
+def dedupe_common_stocks(
+    sectors: Iterable[Dict[str, Any]], *, require_active: bool = True,
+) -> List[Dict[str, Any]]:
+    """Return one common-stock record per symbol, optionally including idle listings."""
     unique: Dict[str, Dict[str, Any]] = {}
     for sector in sectors or []:
         for raw in sector.get("stocks", []) or []:
@@ -290,15 +322,90 @@ def dedupe_active_stocks(sectors: Iterable[Dict[str, Any]]) -> List[Dict[str, An
             exchange = str(raw.get("exchange") or "").upper().replace("HSX", "HOSE")
             instrument = str(raw.get("instrument_type") or "STOCK").upper()
             active = (_finite_number(raw.get("volume")) or 0) > 0 or (_finite_number(raw.get("trading_value")) or 0) > 0
-            if not symbol or exchange not in {"HOSE", "HNX", "UPCOM"} or instrument != "STOCK" or not active:
+            if (
+                not symbol
+                or exchange not in {"HOSE", "HNX", "UPCOM"}
+                or instrument != "STOCK"
+                or (require_active and not active)
+            ):
                 continue
             candidate = dict(raw)
             candidate["exchange"] = exchange
-            candidate["sector"] = str(raw.get("sector") or sector.get("name") or "Khác")
+            candidate["is_active"] = active
+            candidate["sector_memberships"] = _normalized_sector_memberships(raw, sector)
+            candidate["sector"] = str(
+                raw.get("sector") or candidate["sector_memberships"][0]["sector"] or "Khác"
+            )
             current = unique.get(symbol)
-            if current is None or (_finite_number(candidate.get("trading_value")) or 0) > (_finite_number(current.get("trading_value")) or 0):
+            if current is None:
                 unique[symbol] = candidate
+                continue
+            merged_memberships = _normalized_sector_memberships({
+                "sector_memberships": [
+                    *(current.get("sector_memberships") or []),
+                    *(candidate.get("sector_memberships") or []),
+                ],
+                "sector": current.get("sector") or candidate.get("sector"),
+            })
+            current_value = _finite_number(current.get("trading_value")) or 0
+            candidate_value = _finite_number(candidate.get("trading_value")) or 0
+            chosen = candidate if candidate_value > current_value else current
+            chosen = dict(chosen)
+            chosen["sector_memberships"] = merged_memberships
+            chosen["is_active"] = bool(current.get("is_active") or candidate.get("is_active"))
+            unique[symbol] = chosen
     return sorted(unique.values(), key=lambda row: row["symbol"])
+
+
+def dedupe_active_stocks(sectors: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Backward-compatible active-universe helper used outside pre-open."""
+    return dedupe_common_stocks(sectors, require_active=True)
+
+
+def build_filter_groups(
+    items: Iterable[Dict[str, Any]], vn30_members: set[str], vn30_meta: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Build filter metadata from the exact universe returned to the browser."""
+    rows = list(items or [])
+    sector_counts: Dict[str, Dict[str, int]] = {}
+    for item in rows:
+        active = bool(item.get("is_active"))
+        names = {
+            str(membership.get("sector") or membership.get("name") or "").strip()
+            for membership in item.get("sector_memberships", [])
+            if isinstance(membership, dict)
+        }
+        if not names:
+            names = {str(item.get("sector") or "Khác").strip()}
+        for name in names:
+            if not name:
+                continue
+            counts = sector_counts.setdefault(name, {"total_count": 0, "active_count": 0})
+            counts["total_count"] += 1
+            counts["active_count"] += int(active)
+
+    vn30_rows = [item for item in rows if str(item.get("symbol") or "") in vn30_members]
+    groups: List[Dict[str, Any]] = [{
+        "key": "ALL", "type": "all", "label": "Tất cả ngành / chỉ số",
+        "total_count": len(rows),
+        "active_count": sum(int(bool(item.get("is_active"))) for item in rows),
+        "enabled": bool(rows),
+    }, {
+        "key": "INDEX:VN30", "type": "index", "label": "VN30",
+        "total_count": len(vn30_rows),
+        "active_count": sum(int(bool(item.get("is_active"))) for item in vn30_rows),
+        "enabled": bool(vn30_rows),
+        "stale": bool(vn30_meta.get("stale")),
+        "source": vn30_meta.get("source") or "unavailable",
+        "error": vn30_meta.get("error"),
+    }]
+    groups.extend({
+        "key": f"SECTOR:{name}", "type": "sector", "label": name,
+        "total_count": counts["total_count"],
+        "active_count": counts["active_count"],
+        "enabled": counts["total_count"] > 0,
+    } for name, counts in sorted(sector_counts.items()))
+    return groups
 
 
 def target_reference_date(as_of: date, range_key: str) -> date:
@@ -742,6 +849,7 @@ def _reconciliation_status(
 
 QUALITY_REASONS: Dict[str, Tuple[str, str, bool]] = {
     "VERIFIED": ("VERIFIED", "Đã vượt đầy đủ kiểm định dữ liệu.", False),
+    "SESSION_NOT_STARTED": ("VERIFIED", "Phiên mới chưa bắt đầu; biến động, khối lượng và giá trị giao dịch được đặt về 0.", False),
     "MISSING_CURRENT_PRICE": ("UNAVAILABLE", "Không lấy được giá khớp hiện tại hợp lệ.", True),
     "INVALID_SESSION_REFERENCE": ("UNAVAILABLE", "Không lấy được giá tham chiếu cùng snapshot.", True),
     "MISSING_HISTORY": ("UNAVAILABLE", "Không có phiên lịch sử phù hợp cho mốc yêu cầu.", True),
@@ -1053,12 +1161,14 @@ def _build_market_bubble_dataset_v3_legacy(range_key: str = "1D", force_refresh:
 
 
 def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = False) -> Dict[str, Any]:
-    """Build schema-v4 bubbles; only quality-gated values expose a percentage."""
+    """Build schema-v5 bubbles from the full listed common-stock universe."""
     range_key = str(range_key or "1D").upper().strip()
     if range_key not in SUPPORTED_RANGES:
         raise ValueError("range phải là một trong: 1D, 1W, 1M, 1Y")
     snapshot = fetch_market_heatmap_data(force_refresh=force_refresh)
-    stocks = dedupe_active_stocks(snapshot.get("sectors", []))
+    market_session = snapshot.get("market_session", {}) or {}
+    pre_open = market_session.get("phase") == "PRE_OPEN"
+    stocks = dedupe_common_stocks(snapshot.get("sectors", []), require_active=False)
     vn30_members, vn30_meta = get_vn30_members()
     lineage = snapshot.get("data_lineage", {}) or {}
     as_of_text = str(lineage.get("latest_trading_date") or snapshot.get("trading_date") or date.today().isoformat())[:10]
@@ -1074,13 +1184,13 @@ def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = Fal
     references = _load_reference_bars(symbols, target_date) if not is_session_range else {}
     latest_references = _load_reference_bars(symbols, as_of) if not is_session_range else {}
     action_audits = _load_action_audits(symbols, target_date, as_of) if not is_session_range else {}
-    market_session = snapshot.get("market_session", {}) or {}
     current_source = str(lineage.get("price_source") or "Vietcap price board")
     current_observed_at = lineage.get("fetched_at") or snapshot.get("timestamp")
     quality_checked_at = datetime.now().astimezone().isoformat(timespec="seconds")
     price_basis = SESSION_PRICE_BASIS if is_session_range else HISTORY_PRICE_BASIS
     formula = SESSION_CHANGE_FORMULA if is_session_range else HISTORY_CHANGE_FORMULA
     metric_definition = "SESSION_CHANGE" if is_session_range else "TRADINGVIEW_SCREENER_PERFORMANCE"
+    session_reset_applied = bool(is_session_range and pre_open)
     items: List[Dict[str, Any]] = []
     confidence_counts = {"VERIFIED": 0, "UNVERIFIED": 0, "UNAVAILABLE": 0}
     reason_counts: Dict[str, int] = {}
@@ -1095,7 +1205,9 @@ def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = Fal
         reference_price = _finite_number(stock.get("ref_price")) if is_session_range else (cached.open if cached else None)
         reference_date = as_of_text if is_session_range else (cached.trading_date if cached else None)
         reconciliation_status = "PASSED" if is_session_range else _reconciliation_status(stock, latest, as_of, market_session)
-        if is_session_range:
+        if session_reset_applied:
+            quality = _quality_result("SESSION_NOT_STARTED")
+        elif is_session_range:
             if current_price is None or current_price <= 0:
                 quality = _quality_result("MISSING_CURRENT_PRICE")
             elif reference_price is None or reference_price <= 0:
@@ -1111,7 +1223,7 @@ def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = Fal
                 missing_source = "KBS" if cached and cached.source == "Vietcap" else "Vietcap"
                 quality = {**quality, "reason_message": f"Thiếu giá mở cửa hoặc đóng cửa từ {missing_source}."}
         verified = quality["data_confidence"] == "VERIFIED"
-        change = calculate_change_pct(current_price, reference_price) if verified else None
+        change = 0.0 if session_reset_applied else (calculate_change_pct(current_price, reference_price) if verified else None)
         if verified and change is None:
             quality = _quality_result("INVALID_REFERENCE_PRICE")
             verified = False
@@ -1133,7 +1245,11 @@ def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = Fal
             "name": str(stock.get("name") or symbol),
             "exchange": stock.get("exchange"),
             "sector": str(stock.get("sector") or "Khác"),
+            "sector_memberships": _normalized_sector_memberships(stock),
+            "index_memberships": ["VN30"] if symbol in vn30_members else [],
+            "is_active": bool(stock.get("is_active")),
             "last_price": current_price,
+            "volume": 0.0 if session_reset_applied else (_finite_number(stock.get("volume")) or 0.0),
             "reference_price": reference_price,
             "reference_date": reference_date,
             "change_pct": change,
@@ -1164,11 +1280,12 @@ def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = Fal
             "price_basis": price_basis,
             "price_basis_status": "BOARD_DEFINED" if is_session_range else "SOURCE_REPORTED_UNVERIFIED_ADJUSTMENT",
             "metric_definition": metric_definition,
-            "calculation_status": "OK" if verified else quality["reason_code"],
+            "calculation_status": quality["reason_code"] if session_reset_applied else ("OK" if verified else quality["reason_code"]),
             "reconciliation_status": reconciliation_status,
             "market_cap": _finite_number(stock.get("market_cap")) or 0.0,
-            "trading_value": _finite_number(stock.get("trading_value")) or 0.0,
-            "status": str(stock.get("status") or "REF"),
+            "trading_value": 0.0 if session_reset_applied else (_finite_number(stock.get("trading_value")) or 0.0),
+            "status": "REF" if session_reset_applied else str(stock.get("status") or "REF"),
+            "session_reset": session_reset_applied,
             "is_vn30": symbol in vn30_members,
             "logo_url": f"https://cdn.simplize.vn/simplizevn/logo/{symbol}.jpeg",
         })
@@ -1188,8 +1305,9 @@ def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = Fal
     newest_history_fetch = max(reference_fetch_times) if reference_fetch_times else None
     now_epoch = int(datetime.now().timestamp())
     stale = bool(snapshot.get("snapshot_frozen") and not snapshot.get("market_closed"))
+    filter_groups = build_filter_groups(items, vn30_members, vn30_meta)
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "as_of": as_of_text,
         "range": range_key,
         "generated_at": quality_checked_at,
@@ -1238,8 +1356,15 @@ def build_market_bubble_dataset(range_key: str = "1D", force_refresh: bool = Fal
             "warmup": dict(_ACTION_STATE),
         },
         "market_session": market_session,
+        "market_closed": bool(snapshot.get("market_closed")),
+        "snapshot_frozen": bool(snapshot.get("snapshot_frozen")),
+        "served_from": snapshot.get("served_from"),
+        "snapshot_timestamp": snapshot.get("timestamp"),
+        "session_date": market_session.get("calendar_date"),
+        "session_reset_applied": session_reset_applied,
         "refresh_interval_seconds": 5 if market_session.get("is_live_matching") else None,
         "indices": {"VN30": {**vn30_meta, "count": len(vn30_members), "symbols": sorted(vn30_members)}},
+        "filter_groups": filter_groups,
         "stale": stale,
         "refreshing": bool(history_refreshing or action_refreshing),
         "warmup": dict(_WARM_STATE),

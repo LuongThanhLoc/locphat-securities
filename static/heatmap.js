@@ -10,6 +10,8 @@
     sector: 'ALL',
     activeOnly: false,
     query: '',
+    loadController: null,
+    loadInFlight: false,
     timeline: {
       snapshots: [],
       cursor: 0,
@@ -70,29 +72,136 @@
     THAN_TRONG: 'Thận trọng', SUY_YEU: 'Suy yếu',
   }[value] || String(value || '').replaceAll('_', ' '));
   const sessionLabel = (phase) => ({
-    PRE_OPEN: 'Chờ mở cửa', MORNING: 'Phiên sáng', LUNCH_BREAK: 'Nghỉ trưa',
-    AFTERNOON: 'Phiên chiều', ATC: 'Phiên ATC', POST_CLOSE_TRADING: 'Giao dịch sau giờ',
+    PRE_OPEN: 'Chờ mở cửa', ATO: 'Phiên ATO', CONTINUOUS: 'Khớp lệnh liên tục',
+    MORNING: 'Phiên sáng', LUNCH_BREAK: 'Nghỉ trưa', AFTERNOON: 'Phiên chiều',
+    ATC: 'Phiên ATC', POST_CLOSE_TRADING: 'Giao dịch sau giờ',
     CLOSED: 'Thị trường đóng cửa', WEEKEND: 'Nghỉ cuối tuần', HOLIDAY: 'Nghỉ lễ',
   }[phase] || 'Trạng thái chưa xác định');
 
   function allStocks() {
     if (!state.data?.sectors) return [];
-    return state.data.sectors.flatMap((sector) => sector.stocks || []);
+    const unique = new Map();
+    state.data.sectors.forEach((sector) => {
+      (sector.stocks || []).forEach((raw) => {
+        const symbol = String(raw.symbol || '').toUpperCase().trim();
+        if (!symbol) return;
+        const memberships = Array.isArray(raw.sector_memberships) ? raw.sector_memberships : [];
+        const candidate = {
+          ...raw,
+          symbol,
+          sector_memberships: memberships.length
+            ? memberships
+            : [{ sector: raw.sector || sector.name, archetype: raw.sector_code || sector.code || 'OTHER' }],
+          is_active: raw.is_active ?? (Number(raw.volume || 0) > 0 || Number(raw.trading_value || 0) > 0),
+        };
+        const current = unique.get(symbol);
+        if (!current || Number(candidate.trading_value || 0) > Number(current.trading_value || 0)) {
+          unique.set(symbol, candidate);
+        }
+      });
+    });
+    return [...unique.values()];
+  }
+
+  function stockSectorNames(stock) {
+    const names = (stock.sector_memberships || [])
+      .map((membership) => typeof membership === 'string' ? membership : membership?.sector || membership?.name)
+      .filter(Boolean);
+    if (stock.sector) names.push(stock.sector);
+    return new Set(names);
+  }
+
+  function stockMatchesGroup(stock, key) {
+    if (!key || key === 'ALL') return true;
+    if (key === 'INDEX:VN30') {
+      return Boolean(stock.is_vn30 || (stock.index_memberships || []).includes('VN30'));
+    }
+    const sectorName = key.startsWith('SECTOR:') ? key.slice(7) : key;
+    return stockSectorNames(stock).has(sectorName);
+  }
+
+  function filterGroups() {
+    if (Array.isArray(state.data?.filter_groups) && state.data.filter_groups.length) {
+      return state.data.filter_groups;
+    }
+    const stocks = allStocks();
+    const sectorCounts = new Map();
+    stocks.forEach((stock) => stockSectorNames(stock).forEach((name) => {
+      const counts = sectorCounts.get(name) || { total_count: 0, active_count: 0 };
+      counts.total_count += 1;
+      counts.active_count += Number(Boolean(stock.is_active));
+      sectorCounts.set(name, counts);
+    }));
+    const vn30 = stocks.filter((stock) => stockMatchesGroup(stock, 'INDEX:VN30'));
+    return [
+      { key: 'ALL', type: 'all', label: 'Tất cả ngành / chỉ số', total_count: stocks.length, active_count: stocks.filter((stock) => stock.is_active).length, enabled: Boolean(stocks.length) },
+      { key: 'INDEX:VN30', type: 'index', label: 'VN30', total_count: vn30.length, active_count: vn30.filter((stock) => stock.is_active).length, enabled: Boolean(vn30.length) },
+      ...[...sectorCounts.entries()].sort(([a], [b]) => a.localeCompare(b, 'vi')).map(([name, counts]) => ({ key: `SECTOR:${name}`, type: 'sector', label: name, ...counts, enabled: true })),
+    ];
+  }
+
+  function selectedGroupLabel() {
+    return filterGroups().find((group) => group.key === state.sector)?.label
+      || (state.sector.startsWith('SECTOR:') ? state.sector.slice(7) : state.sector === 'ALL' ? 'Toàn thị trường' : state.sector);
+  }
+
+  function weightedChange(stocks) {
+    const total = stocks.reduce((sum, stock) => sum + Math.max(Number(stock.market_cap || 0), 0), 0);
+    if (total > 0) return stocks.reduce((sum, stock) => sum + Number(stock.change_pct || 0) * Math.max(Number(stock.market_cap || 0), 0), 0) / total;
+    return stocks.length ? stocks.reduce((sum, stock) => sum + Number(stock.change_pct || 0), 0) / stocks.length : 0;
   }
 
   function filteredSectors() {
     if (!state.data?.sectors) return [];
     const query = state.query.trim().toUpperCase();
-    return state.data.sectors.map((sector) => ({
-      ...sector,
-      stocks: (sector.stocks || []).filter((stock) => {
-        if (state.sector !== 'ALL' && sector.name !== state.sector) return false;
-        if (state.exchange !== 'ALL' && stock.exchange !== state.exchange) return false;
-        if (state.activeOnly && Number(stock.volume || 0) <= 0 && Number(stock.trading_value || 0) <= 0) return false;
-        if (query && !stock.symbol.includes(query) && !String(stock.name || '').toUpperCase().includes(query)) return false;
-        return Number(stock[state.sizeMetric] || 0) > 0;
-      }),
-    })).filter((sector) => sector.stocks.length > 0);
+    const stocks = allStocks().filter((stock) => {
+      if (!stockMatchesGroup(stock, state.sector)) return false;
+      if (state.exchange !== 'ALL' && stock.exchange !== state.exchange) return false;
+      if (state.activeOnly && !stock.is_active) return false;
+      return !query || stock.symbol.includes(query) || String(stock.name || '').toUpperCase().includes(query);
+    });
+    if (!stocks.length) return [];
+
+    const analytics = new Map(state.data.sectors.map((sector) => [sector.name, sector]));
+    if (state.sector !== 'ALL') {
+      const name = selectedGroupLabel();
+      return [{ ...(analytics.get(name) || {}), name, stocks, total_market_cap: stocks.reduce((sum, stock) => sum + Number(stock.market_cap || 0), 0), total_trading_value: stocks.reduce((sum, stock) => sum + Number(stock.trading_value || 0), 0), avg_change_pct: weightedChange(stocks) }];
+    }
+
+    const grouped = new Map();
+    stocks.forEach((stock) => {
+      const primary = stock.sector || stock.sector_memberships?.[0]?.sector || 'Khác';
+      if (!grouped.has(primary)) grouped.set(primary, []);
+      grouped.get(primary).push(stock);
+    });
+    return [...grouped.entries()].map(([name, rows]) => ({
+      ...(analytics.get(name) || {}),
+      name,
+      stocks: rows,
+      total_market_cap: rows.reduce((sum, stock) => sum + Number(stock.market_cap || 0), 0),
+      total_trading_value: rows.reduce((sum, stock) => sum + Number(stock.trading_value || 0), 0),
+      avg_change_pct: weightedChange(rows),
+    })).sort((a, b) => b.total_market_cap - a.total_market_cap);
+  }
+
+  function displayWeights(stocks) {
+    const weights = new Map();
+    const values = stocks.map((stock) => ({ stock, value: Math.max(Number(stock[state.sizeMetric] || 0), 0) }));
+    const positive = values.filter((row) => row.value > 0);
+    const zero = values.filter((row) => row.value <= 0);
+    if (!positive.length) {
+      values.forEach(({ stock }) => weights.set(stock.symbol, 1));
+      return weights;
+    }
+    const positiveTotal = positive.reduce((sum, row) => sum + row.value, 0);
+    positive.forEach(({ stock, value }) => weights.set(stock.symbol, value));
+    if (zero.length && state.sizeMetric === 'trading_value') {
+      const zeroWeight = positiveTotal / (9 * zero.length);
+      zero.forEach(({ stock }) => weights.set(stock.symbol, zeroWeight));
+    } else {
+      zero.forEach(({ stock }) => weights.set(stock.symbol, positiveTotal / Math.max(values.length * 100, 1)));
+    }
+    return weights;
   }
 
   function performanceColor(stock) {
@@ -113,6 +222,7 @@
   }
 
   function stockColor(stock) {
+    if (state.sizeMetric === 'trading_value' && Number(stock.trading_value || 0) <= 0) return '#34424b';
     return state.colorMode === 'flow' ? flowColor(stock) : performanceColor(stock);
   }
 
@@ -170,12 +280,17 @@
 
   function renderFilters() {
     const select = $('sectorFilter');
-    const current = state.sector;
-    select.innerHTML = '<option value="ALL">Tất cả ngành</option>' + state.data.sectors
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
-      .map((sector) => `<option value="${esc(sector.name)}">${esc(sector.name)} (${sector.stocks.length})</option>`)
-      .join('');
+    const groups = filterGroups();
+    if (state.sector !== 'ALL' && !state.sector.includes(':')) state.sector = `SECTOR:${state.sector}`;
+    const current = groups.some((group) => group.key === state.sector && group.enabled) ? state.sector : 'ALL';
+    state.sector = current;
+    const all = groups.find((group) => group.type === 'all');
+    const indices = groups.filter((group) => group.type === 'index');
+    const sectors = groups.filter((group) => group.type === 'sector');
+    const option = (group) => `<option value="${esc(group.key)}"${group.enabled ? '' : ' disabled'}>${esc(group.label)} (${formatNumber(group.total_count)} · ${formatNumber(group.active_count)} GD)</option>`;
+    select.innerHTML = `${all ? option(all) : '<option value="ALL">Tất cả ngành / chỉ số</option>'}`
+      + (indices.length ? `<optgroup label="Chỉ số">${indices.map(option).join('')}</optgroup>` : '')
+      + (sectors.length ? `<optgroup label="Ngành">${sectors.map(option).join('')}</optgroup>` : '');
     select.value = current;
   }
 
@@ -249,7 +364,9 @@
         <div><span>Vốn hóa</span><b>${formatMoney(stock.market_cap)}</b></div>
         <div><span>Điểm dòng tiền</span><b style="color:${scoreColor(stock.flow_score)}">${formatNumber(stock.flow_score, 1)}</b></div>
         <div><span>Hạng thanh khoản</span><b>#${formatNumber(stock.liquidity_rank)}</b></div>
-      </div>${signalsHtml}<div class="tooltip-foot">Nhấp để mở phân tích ${esc(stock.symbol)} →</div>`;
+      </div>${signalsHtml}${state.sizeMetric === 'trading_value' && Number(stock.trading_value || 0) <= 0
+        ? '<div class="tooltip-signals">Diện tích tối thiểu để giữ mã chưa giao dịch; GTGD thực tế vẫn bằng 0.</div>'
+        : ''}<div class="tooltip-foot">Nhấp để mở phân tích ${esc(stock.symbol)} →</div>`;
     moveTooltip(event);
   }
 
@@ -274,20 +391,41 @@
     if (!state.data || typeof d3 === 'undefined') return;
     const sectors = filteredSectors();
     const svg = d3.select('#treemap');
-    svg.selectAll('*').remove();
-    $('emptyState').hidden = sectors.length > 0;
-    if (!sectors.length) return;
+    const pinnedSymbol = document.querySelector('.treemap-stock.pinned')?.dataset.symbol || null;
+    const focusedSymbol = document.activeElement?.classList?.contains('treemap-stock')
+      ? document.activeElement.dataset.symbol
+      : null;
+    const sectorLayer = svg.selectAll('g.treemap-sector-layer').data([null]).join('g').attr('class', 'treemap-sector-layer');
+    const stockLayer = svg.selectAll('g.treemap-stock-layer').data([null]).join('g').attr('class', 'treemap-stock-layer');
+    const empty = $('emptyState');
+    empty.hidden = sectors.length > 0;
+    if (!sectors.length) {
+      const causes = [
+        state.sector !== 'ALL' ? `nhóm “${selectedGroupLabel()}”` : null,
+        state.exchange !== 'ALL' ? `sàn ${state.exchange}` : null,
+        state.query ? `tìm kiếm “${state.query.trim()}”` : null,
+        state.activeOnly ? 'tùy chọn “Chỉ mã có giao dịch”' : null,
+      ].filter(Boolean);
+      empty.textContent = causes.length
+        ? `Không có mã phù hợp với ${causes.join(', ')}.`
+        : 'Không có cổ phiếu trong universe hiện tại.';
+      sectorLayer.selectAll('g.treemap-sector').data([], (d) => d?.data?.name).join((enter) => enter, (update) => update, (exit) => exit.remove());
+      stockLayer.selectAll('g.treemap-stock').data([], (d) => d?.data?.symbol).join((enter) => enter, (update) => update, (exit) => exit.remove());
+      return;
+    }
 
     const stage = $('mapStage');
     const width = Math.max(stage.clientWidth, 320);
     const height = Math.max(stage.clientHeight, 420);
     svg.attr('viewBox', `0 0 ${width} ${height}`);
+    const rows = sectors.flatMap((sector) => sector.stocks);
+    const weights = displayWeights(rows);
 
     const hierarchyData = {
       name: 'MARKET',
       children: sectors.map((sector) => ({
         ...sector,
-        children: sector.stocks.map((stock) => ({ ...stock, value: Math.max(Number(stock[state.sizeMetric] || 0), 1) })),
+        children: sector.stocks.map((stock) => ({ ...stock, value: weights.get(stock.symbol) || 1 })),
       })),
     };
     const root = d3.hierarchy(hierarchyData)
@@ -301,33 +439,33 @@
       .paddingTop((node) => node.depth === 1 ? 20 : 0)
       .round(false)(root);
 
-    const sectorGroups = svg.append('g').selectAll('g')
-      .data(root.children || [])
-      .join('g');
-    sectorGroups.append('rect')
-      .attr('x', (d) => d.x0)
-      .attr('y', (d) => d.y0)
-      .attr('width', (d) => Math.max(d.x1 - d.x0, 0))
-      .attr('height', (d) => Math.max(d.y1 - d.y0, 0))
-      .attr('class', 'treemap-sector-bg')
-      .style('fill', 'var(--heatmap-sector-bg, #0b1217)')
-      .style('stroke', 'var(--heatmap-sector-stroke, #2a3942)');
-    
-    // Header strip for sectors (matching Finviz layout)
-    sectorGroups.append('rect')
-      .attr('class', 'treemap-sector-header')
-      .attr('x', (d) => d.x0)
-      .attr('y', (d) => d.y0)
-      .attr('width', (d) => Math.max(d.x1 - d.x0, 0))
-      .attr('height', (d) => (d.x1 - d.x0) >= 60 ? 20 : 0)
-      .style('fill', 'var(--heatmap-header-bg, #141e26)')
-      .style('stroke', 'none');
+    const sectorGroups = sectorLayer.selectAll('g.treemap-sector')
+      .data(root.children || [], (d) => d.data.name)
+      .join(
+        (enter) => {
+          const group = enter.append('g').attr('class', 'treemap-sector').style('opacity', 0);
+          group.append('rect').attr('class', 'treemap-sector-bg')
+            .style('fill', 'var(--heatmap-sector-bg, #0b1217)')
+            .style('stroke', 'var(--heatmap-sector-stroke, #2a3942)');
+          group.append('rect').attr('class', 'treemap-sector-header')
+            .style('fill', 'var(--heatmap-header-bg, #141e26)').style('stroke', 'none');
+          group.append('text').attr('class', 'treemap-sector-label').attr('dy', '0.05em');
+          return group;
+        },
+        (update) => update,
+        (exit) => exit.interrupt().transition().duration(140).style('opacity', 0).remove(),
+      );
+    sectorGroups.interrupt().transition().duration(220).style('opacity', 1);
+    sectorGroups.select('.treemap-sector-bg').interrupt().transition().duration(220)
+      .attr('x', (d) => d.x0).attr('y', (d) => d.y0)
+      .attr('width', (d) => Math.max(d.x1 - d.x0, 0)).attr('height', (d) => Math.max(d.y1 - d.y0, 0));
+    sectorGroups.select('.treemap-sector-header').interrupt().transition().duration(220)
+      .attr('x', (d) => d.x0).attr('y', (d) => d.y0)
+      .attr('width', (d) => Math.max(d.x1 - d.x0, 0)).attr('height', (d) => (d.x1 - d.x0) >= 60 ? 20 : 0);
 
-    sectorGroups.append('text')
-      .attr('class', 'treemap-sector-label')
+    sectorGroups.select('.treemap-sector-label')
       .attr('x', (d) => d.x0 + 6)
       .attr('y', (d) => d.y0 + 13)
-      .attr('dy', '0.05em')
       .text((d) => {
         const widthAvailable = d.x1 - d.x0;
         if (widthAvailable < 60) return '';
@@ -356,11 +494,23 @@
     svg.on('mouseleave', hideTooltip);
     d3.select('#mapStage').on('mouseleave', hideTooltip);
 
-    const leaves = svg.append('g').selectAll('g')
-      .data(root.leaves())
-      .join('g')
-      .attr('class', 'treemap-stock')
-      .attr('transform', (d) => `translate(${d.x0},${d.y0})`)
+    const leaves = stockLayer.selectAll('g.treemap-stock')
+      .data(root.leaves(), (d) => d.data.symbol)
+      .join(
+        (enter) => {
+          const group = enter.append('g').attr('class', 'treemap-stock').style('opacity', 0);
+          group.append('rect');
+          group.append('text').attr('class', 'treemap-symbol');
+          group.append('text').attr('class', 'treemap-change');
+          return group;
+        },
+        (update) => update,
+        (exit) => exit.interrupt().transition().duration(140).style('opacity', 0).remove(),
+      )
+      .attr('data-symbol', (d) => d.data.symbol)
+      .attr('tabindex', 0)
+      .attr('role', 'link')
+      .attr('aria-label', (d) => `${d.data.symbol}, ${signed(d.data.change_pct)}, ${formatMoney(d.data.trading_value)}`)
       .on('mouseenter', function (event, d) {
         showTooltip(event, d.data);
         d3.select(this).select('rect')
@@ -370,7 +520,7 @@
       })
       .on('mousemove', (event) => moveTooltip(event))
       .on('mouseleave', function (event, d) {
-        hideTooltip();
+        if (!this.classList.contains('pinned')) hideTooltip();
         d3.select(this).select('rect')
           .transition().duration(60)
           .style('stroke', 'var(--heatmap-node-stroke, rgba(255,255,255,.14))')
@@ -393,9 +543,19 @@
           return;
         }
         window.location.href = `/stock/${encodeURIComponent(d.data.symbol)}`;
+      })
+      .on('keydown', function (event, d) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          window.location.href = `/stock/${encodeURIComponent(d.data.symbol)}`;
+        }
       });
 
-    leaves.append('rect')
+    leaves.classed('pinned', (d) => d.data.symbol === pinnedSymbol);
+    leaves.interrupt().transition().duration(220)
+      .style('opacity', 1)
+      .attr('transform', (d) => `translate(${d.x0},${d.y0})`);
+    leaves.select('rect').interrupt().transition().duration(220)
       .attr('width', (d) => Math.max(d.x1 - d.x0, 0))
       .attr('height', (d) => Math.max(d.y1 - d.y0, 0))
       .attr('fill', (d) => stockColor(d.data));
@@ -471,6 +631,8 @@
       d._defaultSymbolOpacity = defaultSymbolOpacity;
       d._defaultChangeOpacity = defaultChangeOpacity;
 
+      const symbolLabel = group.select('.treemap-symbol');
+      const changeLabel = group.select('.treemap-change');
       if (tileWidth >= 6 && tileHeight >= 6) {
         const cy = tileHeight / 2;
         const cx = tileWidth / 2;
@@ -487,9 +649,7 @@
 
         const strokeW = symbolSize < 10 ? '1px' : (symbolSize < 14 ? '1.5px' : '2px');
 
-        // Ticker Symbol (Primary Label — 3 characters)
-        group.append('text')
-          .attr('class', 'treemap-symbol')
+        symbolLabel
           .attr('x', cx)
           .attr('y', symY)
           .style('font-size', `${symbolSize}px`)
@@ -497,18 +657,20 @@
           .style('opacity', defaultSymbolOpacity)
           .text(symbol);
 
-        // % Change (Secondary Label — only rendered when fitsBoth)
-        if (fitsBoth) {
-          group.append('text')
-            .attr('class', 'treemap-change')
-            .attr('x', cx)
-            .attr('y', changeY)
-            .style('font-size', `${changeSize}px`)
-            .style('opacity', defaultChangeOpacity)
-            .text(changeText);
-        }
+        changeLabel
+          .attr('x', cx)
+          .attr('y', changeY)
+          .style('font-size', `${changeSize}px`)
+          .style('opacity', defaultChangeOpacity)
+          .text(changeText);
+      } else {
+        symbolLabel.style('opacity', 0).text('');
+        changeLabel.style('opacity', 0).text('');
       }
     });
+    if (focusedSymbol && document.activeElement?.dataset?.symbol !== focusedSymbol) {
+      document.querySelector(`.treemap-stock[data-symbol="${CSS.escape(focusedSymbol)}"]`)?.focus({ preventScroll: true });
+    }
   }
 
   function renderAll() {
@@ -521,11 +683,19 @@
   }
 
   async function loadData(force = false) {
+    if (state.loadInFlight && !force) return;
+    if (force && state.loadController) state.loadController.abort();
+    const controller = new AbortController();
+    state.loadController = controller;
+    state.loadInFlight = true;
     const refresh = $('refreshButton');
     if (refresh) refresh.classList.add('spinning');
     if (!state.data) $('loadingState').hidden = false;
     try {
-      const response = await fetch(`/api/heatmap/data${force ? '?refresh=true' : ''}`, { cache: 'no-store' });
+      const response = await fetch(`/api/heatmap/data${force ? '?refresh=true' : ''}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (!data.quant_snapshot || !Array.isArray(data.sectors)) throw new Error('Payload heatmap thiếu Quant snapshot');
@@ -540,9 +710,14 @@
         loadTimeline().catch((err) => console.warn('Timeline initial load failed:', err));
       }
     } catch (error) {
+      if (error.name === 'AbortError') return;
       $('loadingState').innerHTML = `<strong class="negative">Không tải được dữ liệu heatmap</strong><span>${esc(error.message)}</span>`;
     } finally {
-      refresh.classList.remove('spinning');
+      if (state.loadController === controller) {
+        state.loadController = null;
+        state.loadInFlight = false;
+        refresh?.classList.remove('spinning');
+      }
     }
   }
 
@@ -1290,6 +1465,7 @@
     $('exchangeFilter').addEventListener('change', (event) => { state.exchange = event.target.value; renderTreemap(); });
     $('sectorFilter').addEventListener('change', (event) => { state.sector = event.target.value; renderTreemap(); });
     $('activeOnly').addEventListener('change', (event) => { state.activeOnly = event.target.checked; renderTreemap(); });
+    $('symbolSearch')?.addEventListener('input', (event) => { state.query = event.target.value; renderTreemap(); });
     $('refreshButton').addEventListener('click', () => loadData(true));
     $('resetFilters').addEventListener('click', () => {
       state.colorMode = 'performance'; state.sizeMetric = 'market_cap'; state.exchange = 'ALL'; state.sector = 'ALL'; state.activeOnly = false; state.query = '';

@@ -5,6 +5,7 @@ from datetime import datetime
 from heatmap_engine import (
     HEATMAP_MODEL_VERSION,
     HEATMAP_SCHEMA_VERSION,
+    _apply_heatmap_universe_contract,
     _apply_concentration_baseline,
     _concentration_state,
     _detect_market_anomalies,
@@ -35,6 +36,43 @@ def stock(symbol, change, value, market_cap, sector="NGAN HANG", volume=1_000, i
 
 
 class HeatmapQuantTests(unittest.TestCase):
+    def test_schema_v9_universe_excludes_funds_and_preserves_memberships(self):
+        bank = stock("AAA", 0, 0, 1_000_000, sector="NGAN HANG", volume=0)
+        bank["sector_memberships"] = [
+            {"sector": "NGAN HANG", "archetype": "BANKING"},
+            {"sector": "TAI CHINH", "archetype": "FINANCE"},
+        ]
+        idle = stock("BBB", 0, 0, 500_000, sector="TAI CHINH", volume=0)
+        fund = stock("E1VFVN30", 0, 0, 2_000_000, sector="QUY ETF", volume=0, instrument_type="ETF")
+        payload = {
+            "schema_version": 8,
+            "summary": {"total_trading_value": 0},
+            "sectors": [
+                {"name": "NGAN HANG", "code": "BANKING", "stocks": [bank]},
+                {"name": "TAI CHINH", "code": "FINANCE", "stocks": [bank, idle]},
+                {"name": "QUY ETF", "code": "FUND", "stocks": [fund]},
+            ],
+            "data_lineage": {"quant_universe": {"excluded_funds": 1}},
+        }
+
+        result = _apply_heatmap_universe_contract(
+            payload,
+            vn30_members={"AAA"},
+            vn30_meta={"source": "test-cache", "stale": True},
+        )
+
+        self.assertEqual(result["schema_version"], 9)
+        self.assertEqual(result["summary"]["total_stocks"], 2)
+        self.assertNotIn("QUY ETF", {sector["name"] for sector in result["sectors"]})
+        self.assertEqual(result["data_lineage"]["visual_universe"]["unique_symbols"], 2)
+        self.assertEqual(result["data_lineage"]["visual_universe"]["sector_membership_placements"], 3)
+        self.assertEqual(result["indices"]["VN30"]["symbols"], ["AAA"])
+        self.assertTrue(result["indices"]["VN30"]["stale"])
+        groups = {group["key"]: group for group in result["filter_groups"]}
+        self.assertEqual(groups["SECTOR:TAI CHINH"]["total_count"], 2)
+        self.assertEqual(groups["INDEX:VN30"]["total_count"], 1)
+        self.assertEqual(groups["ALL"]["active_count"], 0)
+
     def test_quant_snapshot_is_deterministic_and_auditable(self):
         stocks = [
             stock("AAA", 2.0, 500_000_000_000, 10_000_000_000_000),
@@ -179,9 +217,17 @@ class HeatmapQuantTests(unittest.TestCase):
         self.assertEqual(classify_price_status(120, 100, 120, 80)["status"], "CEILING")
 
     def test_market_session_calendar(self):
-        self.assertEqual(get_market_session(datetime(2026, 7, 31, 10, 0))["phase"], "MORNING")
+        self.assertEqual(get_market_session(datetime(2026, 7, 31, 8, 30))["phase"], "PRE_OPEN")
+        self.assertEqual(get_market_session(datetime(2026, 7, 31, 9, 5))["phase"], "ATO")
+        self.assertEqual(get_market_session(datetime(2026, 7, 31, 10, 0))["phase"], "CONTINUOUS")
         self.assertEqual(get_market_session(datetime(2026, 7, 31, 12, 0))["phase"], "LUNCH_BREAK")
         self.assertEqual(get_market_session(datetime(2026, 7, 31, 14, 35))["phase"], "ATC")
+        post_close = get_market_session(datetime(2026, 7, 31, 14, 50))
+        self.assertEqual(post_close["phase"], "POST_CLOSE_TRADING")
+        self.assertTrue(post_close["is_live_matching"])
+        self.assertEqual(post_close["exchange_sessions"]["HOSE"]["phase"], "AGREEMENT_ONLY")
+        self.assertEqual(post_close["exchange_sessions"]["HNX"]["phase"], "PLO")
+        self.assertEqual(post_close["exchange_sessions"]["UPCOM"]["phase"], "CONTINUOUS")
         self.assertEqual(get_market_session(datetime(2026, 7, 31, 15, 1))["phase"], "CLOSED")
         self.assertEqual(get_market_session(datetime(2026, 8, 1, 10, 0))["phase"], "WEEKEND")
         self.assertEqual(get_market_session(datetime(2026, 1, 1, 10, 0))["phase"], "HOLIDAY")

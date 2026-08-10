@@ -4,7 +4,7 @@ Responsible for:
 - Normalizing ticker symbols
 - Checking current Vietnam market session phase via `get_market_session()`
 - Selecting the proper data source per trading session phase:
-  - MORNING / LUNCH_BREAK / AFTERNOON / ATC / POST_CLOSE_TRADING: DNSE REST trade + secdef
+  - ATO / CONTINUOUS / LUNCH_BREAK / ATC / POST_CLOSE_TRADING: DNSE REST trade + secdef
   - CLOSED (15:00 - 15:10): DNSE REST trade (POST_CLOSE_PENDING)
   - CLOSED (>= 15:10) / PRE_OPEN / WEEKEND / HOLIDAY: Frozen Heatmap snapshot (sectors[*].stocks), with DNSE fallback for missing tickers
 - Formatting standardized JSON items with clear price labels, sources, and data quality indicators.
@@ -157,11 +157,11 @@ def quote_from_dnse_payload(
         change_vnd = round(match_price - ref_price, 2)
         change_pct = round((change_vnd / ref_price) * 100.0, 2)
 
-    phase = session.get("phase", "MORNING")
+    phase = session.get("phase", "CONTINUOUS")
     if session.get("is_finalization_pending"):
         price_type = "post_close_pending"
         label = "Đang hoàn tất dữ liệu cuối phiên"
-    elif phase in ("MORNING", "AFTERNOON", "ATC"):
+    elif phase in ("ATO", "CONTINUOUS", "MORNING", "AFTERNOON", "ATC"):
         price_type = "realtime"
         label = "Giá khớp gần nhất"
     elif phase == "LUNCH_BREAK":

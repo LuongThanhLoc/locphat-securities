@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 from sector_mapping import get_sector_info, get_sector_memberships, SECTOR_DEFINITIONS
 
-HEATMAP_SCHEMA_VERSION = 8
+HEATMAP_SCHEMA_VERSION = 9
 HEATMAP_MODEL_VERSION = "lp-market-radar-4.0"
 
 # Weekly reporting and quant baselining intentionally use different windows:
@@ -889,12 +889,14 @@ import threading
 from zoneinfo import ZoneInfo
 
 MARKET_MORNING_OPEN = dtime(9, 0)
+MARKET_ATO_END = dtime(9, 15)
 MARKET_MORNING_CLOSE = dtime(11, 30)
 MARKET_AFTERNOON_OPEN = dtime(13, 0)
 MARKET_ATC_START = dtime(14, 30)
 MARKET_MATCHING_CLOSE = dtime(14, 45)
 MARKET_POST_CLOSE_END = dtime(15, 0)
 HEATMAP_FINAL_SNAPSHOT_TIME = dtime(15, 10)
+MARKET_SCHEDULE_VERSION = "VN_CASH_MARKET_2026_08"
 
 # --------- Timezone Helper (CRITICAL): Force Ho Chi Minh (UTC+7) for market hour checks ---------
 def get_vn_now() -> datetime:
@@ -932,6 +934,39 @@ def _is_vietnam_public_holiday(current: datetime) -> bool:
         return current.strftime("%m-%d") in {"01-01", "04-30", "05-01", "09-02"}
 
 
+def _exchange_session_state(exchange: str, current_time: dtime, is_trading_day: bool) -> Dict[str, Any]:
+    """Return the exchange-specific cash-equity phase for the supplied VN time."""
+    exchange = str(exchange or "").upper()
+    if not is_trading_day:
+        return {"phase": "CLOSED", "label": "Đóng cửa", "order_types": [], "is_matching": False}
+    if current_time < MARKET_MORNING_OPEN:
+        return {"phase": "PRE_OPEN", "label": "Chờ mở cửa", "order_types": [], "is_matching": False}
+    if current_time < MARKET_ATO_END:
+        if exchange == "HOSE":
+            return {"phase": "ATO", "label": "Khớp lệnh mở cửa", "order_types": ["ATO", "LO"], "is_matching": True}
+        order_types = ["LO", "MTL", "MOK", "MAK"] if exchange == "HNX" else ["LO"]
+        return {"phase": "CONTINUOUS", "label": "Khớp lệnh liên tục", "order_types": order_types, "is_matching": True}
+    if current_time < MARKET_MORNING_CLOSE:
+        order_types = ["LO", "MTL", "MOK", "MAK"] if exchange == "HNX" else ["LO"]
+        return {"phase": "CONTINUOUS", "label": "Khớp lệnh liên tục", "order_types": order_types, "is_matching": True}
+    if current_time < MARKET_AFTERNOON_OPEN:
+        return {"phase": "LUNCH_BREAK", "label": "Nghỉ trưa", "order_types": [], "is_matching": False}
+    if current_time < MARKET_ATC_START:
+        order_types = ["LO", "MTL", "MOK", "MAK"] if exchange == "HNX" else ["LO"]
+        return {"phase": "CONTINUOUS", "label": "Khớp lệnh liên tục", "order_types": order_types, "is_matching": True}
+    if current_time < MARKET_MATCHING_CLOSE:
+        if exchange in {"HOSE", "HNX"}:
+            return {"phase": "ATC", "label": "Khớp lệnh đóng cửa", "order_types": ["ATC", "LO"], "is_matching": True}
+        return {"phase": "CONTINUOUS", "label": "Khớp lệnh liên tục", "order_types": ["LO"], "is_matching": True}
+    if current_time < MARKET_POST_CLOSE_END:
+        if exchange == "HOSE":
+            return {"phase": "AGREEMENT_ONLY", "label": "Chỉ giao dịch thỏa thuận", "order_types": [], "is_matching": False}
+        if exchange == "HNX":
+            return {"phase": "PLO", "label": "Khớp lệnh sau giờ", "order_types": ["PLO"], "is_matching": True}
+        return {"phase": "CONTINUOUS", "label": "Khớp lệnh liên tục", "order_types": ["LO"], "is_matching": True}
+    return {"phase": "CLOSED", "label": "Đóng cửa", "order_types": [], "is_matching": False}
+
+
 def get_market_session(now: Optional[datetime] = None) -> Dict[str, Any]:
     """Describe the cash-market session using Vietnam local time."""
     current = now or get_vn_now()
@@ -945,12 +980,14 @@ def get_market_session(now: Optional[datetime] = None) -> Dict[str, Any]:
         phase = "WEEKEND" if is_weekend else "HOLIDAY"
     elif current_time < MARKET_MORNING_OPEN:
         phase = "PRE_OPEN"
+    elif current_time < MARKET_ATO_END:
+        phase = "ATO"
     elif current_time < MARKET_MORNING_CLOSE:
-        phase = "MORNING"
+        phase = "CONTINUOUS"
     elif current_time < MARKET_AFTERNOON_OPEN:
         phase = "LUNCH_BREAK"
     elif current_time < MARKET_ATC_START:
-        phase = "AFTERNOON"
+        phase = "CONTINUOUS"
     elif current_time < MARKET_MATCHING_CLOSE:
         phase = "ATC"
     elif current_time < MARKET_POST_CLOSE_END:
@@ -960,17 +997,28 @@ def get_market_session(now: Optional[datetime] = None) -> Dict[str, Any]:
 
     is_final_snapshot_time = is_trading_day and current_time >= HEATMAP_FINAL_SNAPSHOT_TIME
     is_finalization_pending = is_trading_day and (MARKET_POST_CLOSE_END <= current_time < HEATMAP_FINAL_SNAPSHOT_TIME)
+    exchange_sessions = {
+        exchange: _exchange_session_state(exchange, current_time, is_trading_day)
+        for exchange in ("HOSE", "HNX", "UPCOM")
+    }
+    is_live_matching = any(item["is_matching"] for item in exchange_sessions.values())
+    detail_label = " · ".join(
+        f"{exchange} {item['label']}" for exchange, item in exchange_sessions.items()
+    )
 
     return {
         "local_time": current.strftime("%Y-%m-%dT%H:%M:%S+07:00"),
         "calendar_date": date_key,
         "phase": phase,
+        "schedule_version": MARKET_SCHEDULE_VERSION,
         "is_trading_day": is_trading_day,
-        "is_live_matching": phase in {"MORNING", "AFTERNOON", "ATC"},
+        "is_live_matching": is_live_matching,
         "is_closed": phase in {"WEEKEND", "HOLIDAY", "CLOSED"},
-        "can_poll": phase in {"MORNING", "LUNCH_BREAK", "AFTERNOON", "ATC", "POST_CLOSE_TRADING"},
+        "can_poll": phase in {"ATO", "CONTINUOUS", "LUNCH_BREAK", "ATC", "POST_CLOSE_TRADING"},
         "is_final_snapshot_time": is_final_snapshot_time,
         "is_finalization_pending": is_finalization_pending,
+        "exchange_sessions": exchange_sessions,
+        "detail_label": detail_label,
     }
 
 def is_market_open_time() -> bool:
@@ -1326,6 +1374,196 @@ def _is_quant_stock(stock: Dict[str, Any]) -> bool:
 
 def _is_active_stock(stock: Dict[str, Any]) -> bool:
     return float(stock.get("volume", 0) or 0) > 0 or float(stock.get("trading_value", 0) or 0) > 0
+
+
+def _normalized_heatmap_memberships(
+    stock: Dict[str, Any], sector: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, str]]:
+    """Return stable, unique sector memberships for one heatmap symbol."""
+    sector = sector or {}
+    raw_memberships = stock.get("sector_memberships") or []
+    if not isinstance(raw_memberships, (list, tuple)):
+        raw_memberships = []
+    candidates = [
+        *raw_memberships,
+        {
+            "sector": stock.get("sector") or sector.get("name") or "Khác",
+            "archetype": stock.get("sector_code") or sector.get("code") or "OTHER",
+        },
+    ]
+    memberships: List[Dict[str, str]] = []
+    seen = set()
+    for raw in candidates:
+        if isinstance(raw, str):
+            name, archetype = raw.strip(), "OTHER"
+        elif isinstance(raw, dict):
+            name = str(raw.get("sector") or raw.get("name") or "").strip()
+            archetype = str(raw.get("archetype") or raw.get("code") or "OTHER").strip()
+        else:
+            continue
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        memberships.append({"sector": name, "archetype": archetype or "OTHER"})
+    return memberships or [{"sector": "Khác", "archetype": "OTHER"}]
+
+
+def _load_heatmap_vn30_contract() -> Tuple[set, Dict[str, Any]]:
+    """Use the Bubble module's durable VN30 cache without creating import cycles."""
+    try:
+        from market_bubble_engine import get_vn30_members
+
+        return get_vn30_members()
+    except Exception as exc:
+        logger.warning("Heatmap VN30 membership unavailable: %s", exc)
+        return set(), {
+            "source": "unavailable",
+            "stale": True,
+            "fetched_at": None,
+            "error": str(exc),
+        }
+
+
+def _apply_heatmap_universe_contract(
+    payload: Dict[str, Any],
+    vn30_members: Optional[set] = None,
+    vn30_meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Normalize a live or legacy payload to the schema-v9 visual universe.
+
+    Sector arrays deliberately retain full memberships for sector analytics.
+    The browser is given enough metadata to draw each symbol once in the
+    all-market view while still finding it through every secondary sector.
+    """
+    sectors = payload.get("sectors") if isinstance(payload.get("sectors"), list) else []
+    membership_union: Dict[str, List[Dict[str, str]]] = {}
+    membership_seen: Dict[str, set] = {}
+
+    for sector in sectors:
+        for stock in sector.get("stocks", []) or []:
+            if not _is_quant_stock(stock):
+                continue
+            symbol = str(stock.get("symbol") or "").upper().strip()
+            if not symbol:
+                continue
+            for membership in _normalized_heatmap_memberships(stock, sector):
+                name = membership["sector"]
+                if name in membership_seen.setdefault(symbol, set()):
+                    continue
+                membership_seen[symbol].add(name)
+                membership_union.setdefault(symbol, []).append(membership)
+
+    normalized_sectors: List[Dict[str, Any]] = []
+    unique: Dict[str, Dict[str, Any]] = {}
+    placements = 0
+    for raw_sector in sectors:
+        sector = dict(raw_sector)
+        stocks: List[Dict[str, Any]] = []
+        for raw_stock in raw_sector.get("stocks", []) or []:
+            if not _is_quant_stock(raw_stock):
+                continue
+            symbol = str(raw_stock.get("symbol") or "").upper().strip()
+            if not symbol:
+                continue
+            stock = dict(raw_stock)
+            stock["symbol"] = symbol
+            stock["sector_memberships"] = membership_union.get(symbol) or _normalized_heatmap_memberships(stock, raw_sector)
+            stock["is_active"] = _is_active_stock(stock)
+            stock["index_memberships"] = []
+            stocks.append(stock)
+            placements += 1
+
+            current = unique.get(symbol)
+            if current is None or float(stock.get("trading_value", 0) or 0) > float(current.get("trading_value", 0) or 0):
+                unique[symbol] = stock
+
+        if not stocks:
+            continue
+        stocks.sort(key=lambda row: float(row.get("market_cap", 0) or 0), reverse=True)
+        sector["stocks"] = stocks
+        sector["total_market_cap"] = sum(max(float(row.get("market_cap", 0) or 0), 0.0) for row in stocks)
+        sector["total_trading_value"] = sum(max(float(row.get("trading_value", 0) or 0), 0.0) for row in stocks)
+        sector["avg_change_pct"] = calculate_sector_change_percent(stocks)
+        normalized_sectors.append(sector)
+
+    if vn30_members is None or vn30_meta is None:
+        loaded_members, loaded_meta = _load_heatmap_vn30_contract()
+        vn30_members = loaded_members if vn30_members is None else vn30_members
+        vn30_meta = loaded_meta if vn30_meta is None else vn30_meta
+    vn30_members = {str(symbol).upper().strip() for symbol in (vn30_members or set()) if str(symbol).strip()}
+    vn30_meta = vn30_meta or {}
+
+    for sector in normalized_sectors:
+        for stock in sector["stocks"]:
+            memberships = ["VN30"] if stock["symbol"] in vn30_members else []
+            stock["index_memberships"] = memberships
+            stock["is_vn30"] = bool(memberships)
+    for symbol, stock in unique.items():
+        memberships = ["VN30"] if symbol in vn30_members else []
+        stock["index_memberships"] = memberships
+        stock["is_vn30"] = bool(memberships)
+
+    # Keep the filter contract byte-for-byte compatible with Market Bubbles.
+    try:
+        from market_bubble_engine import build_filter_groups
+
+        filter_groups = build_filter_groups(unique.values(), vn30_members, vn30_meta)
+    except Exception as exc:
+        logger.warning("Heatmap filter groups degraded: %s", exc)
+        filter_groups = [{
+            "key": "ALL", "type": "all", "label": "Tất cả ngành / chỉ số",
+            "total_count": len(unique),
+            "active_count": sum(int(bool(stock.get("is_active"))) for stock in unique.values()),
+            "enabled": bool(unique),
+        }]
+
+    rows = list(unique.values())
+    active_rows = [stock for stock in rows if stock.get("is_active")]
+    summary = payload.setdefault("summary", {})
+    summary.update({
+        "total_stocks": len(rows),
+        "advances": sum(stock.get("status") == "GAIN" for stock in active_rows),
+        "declines": sum(stock.get("status") == "LOSS" for stock in active_rows),
+        "unchanged": sum(stock.get("status") == "REF" for stock in active_rows),
+        "inactive_count": len(rows) - len(active_rows),
+        "ceilings": sum(stock.get("status") == "CEILING" for stock in active_rows),
+        "floors": sum(stock.get("status") == "FLOOR" for stock in active_rows),
+        "total_market_cap": sum(max(float(stock.get("market_cap", 0) or 0), 0.0) for stock in rows),
+        "matched_trading_value": sum(max(float(stock.get("trading_value", 0) or 0), 0.0) for stock in rows),
+    })
+
+    vn30_rows = [stock for symbol, stock in unique.items() if symbol in vn30_members]
+    payload["schema_version"] = HEATMAP_SCHEMA_VERSION
+    payload["sectors"] = sorted(normalized_sectors, key=lambda row: float(row.get("total_market_cap", 0) or 0), reverse=True)
+    payload["filter_groups"] = filter_groups
+    payload["indices"] = {
+        "VN30": {
+            "symbols": sorted(stock["symbol"] for stock in vn30_rows),
+            "total_count": len(vn30_rows),
+            "active_count": sum(int(bool(stock.get("is_active"))) for stock in vn30_rows),
+            "available": bool(vn30_rows),
+            "stale": bool(vn30_meta.get("stale")),
+            "source": vn30_meta.get("source") or "unavailable",
+            "fetched_at": vn30_meta.get("fetched_at"),
+            "error": vn30_meta.get("error"),
+        }
+    }
+    lineage = payload.setdefault("data_lineage", {})
+    lineage["sector_count"] = len(normalized_sectors)
+    lineage["visual_universe"] = {
+        "policy": "UNIQUE_COMMON_STOCK_PRIMARY_SECTOR",
+        "unique_symbols": len(unique),
+        "sector_membership_placements": placements,
+        "multi_sector_extra_placements": max(placements - len(unique), 0),
+        "zero_trading_value_count": sum(float(stock.get("trading_value", 0) or 0) <= 0 for stock in rows),
+    }
+    lineage["quant_universe"] = {
+        "instrument_type": "STOCK",
+        "exchanges": ["HOSE", "HNX", "UPCOM"],
+        "count": len(unique),
+        "excluded_funds": (lineage.get("quant_universe") or {}).get("excluded_funds", 0),
+    }
+    return payload
 
 
 def _reference_market_cap(stock: Dict[str, Any]) -> float:
@@ -1721,7 +1959,7 @@ def _get_recent_v4_quant_snapshots() -> List[Dict[str, Any]]:
 
 
 def _upgrade_snapshot_to_v4(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Recompute legacy full snapshots in memory without rewriting frozen rows."""
+    """Recompute legacy full snapshots and upgrade them to schema v9 in memory."""
     quant = payload.get("quant_snapshot") or {}
     if payload.get("schema_version", 0) >= HEATMAP_SCHEMA_VERSION and quant.get("model_version") == HEATMAP_MODEL_VERSION:
         return payload
@@ -1731,37 +1969,22 @@ def _upgrade_snapshot_to_v4(payload: Dict[str, Any]) -> Dict[str, Any]:
         payload.setdefault("data_quality", {}).setdefault("warnings", []).append(
             "LEGACY_MODEL: snapshot khong co du dong co phieu de tai tinh Quant v4."
         )
+        payload["schema_version"] = HEATMAP_SCHEMA_VERSION
+        payload.setdefault("filter_groups", [{
+            "key": "ALL", "type": "all", "label": "Tất cả ngành / chỉ số",
+            "total_count": 0, "active_count": 0, "enabled": False,
+        }])
         return payload
 
-    source_model_version = quant.get("model_version") or "unknown"
-    stocks = list(symbol_index.values())
-    sectors = payload.get("sectors") if isinstance(payload.get("sectors"), list) else []
-    new_quant = build_quant_snapshot(stocks, sectors)
-    new_quant["source_snapshot_model_version"] = source_model_version
-    new_quant["recomputed_from_legacy"] = True
-    payload["quant_snapshot"] = new_quant
-    payload["schema_version"] = HEATMAP_SCHEMA_VERSION
-
-    eligible = [stock for stock in stocks if _is_quant_stock(stock)]
-    summary = payload.setdefault("summary", {})
-    summary.update({
-        "total_stocks": len(eligible),
-        "advances": sum(stock.get("status") == "GAIN" and _is_active_stock(stock) for stock in eligible),
-        "declines": sum(stock.get("status") == "LOSS" and _is_active_stock(stock) for stock in eligible),
-        "unchanged": sum(stock.get("status") == "REF" and _is_active_stock(stock) for stock in eligible),
-        "inactive_count": sum(not _is_active_stock(stock) for stock in eligible),
-        "ceilings": sum(stock.get("status") == "CEILING" and _is_active_stock(stock) for stock in eligible),
-        "floors": sum(stock.get("status") == "FLOOR" and _is_active_stock(stock) for stock in eligible),
-        "total_market_cap": sum(max(float(stock.get("market_cap", 0) or 0), 0.0) for stock in eligible),
-        "matched_trading_value": sum(max(float(stock.get("trading_value", 0) or 0), 0.0) for stock in eligible),
-    })
-    payload.setdefault("data_lineage", {})["quant_universe"] = {
-        "instrument_type": "STOCK",
-        "exchanges": ["HOSE", "HNX", "UPCOM"],
-        "count": len(eligible),
-        "excluded_funds": sum(not _is_quant_stock(stock) for stock in stocks),
-    }
-    return payload
+    if quant.get("model_version") != HEATMAP_MODEL_VERSION:
+        source_model_version = quant.get("model_version") or "unknown"
+        stocks = list(symbol_index.values())
+        sectors = payload.get("sectors") if isinstance(payload.get("sectors"), list) else []
+        new_quant = build_quant_snapshot(stocks, sectors)
+        new_quant["source_snapshot_model_version"] = source_model_version
+        new_quant["recomputed_from_legacy"] = True
+        payload["quant_snapshot"] = new_quant
+    return _apply_heatmap_universe_contract(payload)
 
 
 # ---------- Intraday Snapshot Poller (Task 2) ----------
@@ -1796,7 +2019,7 @@ def _classify_intraday_phase(current_time: dtime) -> str:
     if current_time < MARKET_MORNING_CLOSE:
         # 9:00–9:15 is ATO; everything else inside the morning window is
         # continuous matching.
-        if current_time < dtime(9, 15):
+        if current_time < MARKET_ATO_END:
             return "ATO"
         return "CONTINUOUS"
     if current_time < MARKET_AFTERNOON_OPEN:
@@ -1902,7 +2125,8 @@ def _intraday_poll_loop() -> None:
                 continue
 
             stock_records, board_source, board_fetched_at, requested_symbols = _collect_market_board()
-            sectors_list = _group_stocks_by_sector(stock_records)
+            visual_stock_records = [stock for stock in stock_records if _is_quant_stock(stock)]
+            sectors_list = _group_stocks_by_sector(visual_stock_records)
             session_now = get_market_session(now_dt)
             payload = _assemble_heatmap_payload(
                 stock_records,
@@ -1913,6 +2137,7 @@ def _intraday_poll_loop() -> None:
                 now_dt,
                 requested_symbols=requested_symbols,
             )
+            payload = _apply_heatmap_universe_contract(payload)
             snapshot_iso = now_dt.strftime("%Y-%m-%dT%H:%M:%S+07:00")
             save_intraday_snapshot(snapshot_iso, phase, payload)
             print(f"[Intraday Poller] Saved {phase} snapshot @ {snapshot_iso} ({len(stock_records)} mã).")
@@ -1944,7 +2169,8 @@ def _build_intraday_heatmap_data() -> Optional[Dict[str, Any]]:
         return None
     try:
         stock_records, board_source, board_fetched_at, requested_symbols = _collect_market_board()
-        sectors_list = _group_stocks_by_sector(stock_records)
+        visual_stock_records = [stock for stock in stock_records if _is_quant_stock(stock)]
+        sectors_list = _group_stocks_by_sector(visual_stock_records)
         payload = _assemble_heatmap_payload(
             stock_records,
             sectors_list,
@@ -1954,6 +2180,7 @@ def _build_intraday_heatmap_data() -> Optional[Dict[str, Any]]:
             now_dt,
             requested_symbols=requested_symbols,
         )
+        payload = _apply_heatmap_universe_contract(payload)
         phase = _classify_intraday_phase(now_dt.time())
         snapshot_iso = now_dt.strftime("%Y-%m-%dT%H:%M:%S+07:00")
         save_intraday_snapshot(snapshot_iso, phase, payload)
@@ -2330,7 +2557,8 @@ def fetch_market_heatmap_data(force_refresh: bool = False) -> Dict[str, Any]:
         # sieucophieu.vn/bang-dien grouping). Each placement contributes to
         # that sector's market-cap and trading-value totals so the sector
         # % change matches sieucophieu's market-cap-weighted calculation.
-        sectors_list = _group_stocks_by_sector(stock_records)
+        visual_stock_records = [stock for stock in stock_records if _is_quant_stock(stock)]
+        sectors_list = _group_stocks_by_sector(visual_stock_records)
 
         payload = _assemble_heatmap_payload(
             stock_records,
@@ -2341,6 +2569,7 @@ def fetch_market_heatmap_data(force_refresh: bool = False) -> Dict[str, Any]:
             now_dt,
             requested_symbols=requested_symbols,
         )
+        payload = _apply_heatmap_universe_contract(payload)
 
         # Outside a live trading date, one final fetch is persisted under the
         # source trading date. All later users receive SQLite only.

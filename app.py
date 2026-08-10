@@ -547,7 +547,7 @@ def get_heatmap_data(response: Response, refresh: bool = False):
 
 @app.get("/api/market-bubbles/data")
 def get_market_bubbles_data(response: Response, range: str = "1D", refresh: bool = False):
-    """Return the deduplicated, active common-stock bubble universe."""
+    """Return the full listed common-stock universe for market bubbles."""
     from market_bubble_engine import build_market_bubble_dataset
 
     try:
