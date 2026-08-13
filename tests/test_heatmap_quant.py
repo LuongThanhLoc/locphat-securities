@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from datetime import datetime
 
@@ -14,6 +15,7 @@ from heatmap_engine import (
     build_quant_snapshot,
     classify_price_status,
     get_market_session,
+    _load_heatmap_vn30_contract,
 )
 
 
@@ -36,6 +38,14 @@ def stock(symbol, change, value, market_cap, sector="NGAN HANG", volume=1_000, i
 
 
 class HeatmapQuantTests(unittest.TestCase):
+    def test_heatmap_loads_vn30_from_shared_verified_gateway(self):
+        meta = {"snapshot_id": "shared-vn30", "source_agreement": True, "stale": False}
+        with patch("rrg_index_membership.get_index_membership", return_value=(["FPT", "VCB"], meta)) as gateway:
+            symbols, returned_meta = _load_heatmap_vn30_contract()
+        gateway.assert_called_once_with("VN30")
+        self.assertEqual(symbols, {"FPT", "VCB"})
+        self.assertEqual(returned_meta["snapshot_id"], "shared-vn30")
+
     def test_schema_v9_universe_excludes_funds_and_preserves_memberships(self):
         bank = stock("AAA", 0, 0, 1_000_000, sector="NGAN HANG", volume=0)
         bank["sector_memberships"] = [

@@ -44,6 +44,7 @@ function escapeHtml(value) {
    without depending on watchlist.js being loaded.
    ========================================================================== */
 const WL_STORAGE_KEY = 'lps_personal_watchlist_v1';
+let _wlSyncTimer = 0;
 
 function _wlDefaultAi() {
   return { available: false, analyzed_at: null, quant_status: null, score: null,
@@ -61,6 +62,10 @@ function _wlLoad() {
 
 function _wlSave(items) {
   try { localStorage.setItem(WL_STORAGE_KEY, JSON.stringify(items)); } catch {}
+  clearTimeout(_wlSyncTimer);
+  _wlSyncTimer = setTimeout(() => window.LPAuth?.syncWatchlist(items).catch(error => {
+    console.warn('[Watchlist] Supabase sync failed:', error);
+  }), 180);
 }
 
 function _wlIsIn(symbol) {
@@ -341,6 +346,8 @@ function renderSearchHistory() {
 let ALL_STOCKS_INDEX = [];
 
 async function loadAllStocksIndex() {
+  await window.LPAuth?.ready;
+  if (!window.LPAuth?.isAuthenticated()) return;
   if (ALL_STOCKS_INDEX.length > 0) return;
   try {
     const res = await fetch('/api/all_stocks');
@@ -438,6 +445,10 @@ function handleSearchModalInput(query) {
 }
 
 function openSearchModal(initialValue = '') {
+  if (!window.LPAuth?.isAuthenticated()) {
+    window.LPAuth?.open({ trigger: document.activeElement, onSuccess: () => openSearchModal(initialValue) });
+    return;
+  }
   const overlay = document.getElementById('searchModalOverlay');
   const modalInput = document.getElementById('modalSymbolInput');
   if (!overlay) {
@@ -515,9 +526,6 @@ function truncateText(text, maxLen) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Pre-load all stocks index for autocomplete
-  loadAllStocksIndex();
-
   // Check URL routing to open appropriate view
   const path = window.location.pathname.toLowerCase();
   const urlParams = new URLSearchParams(window.location.search);
@@ -737,6 +745,10 @@ function hideError() {
 async function fetchStockData(symbol) {
   if (!symbol) return;
   const sym = symbol.trim().toUpperCase();
+  if (!window.LPAuth?.isAuthenticated()) {
+    window.LPAuth?.open({ trigger: document.activeElement, next: `/stock/${encodeURIComponent(sym)}` });
+    return;
+  }
   const targetPath = `/stock/${encodeURIComponent(sym)}`;
   if (window.location.pathname.toUpperCase() !== targetPath.toUpperCase()) {
     window.location.href = targetPath;
@@ -2142,6 +2154,10 @@ async function fetchAiReport(symbol) {
   const sym = symbol || currentStockSymbol;
   if (!sym) {
     openSearchModal('');
+    return;
+  }
+  if (!window.LPAuth?.isAuthenticated()) {
+    window.LPAuth?.open({ trigger: document.activeElement, onSuccess: () => fetchAiReport(sym) });
     return;
   }
   const placeholder = document.getElementById('aiThesisPlaceholder');
@@ -3601,7 +3617,8 @@ function renderTrackRecordTable(records) {
     }
 
     // Source Badge
-    const sourceBadge = (r.source === 'deepseek' || r.source === 'deepseek-v4-flash' || r.source === 'gemini')
+    const isAiSource = r.source && (r.source.toLowerCase().includes('deepseek') || r.source.toLowerCase().includes('gemini'));
+    const sourceBadge = isAiSource
       ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">Lộc Phát AI</span>`
       : `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">Fallback</span>`;
 

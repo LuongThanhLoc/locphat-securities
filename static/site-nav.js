@@ -62,6 +62,8 @@ if (!window.handleLogoFallback) {
 
   try {
     const HISTORY_KEY = 'lps_search_history';
+    const PREMIUM_KEYS = new Set(['bubbles', 'calendar', 'backtest', 'rrg', 'watchlist']);
+    const lock = '<span class="lp-auth-lock" aria-label="Yêu cầu đăng nhập" title="Yêu cầu đăng nhập">🔒</span>';
 
     // 1. Navigation items definitions (Single Source of Truth)
     const NAV_ITEMS = [
@@ -91,10 +93,17 @@ if (!window.handleLogoFallback) {
         ],
       },
       {
-        key: 'calendar',
-        href: '/calendar',
-        label: 'Lịch doanh nghiệp',
-        description: 'Sự kiện và quyền cổ đông',
+        key: 'news',
+        label: 'Tin tức',
+        isDropdown: true,
+        children: [
+          {
+            key: 'calendar',
+            href: '/calendar',
+            label: 'Lịch doanh nghiệp',
+            description: 'Sự kiện và quyền cổ đông',
+          },
+        ],
       },
       {
         key: 'tech',
@@ -168,8 +177,8 @@ if (!window.handleLogoFallback) {
                 </button>
                 <div class="lp-dropdown-menu" role="menu">
                   ${item.children.map(child => `
-                    <a class="lp-dropdown-item ${active === child.key ? 'active' : ''}" href="${child.href}" role="menuitem">
-                      <div class="lp-dropdown-item-title">${esc(child.label)}</div>
+                    <a class="lp-dropdown-item ${active === child.key ? 'active' : ''}" href="${child.href}" role="menuitem" ${PREMIUM_KEYS.has(child.key) ? 'data-lp-premium-link' : ''}>
+                      <div class="lp-dropdown-item-title">${esc(child.label)} ${PREMIUM_KEYS.has(child.key) ? lock : ''}</div>
                       ${child.description ? `<div class="lp-dropdown-item-sub">${esc(child.description)}</div>` : ''}
                     </a>
                   `).join('')}
@@ -178,7 +187,7 @@ if (!window.handleLogoFallback) {
             `;
           }
           return `
-            <a class="lp-nav-link ${active === item.key ? 'active' : ''}" href="${item.href}">${esc(item.label)}</a>
+            <a class="lp-nav-link ${active === item.key ? 'active' : ''}" href="${item.href}" ${PREMIUM_KEYS.has(item.key) ? 'data-lp-premium-link' : ''}>${esc(item.label)} ${PREMIUM_KEYS.has(item.key) ? lock : ''}</a>
           `;
         }).join('')}
       </nav>
@@ -192,6 +201,7 @@ if (!window.handleLogoFallback) {
           <span>Tra cứu mã cổ phiếu...</span>
           <kbd>/</kbd>
         </button>
+        <span data-lp-auth-action></span>
       </div>
 
       <div class="lp-nav-mobile-actions">
@@ -266,10 +276,10 @@ if (!window.handleLogoFallback) {
                     ${item.children.map(child => {
                       const isActive = active === child.key;
                       return `
-                        <a class="lp-mobile-nav-link ${isActive ? 'active' : ''}" href="${child.href}">
+                        <a class="lp-mobile-nav-link ${isActive ? 'active' : ''}" href="${child.href}" ${PREMIUM_KEYS.has(child.key) ? 'data-lp-premium-link' : ''}>
                           <div class="lp-mobile-nav-text">
                             <div class="lp-mobile-nav-title">
-                              <strong>${esc(child.label)}</strong>
+                              <strong>${esc(child.label)} ${PREMIUM_KEYS.has(child.key) ? lock : ''}</strong>
                               ${isActive ? `<span class="lp-mobile-nav-badge">Đang xem</span>` : ''}
                             </div>
                             <small>${esc(child.description)}</small>
@@ -285,10 +295,10 @@ if (!window.handleLogoFallback) {
               }
               const isActive = active === item.key;
               return `
-                <a class="lp-mobile-nav-link ${isActive ? 'active' : ''}" href="${item.href}">
+                <a class="lp-mobile-nav-link ${isActive ? 'active' : ''}" href="${item.href}" ${PREMIUM_KEYS.has(item.key) ? 'data-lp-premium-link' : ''}>
                   <div class="lp-mobile-nav-text">
                     <div class="lp-mobile-nav-title">
-                      <strong>${esc(item.label)}</strong>
+                      <strong>${esc(item.label)} ${PREMIUM_KEYS.has(item.key) ? lock : ''}</strong>
                       ${isActive ? `<span class="lp-mobile-nav-badge">Đang xem</span>` : ''}
                     </div>
                     <small>${esc(item.description)}</small>
@@ -302,6 +312,7 @@ if (!window.handleLogoFallback) {
           </nav>
 
           <div class="lp-mobile-nav-footer">
+            <span data-lp-auth-action></span>
             <small>Lộc Phát Securities © 2026</small>
           </div>
         </aside>
@@ -440,6 +451,10 @@ if (!window.handleLogoFallback) {
     const openStock = (symbol, name = '') => {
       const sym = String(symbol || '').trim().toUpperCase();
       if (!sym) return;
+      if (!window.LPAuth?.isAuthenticated()) {
+        window.LPAuth?.open({ trigger: document.activeElement, next: `/stock/${encodeURIComponent(sym)}` });
+        return;
+      }
       const history = loadHistory().filter((item) => item.symbol !== sym);
       history.unshift({ symbol: sym, organ_name: name, timestamp: Date.now() });
       saveHistory(history);
@@ -491,6 +506,10 @@ if (!window.handleLogoFallback) {
     const openSearch = (event) => {
       lastSearchTrigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement;
       closeMobileNav();
+      if (!window.LPAuth?.isAuthenticated()) {
+        window.LPAuth?.open({ trigger: lastSearchTrigger, onSuccess: () => openSearch({ currentTarget: lastSearchTrigger }) });
+        return;
+      }
       overlay.classList.add('open');
       overlay.setAttribute('aria-hidden', 'false');
       document.body.classList.add('lp-search-open');
@@ -514,6 +533,22 @@ if (!window.handleLogoFallback) {
     document.querySelectorAll('[data-lp-open-search]').forEach(button => {
       button.addEventListener('click', openSearch);
     });
+
+    document.querySelectorAll('[data-lp-premium-link]').forEach(link => {
+      link.addEventListener('click', (event) => {
+        if (window.LPAuth?.isAuthenticated()) return;
+        event.preventDefault();
+        closeMobileNav();
+        window.LPAuth?.open({ trigger: link, next: link.getAttribute('href') });
+      });
+    });
+
+    document.addEventListener('click', (event) => {
+      const link = event.target.closest?.('a[href^="/stock/"]');
+      if (!link || window.LPAuth?.isAuthenticated()) return;
+      event.preventDefault();
+      window.LPAuth?.open({ trigger: link, next: link.getAttribute('href') });
+    }, true);
 
     document.getElementById('lpSearchClose')?.addEventListener('click', closeSearch);
     clearButton?.addEventListener('click', () => {

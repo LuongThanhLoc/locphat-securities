@@ -71,6 +71,14 @@ class MarketBubbleEngineTests(unittest.TestCase):
         self.assertEqual(bubbles._reference_lag_days(date(2026, 7, 31), "2026-07-17"), 14)
         self.assertEqual(bubbles._reference_lag_days(date(2026, 7, 31), "2026-07-16"), 15)
 
+    def test_vn30_membership_delegates_to_shared_verified_gateway(self):
+        meta = {"snapshot_id": "shared-vn30", "source_agreement": True, "stale": False}
+        with patch.object(bubbles, "get_index_membership", return_value=(["FPT", "VCB"], meta)) as gateway:
+            symbols, returned_meta = bubbles.get_vn30_members(force_refresh=True)
+        gateway.assert_called_once_with("VN30", force_refresh=True)
+        self.assertEqual(symbols, {"FPT", "VCB"})
+        self.assertEqual(returned_meta["snapshot_id"], "shared-vn30")
+
     def test_tradingview_golden_examples_use_anchor_open_not_close(self):
         self.assertEqual(bubbles.calculate_change_pct(41_500, 65_000), -36.15)
         self.assertEqual(bubbles.calculate_change_pct(215_000, 59_250), 262.87)

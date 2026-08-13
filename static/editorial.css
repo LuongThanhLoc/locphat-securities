@@ -1153,17 +1153,53 @@ body.lp-editorial {
   min-height: 46px;
   color: var(--lp-muted);
   border-bottom: 1px solid var(--lp-line-strong);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.lp-page-heatmap .market-ribbon-actions,
+.lp-page-heatmap .market-ribbon > div:last-child {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 .lp-page-heatmap .market-state strong { color: var(--lp-ink); }
 .lp-page-heatmap .status-dot { box-shadow: none; }
 .lp-page-heatmap .ai-button {
-  min-height: 44px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 16px;
   background: var(--lp-navy);
-  border-color: var(--lp-navy);
-  border-radius: 0;
+  border: 1px solid var(--lp-navy);
+  border-radius: 6px;
   color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(6, 74, 107, 0.25);
+  cursor: pointer;
+  flex-shrink: 0;
 }
-.lp-page-heatmap .ai-button svg { color: #f5cf79; }
+.lp-page-heatmap .ai-button span {
+  display: inline-block !important;
+  color: #fff !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+}
+.lp-page-heatmap .ai-button svg,
+.lp-page-heatmap .ai-button i {
+  color: #f5cf79 !important;
+  width: 15px !important;
+  height: 15px !important;
+}
 .lp-page-heatmap .summary-grid {
   background: var(--lp-paper-strong);
   border-color: var(--lp-line);
@@ -2028,8 +2064,42 @@ body.lp-editorial {
   .lp-page-calendar .event-date-role { background: var(--lp-paper-muted); border-color: var(--lp-line-soft); }
   .lp-page-calendar .event-source { border-color: var(--lp-line-soft); }
   .lp-page-heatmap .app-shell { padding-inline: 8px; }
-  .lp-page-heatmap .market-ribbon { align-items: stretch; }
-  .lp-page-heatmap .market-ribbon > div:last-child { justify-content: flex-start !important; }
+  .lp-page-heatmap .market-ribbon {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .lp-page-heatmap .market-ribbon-actions,
+  .lp-page-heatmap .market-ribbon > div:last-child {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    margin-left: auto !important;
+    flex-shrink: 0 !important;
+  }
+  .lp-page-heatmap .ai-button {
+    height: 34px !important;
+    min-height: 34px !important;
+    padding: 0 12px !important;
+    font-size: 12px !important;
+    gap: 5px !important;
+    border-radius: 6px !important;
+    flex-shrink: 0 !important;
+  }
+  .lp-page-heatmap .ai-button span {
+    display: inline-block !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+  }
+  .lp-page-heatmap .ai-button svg,
+  .lp-page-heatmap .ai-button i {
+    width: 14px !important;
+    height: 14px !important;
+  }
   .lp-page-heatmap .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lp-page-heatmap .summary-item { min-height: 82px; padding: 10px; }
   .lp-page-heatmap .market-counts { padding: 8px; overflow-x: auto; }
@@ -2547,6 +2617,39 @@ body.lp-editorial {
   background: var(--lp-navy-soft) !important;
   border-color: var(--lp-navy) !important;
   color: var(--lp-navy) !important;
+}
+.lp-page-analysis .btn-reanalyze-sm {
+  background: var(--lp-navy-soft, rgba(6, 74, 107, 0.12)) !important;
+  color: var(--lp-navy, #064a6b) !important;
+  border: 1px solid rgba(6, 74, 107, 0.3) !important;
+  border-radius: 6px !important;
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+.lp-page-analysis .btn-reanalyze-sm i {
+  color: inherit !important;
+  transition: transform 0.4s ease !important;
+}
+.lp-page-analysis .btn-reanalyze-sm:hover {
+  background: linear-gradient(135deg, #04334b 0%, #066985 100%) !important;
+  color: #ffffff !important;
+  border-color: #04334b !important;
+  box-shadow: 0 4px 14px rgba(4, 51, 75, 0.3) !important;
+  transform: translateY(-1px) !important;
+}
+.lp-page-analysis .btn-reanalyze-sm:hover i {
+  color: #ffffff !important;
+  transform: rotate(180deg) !important;
+}
+.lp-page-analysis .btn-reanalyze-sm:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 2px 6px rgba(4, 51, 75, 0.2) !important;
 }
 .lp-page-analysis .peer-input-field {
   background: var(--lp-paper) !important;

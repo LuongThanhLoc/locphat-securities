@@ -22,6 +22,11 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 from heatmap_engine import fetch_market_heatmap_data
 from market_data_provider import fetch_kbs_history, fetch_vci_history
 from corporate_calendar_engine import fetch_price_affecting_actions
+from rrg_index_membership import (
+    IndexMembershipUnavailable,
+    get_index_membership,
+    normalize_index_symbols,
+)
 
 
 SUPPORTED_RANGES = {"1D": 0, "1W": 7, "1M": 30, "1Y": 365}
@@ -40,7 +45,6 @@ _CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_b
 _DB_READY = False
 _DB_LOCK = threading.Lock()
 _WARM_LOCK = threading.Lock()
-_INDEX_LOCK = threading.Lock()
 _WARM_THREAD: Optional[threading.Thread] = None
 _WARM_STATE: Dict[str, Any] = {
     "running": False, "completed": 0, "total": 0, "error": None,
@@ -55,10 +59,6 @@ _ACTION_STATE: Dict[str, Any] = {
 _RATE_LOCK = threading.Lock()
 _RATE_TOKENS = float(UPSTREAM_REQUESTS_PER_MINUTE)
 _RATE_UPDATED_AT = time.monotonic()
-_INDEX_MEMBERSHIP_TTL_SECONDS = 6 * 3600
-_VN30_CACHE: Dict[str, Any] = {
-    "symbols": set(), "fetched_at": 0, "source": None, "stale": True,
-}
 
 
 class HistoryBar(NamedTuple):
@@ -131,17 +131,6 @@ def init_bubble_cache() -> None:
             )
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS market_bubble_index_members (
-                    index_code TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    fetched_at INTEGER NOT NULL,
-                    PRIMARY KEY (index_code, symbol)
-                )
-                """
-            )
-            conn.execute(
-                """
                 CREATE TABLE IF NOT EXISTS market_bubble_corporate_actions (
                     symbol TEXT NOT NULL,
                     event_id TEXT NOT NULL,
@@ -183,94 +172,16 @@ def init_bubble_cache() -> None:
         _DB_READY = True
 
 
-def normalize_index_symbols(raw: Any) -> List[str]:
-    """Normalize vnstock Series/DataFrame/list responses into unique tickers."""
-    if raw is None:
-        return []
-    if hasattr(raw, "columns"):
-        columns = {str(column).lower(): column for column in raw.columns}
-        column = columns.get("symbol") or columns.get("ticker") or columns.get("code")
-        values = raw[column].tolist() if column is not None else []
-    elif hasattr(raw, "tolist"):
-        values = raw.tolist()
-    elif isinstance(raw, (list, tuple, set)):
-        values = list(raw)
-    else:
-        values = []
-    symbols = set()
-    for value in values:
-        text = "" if value is None else str(value).upper().strip()
-        if text and text != "NAN" and text.isalnum():
-            symbols.add(text)
-    return sorted(symbols)
-
-
-def _read_cached_index_members(index_code: str) -> Tuple[List[str], int, Optional[str]]:
-    init_bubble_cache()
-    with sqlite3.connect(_CACHE_PATH, timeout=10) as conn:
-        rows = conn.execute(
-            "SELECT symbol, fetched_at, source FROM market_bubble_index_members WHERE index_code = ?",
-            (index_code,),
-        ).fetchall()
-    if not rows:
-        return [], 0, None
-    return sorted(str(row[0]) for row in rows), max(int(row[1]) for row in rows), str(rows[0][2])
-
-
-def _save_index_members(index_code: str, symbols: List[str], source: str, fetched_at: int) -> None:
-    init_bubble_cache()
-    with sqlite3.connect(_CACHE_PATH, timeout=10) as conn:
-        conn.execute("DELETE FROM market_bubble_index_members WHERE index_code = ?", (index_code,))
-        conn.executemany(
-            "INSERT INTO market_bubble_index_members(index_code, symbol, source, fetched_at) VALUES (?, ?, ?, ?)",
-            [(index_code, symbol, source, fetched_at) for symbol in symbols],
-        )
-        conn.commit()
-
-
-def _get_vn30_members_unlocked(force_refresh: bool = False) -> Tuple[set[str], Dict[str, Any]]:
-    """Fetch VN30 constituents from vnstock with a durable stale-cache fallback."""
-    now = int(datetime.now().timestamp())
-    if not _VN30_CACHE["symbols"]:
-        symbols, fetched_at, source = _read_cached_index_members("VN30")
-        _VN30_CACHE.update({
-            "symbols": set(symbols), "fetched_at": fetched_at,
-            "source": source, "stale": bool(symbols),
-        })
-    cache_age = now - int(_VN30_CACHE.get("fetched_at") or 0)
-    if _VN30_CACHE["symbols"] and cache_age < _INDEX_MEMBERSHIP_TTL_SECONDS and not force_refresh:
-        return set(_VN30_CACHE["symbols"]), {
-            "source": _VN30_CACHE["source"], "stale": False,
-            "fetched_at": _VN30_CACHE["fetched_at"],
-        }
-
-    errors: List[str] = []
-    for source in ("KBS", "VCI"):
-        try:
-            from vnstock import Listing
-
-            symbols = normalize_index_symbols(Listing(source=source, show_log=False).symbols_by_group("VN30"))
-            if len(symbols) < 20 or len(symbols) > 40:
-                raise ValueError(f"VN30 trả về {len(symbols)} mã")
-            _save_index_members("VN30", symbols, f"vnstock/{source}", now)
-            _VN30_CACHE.update({
-                "symbols": set(symbols), "fetched_at": now,
-                "source": f"vnstock/{source}", "stale": False,
-            })
-            return set(symbols), {"source": f"vnstock/{source}", "stale": False, "fetched_at": now}
-        except Exception as exc:
-            errors.append(f"{source}: {exc}")
-
-    return set(_VN30_CACHE["symbols"]), {
-        "source": _VN30_CACHE.get("source") or "unavailable",
-        "stale": True, "fetched_at": _VN30_CACHE.get("fetched_at") or None,
-        "error": "; ".join(errors),
-    }
-
-
 def get_vn30_members(force_refresh: bool = False) -> Tuple[set[str], Dict[str, Any]]:
-    with _INDEX_LOCK:
-        return _get_vn30_members_unlocked(force_refresh=force_refresh)
+    """Shared verified membership contract used by RRG, Bubbles and Heatmap."""
+    try:
+        symbols, meta = get_index_membership("VN30", force_refresh=force_refresh)
+        return set(symbols), meta
+    except IndexMembershipUnavailable as exc:
+        return set(), {
+            "index_code": "VN30", "source": "unavailable", "stale": True,
+            "source_agreement": False, "fetched_at": None, "error": str(exc),
+        }
 
 
 def _finite_number(value: Any) -> Optional[float]:
@@ -397,6 +308,9 @@ def build_filter_groups(
         "enabled": bool(vn30_rows),
         "stale": bool(vn30_meta.get("stale")),
         "source": vn30_meta.get("source") or "unavailable",
+        "source_agreement": bool(vn30_meta.get("source_agreement")),
+        "membership_snapshot_id": vn30_meta.get("snapshot_id"),
+        "membership_as_of": vn30_meta.get("as_of_date"),
         "error": vn30_meta.get("error"),
     }]
     groups.extend({

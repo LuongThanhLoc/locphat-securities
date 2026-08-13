@@ -18,6 +18,8 @@ parity between the two pages.
 from __future__ import annotations
 
 import threading
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,10 +28,16 @@ import numpy as np
 import pandas as pd
 
 from rrg_data_gateway import HistoryUnavailable, RrgStoreUnavailable, get_verified_history
+from rrg_data_gateway import strict_store_enabled
+from rrg_data_store import get_rrg_store
+from rrg_adjustment import ADJUSTMENT_VERSION
 
 NORMALIZATION_WINDOW = 63
 MOMENTUM_LAG = 5
 MIN_CALCULATION_SESSIONS = 252
+FORMULA_VERSION = "LP_RRG_V2"
+UNIVERSE_VERSION = "VN_ACTIVE_RRG_DYNAMIC_INDEX_V1"
+SCORE_UNIVERSE = "VN_ACTIVE_ELIGIBLE"
 SCORE_WEIGHTS = {
     "rs_ratio": 0.25,
     "rs_momentum": 0.30,
@@ -114,8 +122,20 @@ _PRICE_CACHE: Dict[str, Tuple[float, pd.DataFrame]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def _cache_key(symbol: str, start: str, end: str) -> str:
-    return f"{symbol.upper().strip()}|{start}|{end}"
+def _cache_key(symbol: str, start: str, end: str, durable: bool = False) -> str:
+    mode = "durable" if durable else "direct"
+    return f"{symbol.upper().strip()}|{start}|{end}|{FORMULA_VERSION}|{ADJUSTMENT_VERSION}|{UNIVERSE_VERSION}|{mode}"
+
+
+def invalidate_engine_cache(symbols: Optional[List[str]] = None) -> None:
+    wanted = {symbol.upper() for symbol in symbols or []}
+    with _CACHE_LOCK:
+        if not wanted:
+            _PRICE_CACHE.clear()
+            return
+        for key in list(_PRICE_CACHE):
+            if key.split("|", 1)[0] in wanted:
+                _PRICE_CACHE.pop(key, None)
 
 
 def _cache_get(key: str) -> Optional[pd.DataFrame]:
@@ -151,15 +171,19 @@ def _cache_put(key: str, df: pd.DataFrame) -> None:
 # Data access — `Quote` adapter (same path as track_record/rsi_backtest).
 # ---------------------------------------------------------------------------
 def _fetch_history(
-    symbol: str, start: str, end: str, trading_calendar: Optional[List[str]] = None
+    symbol: str, start: str, end: str, trading_calendar: Optional[List[str]] = None,
+    store: Any = None,
 ) -> pd.DataFrame:
     """Fetch one verified daily series through Vietcap -> KBS -> PostgreSQL."""
-    key = _cache_key(symbol, start, end)
+    key = _cache_key(symbol, start, end, durable=store is not None)
     cached = _cache_get(key)
     if cached is not None:
         return cached
     try:
-        result = get_verified_history(symbol, start, end, trading_calendar=trading_calendar)
+        result = get_verified_history(
+            symbol, start, end, trading_calendar=trading_calendar,
+            store=store, require_store=True if store is not None else None,
+        )
         df = result.frame.copy()
         df.attrs.update({
             "data_source": result.source,
@@ -168,6 +192,11 @@ def _fetch_history(
             "served_from_cache": result.served_from_cache,
             "freshness_sessions": result.freshness_sessions,
             "last_success_at": result.last_success_at,
+            "canonical_source": result.canonical_source or result.source,
+            "source_agreement_bps": result.source_agreement_bps,
+            "data_confidence_score": result.data_confidence_score,
+            "adjustment_version": result.adjustment_version,
+            "corporate_action_status": result.corporate_action_status,
         })
     except (HistoryUnavailable, RrgStoreUnavailable) as exc:
         df = pd.DataFrame()
@@ -181,9 +210,9 @@ def _fetch_history(
     return df
 
 
-def _close_series(symbol: str, start: str, end: str) -> pd.Series:
+def _close_series(symbol: str, start: str, end: str, store: Any = None) -> pd.Series:
     """Return a daily close series indexed by ISO date string. Sorted ASC."""
-    df = _fetch_history(symbol, start, end)
+    df = _fetch_history(symbol, start, end, store=store)
     if df.empty or "close" not in df.columns:
         return pd.Series(dtype=float)
     closes = pd.to_numeric(df["close"], errors="coerce").dropna()
@@ -279,6 +308,15 @@ def _empty_item(symbol: str, sector_info: Dict[str, str], status: str = "no_data
         "quadrant_streak": 0,
         "positive_persistence_5d": 0.0,
         "rotation_score": None,
+        "group_rank": None,
+        "group_percentile": None,
+        "raw_close": None,
+        "total_return_close": None,
+        "canonical_source": None,
+        "source_agreement_bps": None,
+        "data_confidence_score": None,
+        "adjustment_version": "raw-v1",
+        "corporate_action_status": "unknown",
     }
 
 
@@ -297,6 +335,7 @@ def _build_item(
     tail_length: int,
     start: str,
     end: str,
+    store: Any = None,
 ) -> Dict[str, Any]:
     """Build one RRG entry for a single symbol.
 
@@ -304,7 +343,9 @@ def _build_item(
     never breaks on a single bad ticker.
     """
     sym = symbol.upper().strip()
-    raw_df = _fetch_history(sym, start, end, trading_calendar=list(bench_closes.index))
+    raw_df = _fetch_history(
+        sym, start, end, trading_calendar=list(bench_closes.index), store=store
+    )
     if raw_df.empty or "close" not in raw_df.columns:
         item = _empty_item(sym, get_sector_info(sym), raw_df.attrs.get("quality_status", "source_unavailable"))
         item.update({"source_chain": raw_df.attrs.get("source_chain", [])})
@@ -312,6 +353,10 @@ def _build_item(
     closes = pd.to_numeric(raw_df["close"], errors="coerce").dropna()
     closes.index = raw_df.loc[closes.index, "date"].astype(str)
     closes = closes[~closes.index.duplicated(keep="last")].sort_index()
+    raw_price_column = "raw_close" if "raw_close" in raw_df.columns else "close"
+    raw_closes = pd.to_numeric(raw_df[raw_price_column], errors="coerce").dropna()
+    raw_closes.index = raw_df.loc[raw_closes.index, "date"].astype(str)
+    raw_closes = raw_closes[~raw_closes.index.duplicated(keep="last")].sort_index()
     sector_info = get_sector_info(sym)
 
     aligned_sessions = len(pd.concat([closes.rename("stock"), bench_closes.rename("bench")], axis=1, join="inner").dropna())
@@ -319,7 +364,9 @@ def _build_item(
     if raw_df.attrs.get("quality_status") == "inactive":
         item = _empty_item(sym, sector_info, "inactive")
         item.update({
-            "close": float(closes.iloc[-1]),
+            "close": float(raw_closes.iloc[-1]),
+            "raw_close": float(raw_closes.iloc[-1]),
+            "total_return_close": float(closes.iloc[-1]),
             "data_source": raw_df.attrs.get("data_source"),
             "source_chain": raw_df.attrs.get("source_chain", []),
             "quality_status": "inactive",
@@ -327,6 +374,11 @@ def _build_item(
             "freshness_sessions": raw_df.attrs.get("freshness_sessions"),
             "last_success_at": raw_df.attrs.get("last_success_at"),
             "last_date": str(closes.index[-1])[:10],
+            "canonical_source": raw_df.attrs.get("canonical_source") or raw_df.attrs.get("data_source"),
+            "source_agreement_bps": raw_df.attrs.get("source_agreement_bps"),
+            "data_confidence_score": raw_df.attrs.get("data_confidence_score"),
+            "adjustment_version": raw_df.attrs.get("adjustment_version", "raw-v1"),
+            "corporate_action_status": raw_df.attrs.get("corporate_action_status", "unknown"),
         })
         return item
 
@@ -334,10 +386,12 @@ def _build_item(
 
     data_status = "stale_valid" if raw_df.attrs.get("quality_status") == "stale_valid" else "ok"
     if rs_ratio.empty or rs_mom.empty:
-        latest_close = float(closes.iloc[-1])
+        latest_close = float(raw_closes.iloc[-1])
         item = _empty_item(sym, sector_info, "insufficient_history")
         item.update({
             "close": latest_close,
+            "raw_close": latest_close,
+            "total_return_close": float(closes.iloc[-1]),
             "data_source": raw_df.attrs.get("data_source"),
             "source_chain": raw_df.attrs.get("source_chain", []),
             "quality_status": "insufficient_history",
@@ -346,6 +400,11 @@ def _build_item(
             "last_success_at": raw_df.attrs.get("last_success_at"),
             "served_from_cache": bool(raw_df.attrs.get("served_from_cache")),
             "last_date": str(closes.index[-1])[:10],
+            "canonical_source": raw_df.attrs.get("canonical_source") or raw_df.attrs.get("data_source"),
+            "source_agreement_bps": raw_df.attrs.get("source_agreement_bps"),
+            "data_confidence_score": raw_df.attrs.get("data_confidence_score"),
+            "adjustment_version": raw_df.attrs.get("adjustment_version", "raw-v1"),
+            "corporate_action_status": raw_df.attrs.get("corporate_action_status", "unknown"),
         })
         return item
 
@@ -354,7 +413,7 @@ def _build_item(
     pair = full_pair.tail(tail_length)
 
     # Walk every tail row and pull matching close + volume from the raw feed.
-    close_lookup = closes.to_dict()
+    close_lookup = raw_closes.to_dict()
     volume_lookup: Dict[str, float] = {}
     if not raw_df.empty and "date" in raw_df.columns and "volume" in raw_df.columns:
         for _, row in raw_df.iterrows():
@@ -399,9 +458,9 @@ def _build_item(
     positive_persistence = sum(q in {"LEADING", "IMPROVING"} for q in recent_quadrants) / len(recent_quadrants)
 
     # 5-day % change from the real close series.
-    if len(closes) >= 6:
-        last_close = float(closes.iloc[-1])
-        prev_close = float(closes.iloc[-6])
+    if len(raw_closes) >= 6:
+        last_close = float(raw_closes.iloc[-1])
+        prev_close = float(raw_closes.iloc[-6])
         chg_5d = ((last_close - prev_close) / prev_close * 100.0) if prev_close > 0 else None
     else:
         chg_5d = None
@@ -417,6 +476,8 @@ def _build_item(
         "rs_ratio": latest["rs_ratio"],
         "rs_momentum": latest["rs_momentum"],
         "close": latest["close"],
+        "raw_close": latest["close"],
+        "total_return_close": float(closes.iloc[-1]),
         "change_5d_pct": round(chg_5d, 2) if chg_5d is not None else None,
         "volume": int(latest_volume) if latest_volume is not None else None,
         "quadrant": get_quadrant(latest["rs_ratio"], latest["rs_momentum"]),
@@ -443,6 +504,13 @@ def _build_item(
         "quadrant_streak": streak,
         "positive_persistence_5d": round(positive_persistence, 2),
         "rotation_score": None,
+        "group_rank": None,
+        "group_percentile": None,
+        "canonical_source": raw_df.attrs.get("canonical_source") or raw_df.attrs.get("data_source"),
+        "source_agreement_bps": raw_df.attrs.get("source_agreement_bps"),
+        "data_confidence_score": raw_df.attrs.get("data_confidence_score"),
+        "adjustment_version": raw_df.attrs.get("adjustment_version", "raw-v1"),
+        "corporate_action_status": raw_df.attrs.get("corporate_action_status", "unknown"),
     }
 
 
@@ -464,6 +532,11 @@ def _resolve_group(
         # rank by 20-day average turnover when that becomes available.
         return list(SMC_TOP_FALLBACK), "SMC_TOP", "Cổ phiếu Tiêu Điểm (Top Liquid)"
 
+    if group_key == "VN30":
+        from rrg_index_membership import get_index_membership
+        symbols, _ = get_index_membership("VN30")
+        return symbols, "VN30", "VN30"
+
     if group_key in SECTOR_DEFINITIONS:
         data = SECTOR_DEFINITIONS[group_key]
         symbols = list(data.get("symbols", []))
@@ -475,7 +548,7 @@ def _resolve_group(
 def _preset_groups_listing() -> List[Dict[str, Any]]:
     """Build the dropdown dataset for the frontend.
 
-    Order: "SMC_TOP" first, then every ICB sector alphabetically, with
+    Order: "SMC_TOP", VN30, then every ICB sector alphabetically, with
     "CUSTOM" appended last (handled by the frontend).
     """
     out: List[Dict[str, Any]] = [
@@ -483,8 +556,17 @@ def _preset_groups_listing() -> List[Dict[str, Any]]:
             "key": "SMC_TOP",
             "name": "Cổ phiếu Tiêu Điểm (Top Liquid)",
             "count": len(SMC_TOP_FALLBACK),
-        }
+        },
     ]
+    try:
+        from rrg_index_membership import get_index_membership
+        vn30_symbols, vn30_meta = get_index_membership("VN30")
+        out.append({"key": "VN30", "name": "VN30", "count": len(vn30_symbols), **vn30_meta})
+    except Exception as exc:
+        out.append({
+            "key": "VN30", "name": "VN30 — đang đồng bộ", "count": 0,
+            "stale": True, "error": str(exc),
+        })
     for arch, data in SECTOR_DEFINITIONS.items():
         symbols = data.get("symbols", []) or []
         if not symbols:
@@ -494,28 +576,68 @@ def _preset_groups_listing() -> List[Dict[str, Any]]:
             "name": data.get("sector", arch),
             "count": len(symbols),
         })
-    out.sort(key=lambda g: (g["key"] != "SMC_TOP", g["name"]))
+    priority = {"SMC_TOP": 0, "VN30": 1}
+    out.sort(key=lambda g: (priority.get(g["key"], 2), g["name"]))
     return out
 
 
-def _assign_rotation_scores(items: List[Dict[str, Any]]) -> None:
-    """Attach a transparent 0-100 cross-sectional rotation score."""
+def _assign_rotation_scores(
+    items: List[Dict[str, Any]], reference_items: Optional[List[Dict[str, Any]]] = None
+) -> None:
+    """Attach market-comparable scores and ranks local to the visible group.
+
+    ``reference_items`` is the fixed market universe for the snapshot.  Tests
+    and non-strict local mode may omit it, preserving the V1 fallback.
+    """
     valid = [item for item in items if item.get("rs_ratio") is not None]
     if not valid:
         return
+    reference = [item for item in (reference_items or valid) if item.get("rs_ratio") is not None]
     frame = pd.DataFrame(
         [
             {
                 "symbol": item["symbol"],
                 **{key: item.get(key) for key in SCORE_WEIGHTS},
             }
-            for item in valid
+            for item in reference
         ]
     ).set_index("symbol")
     percentiles = frame.rank(pct=True, method="average", na_option="bottom")
     for item in valid:
-        score = sum(float(percentiles.loc[item["symbol"], key]) * weight for key, weight in SCORE_WEIGHTS.items())
+        if item["symbol"] in percentiles.index:
+            score = sum(float(percentiles.loc[item["symbol"], key]) * weight for key, weight in SCORE_WEIGHTS.items())
+        else:
+            # A custom symbol outside the stored universe receives a score
+            # against the same empirical distributions, never against only
+            # the current group.
+            score = 0.0
+            for key, weight in SCORE_WEIGHTS.items():
+                series = frame[key].dropna()
+                value = item.get(key)
+                percentile = float((series <= value).mean()) if value is not None and not series.empty else 0.0
+                score += percentile * weight
         item["rotation_score"] = round(max(0.0, min(100.0, score * 100.0)), 1)
+
+    ordered = sorted(valid, key=lambda value: (-(value.get("rotation_score") or -1), value["symbol"]))
+    denominator = max(len(ordered), 1)
+    for rank, item in enumerate(ordered, start=1):
+        item["group_rank"] = rank
+        item["group_percentile"] = round((denominator - rank + 1) / denominator * 100.0, 1)
+
+
+def _apply_stored_market_scores(items: List[Dict[str, Any]], scores: Dict[str, float]) -> bool:
+    valid = [item for item in items if item.get("rs_ratio") is not None]
+    if not valid or not scores:
+        return False
+    for item in valid:
+        if item["symbol"] not in scores:
+            return False
+        item["rotation_score"] = round(float(scores[item["symbol"]]), 1)
+    ordered = sorted(valid, key=lambda value: (-float(value["rotation_score"]), value["symbol"]))
+    for rank, item in enumerate(ordered, start=1):
+        item["group_rank"] = rank
+        item["group_percentile"] = round((len(ordered) - rank + 1) / len(ordered) * 100.0, 1)
+    return True
 
 
 def _build_rotation_radar(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -559,6 +681,51 @@ def _build_rotation_radar(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[st
         "ACCELERATING": [summary(item) for item in rank(accelerating)],
         "SUSTAINED_LEADER": [summary(item) for item in rank(sustained)],
         "WEAKENING_ALERT": [summary(item) for item in warning_rank],
+    }
+
+
+def build_market_score_snapshot(
+    symbols: List[str], benchmark_symbol: str = "VNINDEX", period: int = 14
+) -> Dict[str, Any]:
+    """Calculate and persist one cross-sectional score universe after sync."""
+    benchmark_key = benchmark_symbol.upper().strip()
+    if benchmark_key not in BENCHMARK_SYMBOLS:
+        raise ValueError(f"Chỉ số tham chiếu không hợp lệ: {benchmark_symbol}")
+    today = datetime.now().date()
+    start = (today - timedelta(days=620)).isoformat()
+    end = today.isoformat()
+    benchmark_sym = BENCHMARK_SYMBOLS[benchmark_key]
+    store = get_rrg_store(required=True)
+    bench_closes = _close_series(benchmark_sym, start, end, store=store)
+    if bench_closes.empty:
+        raise RrgDataIncomplete("benchmark_unavailable", [benchmark_sym])
+    universe = sorted({symbol.upper() for symbol in symbols if symbol.upper() not in BENCHMARK_SYMBOLS.values()})
+    items: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(_build_item, symbol, bench_closes, period, 5, start, end, store): symbol
+            for symbol in universe
+        }
+        for future in as_completed(futures):
+            item = future.result()
+            if item.get("quadrant") is not None and item.get("data_status") in {"ok", "stale_valid"}:
+                items.append(item)
+    _assign_rotation_scores(items, reference_items=items)
+    as_of_session = min((item.get("last_date") or "" for item in items), default=None)
+    scores = {item["symbol"]: float(item["rotation_score"]) for item in items}
+    digest = hashlib.sha256(
+        json.dumps({"as_of": as_of_session, "benchmark": benchmark_sym, "period": period, "scores": scores}, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:24]
+    store.save_market_scores(
+        digest, str(as_of_session), benchmark_sym, FORMULA_VERSION, UNIVERSE_VERSION, scores, period
+    )
+    return {
+        "snapshot_id": digest,
+        "as_of_session": as_of_session,
+        "benchmark": benchmark_sym,
+        "symbols_scored": len(scores),
+        "formula_version": FORMULA_VERSION,
+        "universe_version": UNIVERSE_VERSION,
     }
 
 
@@ -652,8 +819,6 @@ def generate_rrg_dataset(
                 print(f"[RRG] Unexpected failure for {sym}: {exc}")
                 items.append(_empty_item(sym, get_sector_info(sym), "error"))
 
-    _assign_rotation_scores(items)
-
     valid_items = [item for item in items if item.get("quadrant") is not None and item.get("data_status") in {"ok", "stale_valid"}]
     ineligible_items = [item for item in items if item.get("data_status") in {"insufficient_history", "inactive"}]
     failed_items = [item for item in items if item not in valid_items and item not in ineligible_items]
@@ -662,6 +827,20 @@ def generate_rrg_dataset(
     completeness_pct = round(valid_symbols / eligible_symbols * 100.0, 2) if eligible_symbols else 100.0
     if failed_items:
         raise RrgDataIncomplete("data_incomplete", [item["symbol"] for item in failed_items])
+
+    as_of_session = min((item.get("last_date") or "" for item in valid_items), default=None)
+    score_mode = "market"
+    score_store = get_rrg_store(required=True) if strict_store_enabled() else None
+    stored_scores: Dict[str, float] = {}
+    if score_store is not None and as_of_session:
+        stored_scores = score_store.load_market_scores(
+            benchmark_sym, as_of_session, FORMULA_VERSION, UNIVERSE_VERSION, period
+        )
+    if not _apply_stored_market_scores(items, stored_scores):
+        if strict_store_enabled():
+            raise RrgDataIncomplete("market_score_unavailable", [item["symbol"] for item in valid_items])
+        _assign_rotation_scores(items)
+        score_mode = "group_fallback"
 
     # Default API order mirrors the table default: score desc, symbol asc.
     items.sort(
@@ -679,10 +858,34 @@ def generate_rrg_dataset(
         if q and q.get("id") in counts:
             counts[q["id"]] += 1
 
-    return {
+    fingerprint_payload = [{
+        "symbol": item["symbol"], "last_date": item.get("last_date"),
+        "raw_close": item.get("raw_close"), "total_return_close": item.get("total_return_close"),
+        "source": item.get("canonical_source"), "adjustment": item.get("adjustment_version"),
+        "tail": item.get("tail"),
+    } for item in sorted(items, key=lambda value: value["symbol"])]
+    input_fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+    adjustment_versions = sorted({str(item.get("adjustment_version") or "raw-v1") for item in valid_items})
+    dataset_adjustment_version = adjustment_versions[0] if len(adjustment_versions) == 1 else "mixed"
+    snapshot_id = hashlib.sha256(
+        f"{as_of_session}|{benchmark_sym}|{resolved_key}|{period}|{tail_length}|{FORMULA_VERSION}|{dataset_adjustment_version}|{UNIVERSE_VERSION}|{input_fingerprint}".encode("utf-8")
+    ).hexdigest()[:24]
+    compared = [item for item in valid_items if item.get("source_agreement_bps") is not None]
+    source_agreement_pct = round(
+        sum(float(item["source_agreement_bps"]) <= 50.0 for item in compared) / len(compared) * 100.0, 2
+    ) if compared else None
+
+    group_membership = None
+    if resolved_key == "VN30":
+        from rrg_index_membership import get_index_membership
+        _, group_membership = get_index_membership("VN30")
+    payload = {
         "benchmark": benchmark_sym,
         "group_key": resolved_key,
         "group_name": resolved_name,
+        "group_membership": group_membership,
         "total_symbols": len(items),
         "eligible_symbols": eligible_symbols,
         "valid_symbols": valid_symbols,
@@ -690,10 +893,25 @@ def generate_rrg_dataset(
         "coverage_status": "complete",
         "served_from_cache": any(item.get("served_from_cache") for item in items),
         "has_stale_data": any(item.get("data_status") == "stale_valid" for item in items),
-        "data_as_of": max((item.get("last_date") or "" for item in valid_items), default=None),
+        "data_as_of": as_of_session,
+        "as_of_session": as_of_session,
+        "snapshot_id": snapshot_id,
+        "snapshot_age_sessions": max((int(item.get("freshness_sessions") or 0) for item in valid_items), default=0),
+        "input_fingerprint": input_fingerprint,
         "tail_length": tail_length,
         "period": period,
-        "method": "LP_RRG_V1",
+        "method": FORMULA_VERSION,
+        "formula_version": FORMULA_VERSION,
+        "adjustment_version": dataset_adjustment_version,
+        "universe_version": UNIVERSE_VERSION,
+        "score_universe": SCORE_UNIVERSE,
+        "score_mode": score_mode,
+        "source_agreement_pct": source_agreement_pct,
+        "coverage_by_group": {resolved_key: {
+            "eligible_symbols": eligible_symbols,
+            "valid_symbols": valid_symbols,
+            "completeness_pct": completeness_pct,
+        }},
         "normalization_window": NORMALIZATION_WINDOW,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "quadrant_counts": counts,
@@ -701,6 +919,9 @@ def generate_rrg_dataset(
         "rotation_radar": _build_rotation_radar(items),
         "data": items,
     }
+    if score_store is not None and completeness_pct == 100.0 and as_of_session:
+        score_store.save_dataset_snapshot(payload)
+    return payload
 
 
 class RrgDataIncomplete(RuntimeError):
@@ -734,9 +955,20 @@ def _empty_dataset(
         "served_from_cache": False,
         "has_stale_data": False,
         "data_as_of": None,
+        "as_of_session": None,
+        "snapshot_id": None,
+        "snapshot_age_sessions": 0,
+        "input_fingerprint": None,
         "tail_length": tail_length,
         "period": period,
-        "method": "LP_RRG_V1",
+        "method": FORMULA_VERSION,
+        "formula_version": FORMULA_VERSION,
+        "adjustment_version": ADJUSTMENT_VERSION,
+        "universe_version": UNIVERSE_VERSION,
+        "score_universe": SCORE_UNIVERSE,
+        "score_mode": "market",
+        "source_agreement_pct": None,
+        "coverage_by_group": {group_key: {"eligible_symbols": 0, "valid_symbols": 0, "completeness_pct": 100.0}},
         "normalization_window": NORMALIZATION_WINDOW,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "quadrant_counts": {"LEADING": 0, "WEAKENING": 0, "LAGGING": 0, "IMPROVING": 0},

@@ -97,6 +97,23 @@ class RotationRadarTests(unittest.TestCase):
 
 
 class RrgApiValidationTests(unittest.TestCase):
+    def test_vn30_group_uses_latest_effective_constituents(self):
+        returned = [f"S{i:02d}" for i in range(30)]
+        with patch("rrg_index_membership.get_index_membership", return_value=(returned, {
+            "snapshot_id": "vn30-live", "as_of_date": "2026-08-11",
+            "source": "vnstock/KBS+VCI", "source_agreement": True, "stale": False,
+        })):
+            symbols, key, name = rrg_engine._resolve_group("VN30", None)
+            groups = {group["key"]: group for group in rrg_engine._preset_groups_listing()}
+        self.assertEqual(key, "VN30")
+        self.assertEqual(name, "VN30")
+        self.assertEqual(len(symbols), 30)
+        self.assertEqual(len(set(symbols)), 30)
+        self.assertEqual(symbols, returned)
+        self.assertEqual(groups["VN30"]["count"], 30)
+        self.assertEqual(groups["VN30"]["snapshot_id"], "vn30-live")
+        self.assertTrue(groups["VN30"]["source_agreement"])
+
     def test_invalid_parameters_return_422(self):
         cases = [
             {"benchmark": "INVALID"},
@@ -121,6 +138,20 @@ class RrgApiValidationTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertEqual(ctx.exception.detail["missing_symbols"], ["SSI"])
+
+    def test_unverified_index_membership_returns_503(self):
+        from rrg_index_membership import IndexMembershipUnavailable
+
+        with patch(
+            "rrg_engine.generate_rrg_dataset",
+            side_effect=IndexMembershipUnavailable("KBS và VCI không khớp"),
+        ), self.assertRaises(HTTPException) as ctx:
+            get_rrg_data_api(
+                Response(), group="VN30", symbols=None, benchmark="VNINDEX",
+                tail_length=15, period=14,
+            )
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.detail["code"], "index_membership_unavailable")
 
 
 if __name__ == "__main__":

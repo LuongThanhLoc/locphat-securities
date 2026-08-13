@@ -6,10 +6,12 @@ os.environ.setdefault("TZ", "Asia/Ho_Chi_Minh")
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
+from pydantic import BaseModel, Field
 import re
+from urllib.parse import quote
 from datetime import date, datetime, timedelta
 import uvicorn
 from ctck_analyzer import analyze_security_stock, CTCK_STOCKS
@@ -20,12 +22,46 @@ from market_data_provider import Quote
 from quant_engine import build_quant_framework
 from premium_analysis import build_premium_analysis
 from rsi_backtest_engine import run_backtest
+from rrg_data_store import RrgStoreUnavailable
+import supabase_auth
+from supabase_auth import AuthUser, require_user
 
 app = FastAPI(
     title="Hệ Thống Phân Tích Cổ Phiếu Chứng Khoán (CTCK)",
     description="Hệ thống phân tích dữ liệu thị trường, BCTC và tin tức có grounding cho chứng khoán Việt Nam",
     version="1.3.1"
 )
+
+PREMIUM_STATIC_PAGES = {
+    "/static/backtest.html", "/static/bubbles.html", "/static/calendar.html",
+    "/static/rrg.html", "/static/watchlist.html",
+}
+
+
+@app.middleware("http")
+async def supabase_session_and_page_guard(request: Request, call_next):
+    """Refresh Supabase sessions and block direct access to premium HTML."""
+    refreshed = None
+    user = supabase_auth.authenticate_request(request)
+    if user is None and request.cookies.get(supabase_auth.REFRESH_COOKIE) and supabase_auth.configured():
+        refreshed = supabase_auth.refresh_session(request.cookies.get(supabase_auth.REFRESH_COOKIE, ""))
+        if refreshed:
+            try:
+                claims = supabase_auth.decode_access_token(refreshed["access_token"])
+                csrf = request.cookies.get(supabase_auth.CSRF_COOKIE) or ""
+                request.state.auth_user = supabase_auth.user_from_claims(claims, refreshed["access_token"], csrf)
+                user = request.state.auth_user
+            except Exception:
+                refreshed = None
+    if request.url.path in PREMIUM_STATIC_PAGES and user is None:
+        response = RedirectResponse(f"/auth?next={quote(request.url.path.replace('/static', '', 1))}", status_code=303)
+    else:
+        response = await call_next(request)
+    if refreshed:
+        supabase_auth.set_session_cookies(response, refreshed, request.cookies.get(supabase_auth.CSRF_COOKIE) or None)
+    elif request.cookies.get(supabase_auth.ACCESS_COOKIE) and user is None:
+        supabase_auth.clear_session_cookies(response)
+    return response
 
 # Mount static directory
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -110,6 +146,124 @@ def _cache_busting_headers_for_file(filepath: str) -> dict:
         "Vary": "*",
     }
 
+
+class RegisterPayload(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+    password_confirmation: str = Field(min_length=1, max_length=128)
+    turnstile_token: str = ""
+
+
+class LoginPayload(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+    turnstile_token: str = ""
+
+
+def _safe_next(value: str) -> str:
+    candidate = str(value or "").strip()
+    if not candidate.startswith("/") or candidate.startswith("//") or "\\" in candidate:
+        return "/"
+    return candidate
+
+
+def _public_auth_user(user: AuthUser) -> Dict[str, str]:
+    return {"id": user.id, "email": user.email, "username": user.username}
+
+
+def _protected_page(request: Request, filename: str):
+    if not supabase_auth.authenticate_request(request):
+        return RedirectResponse(f"/auth?next={quote(request.url.path)}", status_code=303)
+    path = os.path.join(static_dir, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Trang chưa sẵn sàng")
+    return FileResponse(path, headers=_cache_busting_headers_for_file(path))
+
+
+@app.get("/api/auth/config")
+def get_auth_config():
+    return {
+        "configured": supabase_auth.configured(),
+        "turnstile_site_key": os.getenv("TURNSTILE_SITE_KEY", "").strip(),
+    }
+
+
+@app.get("/api/auth/me")
+def get_auth_me(request: Request):
+    user = supabase_auth.authenticate_request(request)
+    if not user:
+        return {"authenticated": False, "user": None, "csrf_token": None}
+    return {"authenticated": True, "user": _public_auth_user(user), "csrf_token": user.csrf_token}
+
+
+@app.post("/api/auth/register", status_code=201)
+def register_account(payload: RegisterPayload, request: Request, response: Response):
+    session = supabase_auth.signup(
+        request, payload.username, payload.email, payload.password,
+        payload.password_confirmation, payload.turnstile_token,
+    )
+    csrf = supabase_auth.set_session_cookies(response, session)
+    metadata = session.get("user", {}).get("user_metadata") or {}
+    return {
+        "user": {
+            "id": str(session.get("user", {}).get("id") or ""),
+            "email": str(session.get("user", {}).get("email") or payload.email.lower()),
+            "username": str(metadata.get("username") or payload.username.lower()),
+        },
+        "csrf_token": csrf,
+    }
+
+
+@app.post("/api/auth/login")
+def login_account(payload: LoginPayload, request: Request, response: Response):
+    session = supabase_auth.login(request, payload.email, payload.password, payload.turnstile_token)
+    csrf = supabase_auth.set_session_cookies(response, session)
+    metadata = session.get("user", {}).get("user_metadata") or {}
+    return {
+        "user": {
+            "id": str(session.get("user", {}).get("id") or ""),
+            "email": str(session.get("user", {}).get("email") or payload.email.lower()),
+            "username": str(metadata.get("username") or "Nhà đầu tư"),
+        },
+        "csrf_token": csrf,
+    }
+
+
+@app.post("/api/auth/logout")
+def logout_account(request: Request, response: Response, user: AuthUser = Depends(require_user)):
+    supabase_auth.require_csrf(request, user)
+    supabase_auth.logout_remote(user)
+    supabase_auth.clear_session_cookies(response)
+    return {"ok": True}
+
+
+@app.get("/api/watchlist")
+def get_account_watchlist(user: AuthUser = Depends(require_user)):
+    return {"items": supabase_auth.list_watchlist(user)}
+
+
+@app.post("/api/watchlist/sync")
+def sync_account_watchlist(
+    request: Request, payload: Dict[str, Any] = Body(default_factory=dict),
+    user: AuthUser = Depends(require_user),
+):
+    supabase_auth.require_csrf(request, user)
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list) or len(items) > 200:
+        raise HTTPException(status_code=422, detail="Danh mục không hợp lệ hoặc vượt quá 200 mã.")
+    return {"items": supabase_auth.sync_watchlist(user, items)}
+
+
+@app.get("/auth", response_class=HTMLResponse)
+def read_auth(request: Request, next: str = "/"):
+    if supabase_auth.authenticate_request(request):
+        return RedirectResponse(_safe_next(next), status_code=303)
+    auth_path = os.path.join(static_dir, "auth.html")
+    if os.path.exists(auth_path):
+        return FileResponse(auth_path, headers=_cache_busting_headers_for_file(auth_path))
+    raise HTTPException(status_code=404, detail="Trang đăng nhập chưa sẵn sàng")
+
 @app.get("/", response_class=HTMLResponse)
 def read_root():
     index_path = os.path.join(static_dir, "index.html")
@@ -125,75 +279,42 @@ def read_heatmap():
     raise HTTPException(status_code=404, detail="Trang Bản Đồ Nhiệt chưa sẵn sàng")
 
 @app.get("/bubbles", response_class=HTMLResponse)
-def read_market_bubbles():
-    bubbles_path = os.path.join(static_dir, "bubbles.html")
-    if os.path.exists(bubbles_path):
-        return FileResponse(bubbles_path, headers=_cache_busting_headers_for_file(bubbles_path))
-    raise HTTPException(status_code=404, detail="Trang Bong Bóng Thị Trường chưa sẵn sàng")
+def read_market_bubbles(request: Request):
+    return _protected_page(request, "bubbles.html")
 
 @app.get("/stock/{symbol}", response_class=HTMLResponse)
-def read_stock(symbol: str):
+def read_stock(symbol: str, request: Request):
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,5}", symbol):
         raise HTTPException(status_code=404, detail="Mã cổ phiếu không hợp lệ")
-    index_path = os.path.join(static_dir, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path, headers=_cache_busting_headers_for_file(index_path))
-    raise HTTPException(status_code=404, detail="Trang phân tích chưa sẵn sàng")
+    return _protected_page(request, "index.html")
 
 @app.get("/calendar", response_class=HTMLResponse)
-def read_calendar():
-    calendar_path = os.path.join(static_dir, "calendar.html")
-    if os.path.exists(calendar_path):
-        return FileResponse(calendar_path, headers=_cache_busting_headers_for_file(calendar_path))
-    raise HTTPException(status_code=404, detail="Lịch doanh nghiệp chưa sẵn sàng")
+def read_calendar(request: Request):
+    return _protected_page(request, "calendar.html")
+
 
 @app.get("/watchlist", response_class=HTMLResponse)
-def read_watchlist():
-    watchlist_path = os.path.join(static_dir, "watchlist.html")
-    if os.path.exists(watchlist_path):
-        return FileResponse(
-            watchlist_path,
-            headers=_cache_busting_headers_for_file(watchlist_path),
-        )
-    raise HTTPException(
-        status_code=404,
-        detail="Danh mục theo dõi chưa sẵn sàng",
-    )
+def read_watchlist(request: Request):
+    return _protected_page(request, "watchlist.html")
 
 @app.get("/backtest", response_class=HTMLResponse)
-def read_backtest():
-    backtest_path = os.path.join(static_dir, "backtest.html")
-    if os.path.exists(backtest_path):
-        return FileResponse(
-            backtest_path,
-            headers=_cache_busting_headers_for_file(backtest_path),
-        )
-    raise HTTPException(
-        status_code=404,
-        detail="Trang Backtest chưa sẵn sàng",
-    )
+def read_backtest(request: Request):
+    return _protected_page(request, "backtest.html")
 
 @app.get("/rrg", response_class=HTMLResponse)
-def read_rrg():
-    rrg_path = os.path.join(static_dir, "rrg.html")
-    if os.path.exists(rrg_path):
-        return FileResponse(
-            rrg_path,
-            headers=_cache_busting_headers_for_file(rrg_path),
-        )
-    raise HTTPException(
-        status_code=404,
-        detail="Trang Biểu Đồ RRG chưa sẵn sàng",
-    )
+def read_rrg(request: Request):
+    return _protected_page(request, "rrg.html")
 
 @app.get("/api/rrg/data")
 def get_rrg_data_api(
     response: Response,
+    _user: AuthUser = Depends(require_user),
     group: str = "SMC_TOP",
     symbols: Optional[str] = None,
     benchmark: str = "VNINDEX",
     tail_length: int = 15,
     period: int = 14,
+    as_of: Optional[str] = None,
 ):
     """Return an LP-RRG dataset for the requested group/benchmark.
 
@@ -213,6 +334,21 @@ def get_rrg_data_api(
             if invalid:
                 raise HTTPException(status_code=422, detail=f"Mã cổ phiếu không hợp lệ: {invalid[0]}")
             custom_list = list(dict.fromkeys(raw_symbols))
+        if as_of:
+            try:
+                datetime.strptime(as_of, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(status_code=422, detail="as_of phải có định dạng YYYY-MM-DD")
+            if custom_list:
+                raise HTTPException(status_code=422, detail="Replay chưa hỗ trợ danh mục tùy chỉnh")
+            from rrg_data_store import get_rrg_store
+            store = get_rrg_store(required=True)
+            snapshot = store.load_dataset_snapshot(benchmark, group, period, tail_length, as_of)
+            if snapshot is None:
+                raise HTTPException(status_code=404, detail="Chưa có snapshot hoàn chỉnh cho phiên đã chọn")
+            snapshot["replay_mode"] = True
+            snapshot["served_from_snapshot"] = True
+            return snapshot
         return generate_rrg_dataset(
             group_key=group,
             custom_symbols=custom_list,
@@ -221,6 +357,27 @@ def get_rrg_data_api(
             period=period,
         )
     except RrgDataIncomplete as e:
+        if group != "CUSTOM" and not symbols:
+            try:
+                from rrg_data_store import get_rrg_store
+                from rrg_data_gateway import _freshness_sessions
+                store = get_rrg_store(required=False)
+                snapshot = store.load_dataset_snapshot(benchmark, group, period, tail_length) if store else None
+                if snapshot:
+                    snapshot_session = str(snapshot.get("as_of_session") or snapshot.get("data_as_of"))
+                    end_session = datetime.now().date().isoformat()
+                    age = store.session_age(benchmark, snapshot_session, end_session)
+                    if age is None:
+                        age = _freshness_sessions(snapshot_session, end_session, None)
+                    if age <= 3:
+                        snapshot["served_from_snapshot"] = True
+                        snapshot["served_from_cache"] = True
+                        snapshot["has_stale_data"] = age > 0
+                        snapshot["snapshot_age_sessions"] = age
+                        snapshot["refresh_error_code"] = e.reason
+                        return snapshot
+            except Exception:
+                pass
         raise HTTPException(
             status_code=503,
             detail={
@@ -231,14 +388,52 @@ def get_rrg_data_api(
         )
     except HTTPException:
         raise
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except RrgStoreUnavailable:
+        raise HTTPException(status_code=503, detail={
+            "code": "postgres_unavailable",
+            "message": "Kho dữ liệu LP-RRG đang tạm gián đoạn.",
+        })
     except Exception as e:
+        from rrg_index_membership import IndexMembershipUnavailable
+        if isinstance(e, IndexMembershipUnavailable):
+            raise HTTPException(status_code=503, detail={
+                "code": "index_membership_unavailable",
+                "message": "Thành phần chỉ số đang được đối chiếu giữa các nguồn; hệ thống không dùng danh sách viết cứng.",
+            })
+        if isinstance(e, ValueError):
+            raise HTTPException(status_code=422, detail=str(e))
         raise HTTPException(status_code=500, detail=f"Lỗi tính toán biểu đồ RRG: {str(e)}")
 
 
+@app.get("/api/rrg/snapshots")
+def get_rrg_snapshot_sessions(
+    response: Response, benchmark: str = "VNINDEX", group: str = "SMC_TOP", limit: int = 60,
+    _user: AuthUser = Depends(require_user),
+):
+    """List complete replay sessions without exposing stored payload internals."""
+    from rrg_engine import BENCHMARK_SYMBOLS, _resolve_group
+    if benchmark.upper() not in BENCHMARK_SYMBOLS:
+        raise HTTPException(status_code=422, detail="Chỉ số tham chiếu không hợp lệ")
+    try:
+        _resolve_group(group, None)
+    except Exception as exc:
+        from rrg_index_membership import IndexMembershipUnavailable
+        if isinstance(exc, IndexMembershipUnavailable):
+            raise HTTPException(status_code=503, detail="Thành phần chỉ số đang được đối chiếu")
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=422, detail=str(exc))
+        raise
+    from rrg_data_store import get_rrg_store
+    try:
+        store = get_rrg_store(required=True)
+    except RrgStoreUnavailable:
+        raise HTTPException(status_code=503, detail="Kho snapshot LP-RRG đang tạm gián đoạn")
+    response.headers["Cache-Control"] = "no-store"
+    return {"benchmark": benchmark.upper(), "group": group, "sessions": store.list_dataset_sessions(benchmark.upper(), group, limit)}
+
+
 @app.get("/api/rrg/health")
-def get_rrg_health_api(response: Response):
+def get_rrg_health_api(response: Response, _user: AuthUser = Depends(require_user)):
     """Data-store health and freshness metadata; never exposes credentials."""
     from rrg_data_gateway import rrg_data_health
     payload = rrg_data_health()
@@ -272,6 +467,8 @@ def initialise_corporate_calendar_sync():
     except Exception as exc:
         # Calendar requests can still serve the validated last-known-good DB.
         print(f"[Calendar] Background sync initialization failed: {exc}")
+
+
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
@@ -323,11 +520,11 @@ def load_all_stocks():
     return ALL_STOCKS_CACHE
 
 @app.get("/api/all_stocks")
-def get_all_stocks():
+def get_all_stocks(_user: AuthUser = Depends(require_user)):
     return load_all_stocks()
 
 @app.get("/api/search_suggest")
-def search_suggest(q: str = ""):
+def search_suggest(q: str = "", _user: AuthUser = Depends(require_user)):
     query_raw = q.upper().strip()
     query_norm = remove_accents_str(q).lower().strip()
     all_stocks = load_all_stocks()
@@ -351,11 +548,11 @@ def search_suggest(q: str = ""):
     return {"query": q, "results": matches[:12]}
 
 @app.get("/api/stocks")
-def get_ctck_list():
+def get_ctck_list(_user: AuthUser = Depends(require_user)):
     return CTCK_STOCKS
 
 @app.get("/api/watchlist/quotes")
-async def get_watchlist_quotes_api(symbols: str, response: Response):
+async def get_watchlist_quotes_api(symbols: str, response: Response, _user: AuthUser = Depends(require_user)):
     response.headers["Cache-Control"] = "no-store"
     if not symbols or not symbols.strip():
         raise HTTPException(status_code=400, detail="Danh sách mã cổ phiếu không được rỗng")
@@ -370,7 +567,8 @@ async def get_watchlist_quotes_api(symbols: str, response: Response):
 
 
 @app.get("/api/dnse/realtime/{symbol}")
-async def get_dnse_realtime(symbol: str, response: Response, timeout: float = 6.0):
+async def get_dnse_realtime(symbol: str, response: Response, timeout: float = 6.0,
+                            _user: AuthUser = Depends(require_user)):
     try:
         response.headers["Cache-Control"] = "no-store"
         safe_timeout = max(1.0, min(float(timeout), 12.0))
@@ -379,7 +577,7 @@ async def get_dnse_realtime(symbol: str, response: Response, timeout: float = 6.
         raise HTTPException(status_code=500, detail=f"Lỗi kết nối DNSE realtime cho {symbol}: {str(e)}")
 
 @app.get("/api/analyze/{symbol}")
-def analyze_stock(symbol: str, response: Response):
+def analyze_stock(symbol: str, response: Response, _user: AuthUser = Depends(require_user)):
     try:
         response.headers["Cache-Control"] = "no-store"
         data = analyze_security_stock(symbol)
@@ -390,7 +588,8 @@ def analyze_stock(symbol: str, response: Response):
         raise HTTPException(status_code=500, detail=f"Lỗi khi phân tích mã {symbol}: {str(e)}")
 
 @app.post("/api/ai_analysis/{symbol}")
-def get_ai_analysis(symbol: str, x_lp_user_action: Optional[str] = Header(default=None)):
+def get_ai_analysis(symbol: str, x_lp_user_action: Optional[str] = Header(default=None),
+                    _user: AuthUser = Depends(require_user)):
     try:
         _require_explicit_deepseek_action(x_lp_user_action)
         from ai_advisor_engine import generate_ai_advisor_analysis
@@ -409,7 +608,7 @@ def get_ai_analysis(symbol: str, x_lp_user_action: Optional[str] = Header(defaul
 
 
 @app.get("/api/quant/{symbol}")
-def get_quant_analysis(symbol: str):
+def get_quant_analysis(symbol: str, _user: AuthUser = Depends(require_user)):
     try:
         data = analyze_security_stock(symbol)
         peer_data = _build_quant_decision(symbol.upper(), data)
@@ -424,7 +623,7 @@ def get_quant_analysis(symbol: str):
         raise HTTPException(status_code=500, detail=f"Lỗi tính Quant cho mã {symbol}: {str(e)}")
 
 @app.get("/api/ai_news/{symbol}")
-def get_ai_news(symbol: str, response: Response):
+def get_ai_news(symbol: str, response: Response, _user: AuthUser = Depends(require_user)):
     try:
         response.headers["Cache-Control"] = "no-store"
         from ai_advisor_engine import generate_news_feed
@@ -435,7 +634,7 @@ def get_ai_news(symbol: str, response: Response):
 
 
 @app.get("/api/news-image/{token}")
-def get_news_image(token: str):
+def get_news_image(token: str, _user: AuthUser = Depends(require_user)):
     if not re.fullmatch(r"[a-f0-9]{24}", token):
         raise HTTPException(status_code=400, detail="Mã ảnh không hợp lệ.")
     try:
@@ -453,7 +652,8 @@ def get_news_image(token: str):
 
 
 @app.get("/api/peers/{symbol}")
-def get_peers(symbol: str, response: Response, peers: Optional[str] = None, refresh: bool = False):
+def get_peers(symbol: str, response: Response, peers: Optional[str] = None, refresh: bool = False,
+              _user: AuthUser = Depends(require_user)):
     try:
         response.headers["Cache-Control"] = "no-store"
         if peers is not None:
@@ -474,7 +674,7 @@ def get_peers(symbol: str, response: Response, peers: Optional[str] = None, refr
 
 
 @app.get("/api/peers/{symbol}/snapshot/{snapshot_id}")
-def get_peer_snapshot(symbol: str, snapshot_id: int):
+def get_peer_snapshot(symbol: str, snapshot_id: int, _user: AuthUser = Depends(require_user)):
     """Return the raw financial statement payload used to compute the matrix.
 
     This is the audit endpoint for Section 5 — every cell in the peer
@@ -494,7 +694,8 @@ def get_peer_snapshot(symbol: str, snapshot_id: int):
 
 
 @app.get("/api/peers/{symbol}/metric/{metric_snapshot_id}")
-def get_peer_metric_snapshot(symbol: str, metric_snapshot_id: int):
+def get_peer_metric_snapshot(symbol: str, metric_snapshot_id: int,
+                             _user: AuthUser = Depends(require_user)):
     """Return the cached 15-metric pack + provenance manifest for audit."""
     from peer_accuracy_store import get_metric_snapshot
 
@@ -509,7 +710,7 @@ def get_peer_metric_snapshot(symbol: str, metric_snapshot_id: int):
 
 
 @app.get("/api/peers/store/summary")
-def get_peer_store_summary():
+def get_peer_store_summary(_user: AuthUser = Depends(require_user)):
     """Health check for the persistent BCTC store backing the matrix."""
     from peer_accuracy_store import store_summary
     return store_summary()
@@ -521,6 +722,7 @@ def get_corporate_calendar_api(
     start: Optional[date] = None,
     end: Optional[date] = None,
     refresh: bool = False,
+    _user: AuthUser = Depends(require_user),
 ):
     try:
         from corporate_calendar_engine import get_corporate_calendar
@@ -546,7 +748,8 @@ def get_heatmap_data(response: Response, refresh: bool = False):
 
 
 @app.get("/api/market-bubbles/data")
-def get_market_bubbles_data(response: Response, range: str = "1D", refresh: bool = False):
+def get_market_bubbles_data(response: Response, range: str = "1D", refresh: bool = False,
+                            _user: AuthUser = Depends(require_user)):
     """Return the full listed common-stock universe for market bubbles."""
     from market_bubble_engine import build_market_bubble_dataset
 
@@ -682,7 +885,8 @@ def get_heatmap_timeline_latest(response: Response):
 
 @app.get("/api/heatmap/ai_insight")
 @app.post("/api/heatmap/ai_insight")
-def get_heatmap_ai_insight(x_lp_user_action: Optional[str] = Header(default=None)):
+def get_heatmap_ai_insight(x_lp_user_action: Optional[str] = Header(default=None),
+                           _user: AuthUser = Depends(require_user)):
     try:
         _require_explicit_deepseek_action(x_lp_user_action)
         from heatmap_engine import fetch_market_heatmap_data, generate_deepseek_heatmap_insight
@@ -695,7 +899,8 @@ def get_heatmap_ai_insight(x_lp_user_action: Optional[str] = Header(default=None
         raise HTTPException(status_code=500, detail=f"Lỗi tạo phân tích Lộc Phát AI cho Bản đồ nhiệt: {str(e)}")
 
 @app.post("/api/heatmap/weekly_analysis")
-def get_weekly_analysis(x_lp_user_action: Optional[str] = Header(default=None)):
+def get_weekly_analysis(x_lp_user_action: Optional[str] = Header(default=None),
+                        _user: AuthUser = Depends(require_user)):
     """
     Weekly trading analysis - only available after 15:00 on Fridays.
     Analyzes the last 5 trading days (stored in heatmap_snapshots).
@@ -751,6 +956,7 @@ def rsi_backtest(
     trend_filter: str = "none",
     market_index: str = "^VNINDEX",
     initial_capital: float = 100_000_000.0,
+    _user: AuthUser = Depends(require_user),
 ):
     """RSI Divergence Backtest API for Lộc Phát Securities (v2)."""
     try:

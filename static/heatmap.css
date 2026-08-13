@@ -92,20 +92,22 @@ kbd { border: 1px solid var(--line); background: var(--surface-2); color: var(--
 .icon-button.spinning svg { animation: spin .8s linear infinite; }
 
 .ai-button {
-  height: 36px;
+  height: 38px;
+  min-height: 38px;
   border: 1px solid rgba(244, 185, 66, .45);
   background: #14201d;
   color: #fff2ca;
   padding: 0 14px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 13px;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .ai-button svg { width: 15px; height: 15px; color: var(--amber); }
 .ai-button:hover { background: #1b2b26; border-color: var(--amber); box-shadow: 0 0 12px rgba(244, 185, 66, 0.2); }
@@ -119,6 +121,15 @@ kbd { border: 1px solid var(--line); background: var(--surface-2); color: var(--
   padding: 8px 4px;
   color: var(--muted);
   font-size: 12px;
+  width: 100%;
+}
+.market-ribbon-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex-shrink: 0;
+  gap: 12px;
 }
 .market-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .market-state strong { color: var(--text); }
@@ -829,8 +840,16 @@ dialog::backdrop { background: rgba(2, 6, 8, .8); backdrop-filter: blur(5px); }
   .symbol-search input, .symbol-search kbd { display: none; }
   .symbol-search:focus-within { position: absolute; z-index: 20; left: 12px; right: 12px; top: 12px; width: auto; background: #080d11; }
   .symbol-search:focus-within input { display: block; }
-  .ai-button { width: 38px; padding: 0; justify-content: center; }
-  .ai-button span { display: none; }
+  .ai-button {
+    height: 34px;
+    min-height: 34px;
+    padding: 0 12px;
+    font-size: 12px;
+    gap: 6px;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .ai-button span { display: inline-block !important; font-size: 12px; font-weight: 700; white-space: nowrap; }
   .summary-grid { grid-template-columns: 1fr 1fr; }
   .summary-item { min-height: 72px; padding: 10px; }
   .summary-item:nth-child(2n) { border-right: 0; }
@@ -1230,11 +1249,13 @@ dialog::backdrop { background: rgba(2, 6, 8, .8); backdrop-filter: blur(5px); }
     padding: 0 10px;
   }
   .market-ribbon {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     font-size: 11px;
     padding: 6px 4px;
+    width: 100%;
   }
   .controlbar {
     padding: 6px;

@@ -9,10 +9,101 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
-  <link rel="stylesheet" href="/static/heatmap.css?v=20260808_quant_v4">
-  <link rel="stylesheet" href="/static/site-nav.css?v=20260805_sticky_v3">
-  <link rel="stylesheet" href="/static/site-nav-ai.css?v=20260804_mobile_nav_v1">
-  <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
+  <link rel="stylesheet" href="/static/heatmap.css?v=20260811_ai_btn_v9">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260811_ai_btn_v9">
+  <link rel="stylesheet" href="/static/site-nav-ai.css?v=20260811_ai_btn_v9">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260811_ai_btn_v9">
+  <style>
+    /* Responsive AI Button & Market Ribbon overrides */
+    .market-ribbon {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 8px !important;
+      width: 100% !important;
+    }
+    .market-ribbon-actions,
+    .market-ribbon > div:last-child {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: flex-end !important;
+      margin-left: auto !important;
+      flex-shrink: 0 !important;
+    }
+    .ai-button,
+    button#aiButton.ai-button {
+      height: 38px !important;
+      min-height: 38px !important;
+      padding: 0 14px !important;
+      background: var(--lp-navy, #064a6b) !important;
+      border: 1px solid var(--lp-navy-strong, #043852) !important;
+      border-radius: 6px !important;
+      color: #ffffff !important;
+      font-weight: 700 !important;
+      font-size: 13px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      white-space: nowrap !important;
+      box-shadow: 0 2px 6px rgba(6, 74, 107, 0.25) !important;
+      cursor: pointer !important;
+      flex-shrink: 0 !important;
+      width: auto !important;
+    }
+    .ai-button span,
+    button#aiButton.ai-button span {
+      display: inline-block !important;
+      color: #ffffff !important;
+      font-size: 13px !important;
+      font-weight: 700 !important;
+      white-space: nowrap !important;
+      visibility: visible !important;
+    }
+    .ai-button svg,
+    .ai-button i {
+      color: #f5cf79 !important;
+      width: 15px !important;
+      height: 15px !important;
+      flex-shrink: 0 !important;
+    }
+
+    @media (max-width: 640px) {
+      .market-ribbon {
+        padding: 8px 0 !important;
+      }
+      .market-state {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 2px !important;
+        min-width: 0 !important;
+        flex: 1 1 auto !important;
+      }
+      .market-state strong {
+        font-size: 12px !important;
+        line-height: 1.3 !important;
+      }
+      .market-state span#sessionTimestamp {
+        font-size: 10px !important;
+        line-height: 1.2 !important;
+      }
+      .ai-button,
+      button#aiButton.ai-button {
+        height: 34px !important;
+        min-height: 34px !important;
+        padding: 0 12px !important;
+        font-size: 12px !important;
+        gap: 5px !important;
+        width: auto !important;
+      }
+      .ai-button span,
+      button#aiButton.ai-button span {
+        font-size: 12px !important;
+      }
+    }
+  </style>
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
 </head>
@@ -50,7 +141,7 @@
         <strong id="marketStatus">Đang kết nối</strong>
         <span id="sessionTimestamp">Chờ dữ liệu...</span>
       </div>
-      <div style="display:flex;align-items:center;gap:12px;">
+      <div class="market-ribbon-actions">
         <button class="ai-button" id="aiButton" type="button" title="Mở nhận định AI thị trường">
           <i data-lucide="sparkles"></i>
           <span>Nhận định AI</span>
@@ -251,7 +342,8 @@
     </div>
   </dialog>
 
-  <script src="/static/site-nav.js?v=20260809_market_visuals_v1"></script>
+  <script src="/static/auth.js?v=20260813_supabase_v1"></script>
+  <script src="/static/site-nav.js?v=20260813_freemium_v1"></script>
   <script src="/static/heatmap.js?v=20260810_schema_v9" defer></script>
 </body>
 </html>

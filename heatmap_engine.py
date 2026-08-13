@@ -1409,11 +1409,12 @@ def _normalized_heatmap_memberships(
 
 
 def _load_heatmap_vn30_contract() -> Tuple[set, Dict[str, Any]]:
-    """Use the Bubble module's durable VN30 cache without creating import cycles."""
+    """Load the same dual-source membership snapshot used by RRG and Bubbles."""
     try:
-        from market_bubble_engine import get_vn30_members
+        from rrg_index_membership import get_index_membership
 
-        return get_vn30_members()
+        symbols, meta = get_index_membership("VN30")
+        return set(symbols), meta
     except Exception as exc:
         logger.warning("Heatmap VN30 membership unavailable: %s", exc)
         return set(), {
@@ -1538,14 +1539,13 @@ def _apply_heatmap_universe_contract(
     payload["filter_groups"] = filter_groups
     payload["indices"] = {
         "VN30": {
+            **vn30_meta,
             "symbols": sorted(stock["symbol"] for stock in vn30_rows),
             "total_count": len(vn30_rows),
             "active_count": sum(int(bool(stock.get("is_active"))) for stock in vn30_rows),
             "available": bool(vn30_rows),
             "stale": bool(vn30_meta.get("stale")),
             "source": vn30_meta.get("source") or "unavailable",
-            "fetched_at": vn30_meta.get("fetched_at"),
-            "error": vn30_meta.get("error"),
         }
     }
     lineage = payload.setdefault("data_lineage", {})
@@ -2902,8 +2902,9 @@ INPUT:
 {json.dumps(llm_input, ensure_ascii=False, separators=(',', ':'))}
 """
 
+    deepseek_model = get_env_api_key("DEEPSEEK_MODEL") or "deepseek-v4-flash-0731"
     payload = {
-        "model": "deepseek-chat",
+        "model": deepseek_model,
         "messages": [
             {"role": "system", "content": "Bạn diễn giải dữ liệu định lượng có historical context. So sánh với avg 5 ngày khi có. Tuyệt đối không thêm dữ kiện ngoài input."},
             {"role": "user", "content": prompt},
@@ -3278,8 +3279,9 @@ Hãy trả về JSON với các trường:
 
 Response format: JSON object"""
 
+    deepseek_model = get_env_api_key("DEEPSEEK_MODEL") or "deepseek-v4-flash-0731"
     payload = {
-        "model": "deepseek-chat",
+        "model": deepseek_model,
         "messages": [
             {"role": "system", "content": "Bạn là chuyên gia phân tích thị trường chứng khoán Việt Nam. Phân tích ngắn gọn, thực tế, có căn cứ dữ liệu."},
             {"role": "user", "content": prompt}

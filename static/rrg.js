@@ -65,6 +65,10 @@
   const radarGrid = document.getElementById('rrgRadarGrid');
   const pinnedCount = document.getElementById('pinnedCount');
   const dataAlert = document.getElementById('rrgDataAlert');
+  const replaySelect = document.getElementById('selectReplaySession');
+  const qualityPanel = document.getElementById('rrgDataQualityPanel');
+  const snapshotMeta = document.getElementById('rrgSnapshotMeta');
+  const qualityMetrics = document.getElementById('rrgQualityMetrics');
 
   // Filter & Search controls
   const searchTickerInput = document.getElementById('searchTickerInput');
@@ -130,6 +134,12 @@
     return sign + Number(v).toFixed(2) + '%';
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    }[char]));
+  }
+
   function dataStatusBadge(status) {
     switch (status) {
       case 'ok':
@@ -187,11 +197,14 @@
     if (group === 'CUSTOM' && customSymbolsCsv) {
       url += `&symbols=${encodeURIComponent(customSymbolsCsv)}`;
     }
+    if (replaySelect?.value && group !== 'CUSTOM') {
+      url += `&as_of=${encodeURIComponent(replaySelect.value)}`;
+    }
 
     try {
       setTimeout(() => {
         if (loadingOverlay && !loadingOverlay.classList.contains('is-hidden')) {
-          if (loadingSub) loadingSub.textContent = 'Đang tính toán LP RS-Ratio / RS-Momentum cho từng mã…';
+          if (loadingSub) loadingSub.textContent = 'Đang tính toán LP RS-Ratio / LP RS-Momentum cho từng mã…';
         }
       }, 1200);
 
@@ -218,8 +231,11 @@
       renderRrgChart();
       renderRotationRadar();
       renderRrgTable();
-      if (rrgData.has_stale_data) {
-        showDataAlert(`<i class="fa-solid fa-clock-rotate-left mr-1"></i> Dữ liệu dự phòng đã kiểm định, cập nhật đến <b>${rrgData.data_as_of || '—'}</b>. Hệ thống đang tự đồng bộ nguồn trực tiếp.`);
+      renderDataQuality();
+      if (rrgData.replay_mode) {
+        showDataAlert(`<i class="fa-solid fa-clock-rotate-left mr-1"></i> Đang xem snapshot lịch sử <b>${escapeHtml(rrgData.as_of_session || '—')}</b>. Mọi điểm số được tái dựng theo đúng dữ liệu của snapshot này.`, 'success');
+      } else if (rrgData.has_stale_data || rrgData.served_from_snapshot) {
+        showDataAlert(`<i class="fa-solid fa-clock-rotate-left mr-1"></i> Dữ liệu hoàn chỉnh gần nhất – chậm <b>${rrgData.snapshot_age_sessions || 0} phiên</b>, cập nhật đến <b>${escapeHtml(rrgData.data_as_of || '—')}</b>.`);
       } else {
         hideDataAlert();
       }
@@ -245,6 +261,47 @@
             </tr>`;
         }
       }
+    }
+  }
+
+  async function loadReplaySessions() {
+    if (!replaySelect || !selectGroup || !selectBenchmark) return;
+    const current = replaySelect.value;
+    replaySelect.disabled = selectGroup.value === 'CUSTOM';
+    if (replaySelect.disabled) {
+      replaySelect.innerHTML = '<option value="">Hiện tại</option>';
+      return;
+    }
+    try {
+      const url = `/api/rrg/snapshots?benchmark=${encodeURIComponent(selectBenchmark.value)}&group=${encodeURIComponent(selectGroup.value)}&limit=60`;
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) return;
+      const payload = await response.json();
+      replaySelect.innerHTML = '<option value="">Hiện tại</option>' + (payload.sessions || []).map((session) =>
+        `<option value="${escapeHtml(session)}">${escapeHtml(session)}</option>`
+      ).join('');
+      if ([...replaySelect.options].some((option) => option.value === current)) replaySelect.value = current;
+    } catch (_) { /* Replay is optional until enough snapshots exist. */ }
+  }
+
+  function renderDataQuality() {
+    if (!qualityPanel || !rrgData) return;
+    qualityPanel.classList.remove('hidden');
+    if (snapshotMeta) {
+      snapshotMeta.textContent = `Snapshot ${rrgData.snapshot_id || '—'} · phiên ${rrgData.as_of_session || '—'} · ${rrgData.formula_version || rrgData.method || '—'} · ${rrgData.adjustment_version || 'raw-v1'}`;
+    }
+    if (qualityMetrics) {
+      const confidenceValues = (rrgData.data || []).map((item) => Number(item.data_confidence_score)).filter(Number.isFinite);
+      const confidence = confidenceValues.length ? confidenceValues.reduce((a, b) => a + b, 0) / confidenceValues.length : null;
+      const pending = (rrgData.data || []).filter((item) => item.corporate_action_status === 'adjustment_pending').length;
+      const pill = (label, value, tone = 'slate') => `<span class="px-2 py-1 rounded border bg-${tone}-500/10 border-${tone}-500/30 text-${tone}-300">${label}: <b>${value}</b></span>`;
+      qualityMetrics.innerHTML = [
+        pill('Coverage', `${safeNum(rrgData.completeness_pct, 1)}%`, 'emerald'),
+        pill('Đồng thuận nguồn', rrgData.source_agreement_pct == null ? '—' : `${safeNum(rrgData.source_agreement_pct, 1)}%`, 'blue'),
+        pill('Tin cậy TB', confidence == null ? '—' : `${safeNum(confidence, 1)}/100`, confidence != null && confidence >= 80 ? 'emerald' : 'amber'),
+        pill('Action chờ xác minh', pending, pending ? 'amber' : 'slate'),
+        pill('Phạm vi điểm', rrgData.score_mode === 'market' ? 'Toàn thị trường' : 'Nhóm tạm thời', rrgData.score_mode === 'market' ? 'emerald' : 'amber')
+      ].join('');
     }
   }
 
@@ -1130,6 +1187,8 @@
               <span class="inline-block self-start text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${badge.cls}">${badge.label}</span>
               ${item.data_status === 'insufficient_history' ? `<span class="text-[9px] text-slate-500">${item.history_sessions || 0}/${item.required_sessions || 252} phiên</span>` : ''}
               ${item.data_status === 'stale_valid' ? `<span class="text-[9px] text-amber-400">đến ${item.last_date || '—'} · trễ ${item.freshness_sessions || 0} phiên</span>` : ''}
+              ${item.corporate_action_status === 'adjustment_pending' ? '<span class="text-[9px] text-amber-400"><i class="fa-solid fa-triangle-exclamation"></i> quyền chờ xác minh</span>' : ''}
+              ${item.data_confidence_score != null ? `<span class="text-[9px] text-slate-500">Tin cậy ${safeNum(item.data_confidence_score, 0)}/100 · ${escapeHtml(item.canonical_source || item.data_source || '—')}</span>` : ''}
             </div>
           </td>
           <td class="px-4 py-3">
@@ -1137,7 +1196,7 @@
               ${q.name || 'Không có dữ liệu'}
             </span>
           </td>
-          <td class="px-4 py-3 text-right font-mono font-extrabold" title="Điểm xoay tương đối, không phải điểm mua" style="color:${scoreColor}">${safeNum(score, 1)}</td>
+          <td class="px-4 py-3 text-right font-mono font-extrabold" title="Điểm xoay toàn thị trường, không phải điểm mua" style="color:${scoreColor}">${safeNum(score, 1)}<span class="block text-[9px] font-normal text-slate-500">hạng nhóm ${item.group_rank || '—'}</span></td>
           <td class="px-4 py-3 text-right font-mono font-semibold text-slate-200">${safeNum(item.rs_ratio)}</td>
           <td class="px-4 py-3 text-right font-mono font-semibold text-slate-200">${safeNum(item.rs_momentum)}</td>
           <td class="px-4 py-3 text-right">
@@ -1255,13 +1314,14 @@
       ? new Set(item.tail_quadrants).size > 1
       : false;
     const badge = dataStatusBadge(item.data_status || 'no_data');
-    const src = item.data_source || 'PostgreSQL';
+    const src = item.canonical_source || item.data_source || 'PostgreSQL';
 
     return `
       <div style="font-weight:800; font-size:13px; color:#064a6b; margin-bottom:4px;">${item.symbol}</div>
       <div style="color:#59656b; font-size:10px; margin-bottom:4px;">${item.sector || '—'} · nguồn: ${src}</div>
       <div style="color:${quadTextColor(q.id)}; font-weight:700;">${q.name || 'Không có dữ liệu'}${transition ? ' ↻' : ''}</div>
       <div style="margin-top:4px;">Điểm xoay: <b>${safeNum(item.rotation_score, 1)}/100</b></div>
+      <div>Hạng nhóm: <b>${item.group_rank || '—'}</b> · percentile <b>${safeNum(item.group_percentile, 1)}%</b></div>
       <div>LP RS-Ratio: <b>${safeNum(item.rs_ratio)}</b></div>
       <div>LP RS-Momentum: <b>${safeNum(item.rs_momentum)}</b></div>
       <div>Hướng 5D: <b>${item.heading_label || '—'}</b> · vận tốc <b>${safeNum(item.velocity_5d)}</b></div>
@@ -1269,6 +1329,8 @@
       <div>Giá: <b>${fmtVnd(item.close)}</b> (${fmtPct(item.change_5d_pct)})</div>
       <div>Δ 1 phiên: <b>${fmtPct(d1)}</b> · Δ 5 phiên: <b>${fmtPct(d5)}</b></div>
       <div>Khoảng cách từ (100,100): <b>${dist == null ? '—' : dist}</b></div>
+      <div>Tin cậy dữ liệu: <b>${safeNum(item.data_confidence_score, 1)}/100</b> · lệch nguồn <b>${safeNum(item.source_agreement_bps, 1)} bps</b></div>
+      <div>Điều chỉnh: <b>${escapeHtml(item.adjustment_version || 'raw-v1')}</b> · quyền: <b>${escapeHtml(item.corporate_action_status || 'unknown')}</b></div>
       <div style="margin-top:5px;color:#4e5a61;font-size:9px;">Tín hiệu tương đối, không phải khuyến nghị mua/bán.</div>
       <div style="margin-top:6px;"><span class="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded border ${badge.cls}">${badge.label}</span></div>
     `;
@@ -1452,14 +1514,21 @@
     if (customPanel) {
       customPanel.classList.toggle('hidden', selectGroup.value !== 'CUSTOM');
     }
+    if (replaySelect) replaySelect.value = '';
+    loadReplaySessions();
     loadRrgData();
   });
-  selectBenchmark?.addEventListener('change', loadRrgData);
+  selectBenchmark?.addEventListener('change', () => {
+    if (replaySelect) replaySelect.value = '';
+    loadReplaySessions();
+    loadRrgData();
+  });
   selectPeriod?.addEventListener('change', loadRrgData);
   selectTailLength?.addEventListener('change', loadRrgData);
   btnRefreshRrg?.addEventListener('click', loadRrgData);
   btnPlayAnimation?.addEventListener('click', toggleAnimation);
   btnToggleTails?.addEventListener('click', toggleRotationTails);
+  replaySelect?.addEventListener('change', loadRrgData);
   customApply?.addEventListener('click', applyCustomSymbols);
   document.querySelectorAll('[data-sort-key]').forEach((button) => {
     button.addEventListener('click', (event) => applySort(button.dataset.sortKey, event.shiftKey));
@@ -1482,6 +1551,7 @@
     updateTailModeButton();
     showLoading('Đang khởi tạo biểu đồ RRG…');
     resizeCanvas();
+    loadReplaySessions();
     loadRrgData();
   });
 })();

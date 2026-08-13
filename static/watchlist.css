@@ -354,7 +354,7 @@ img {
   background: #ffffff;
   object-fit: contain;
   flex-shrink: 0;
-  border: 1px solid #29383f;
+  border: none !important;
   display: inline-block;
 }
 

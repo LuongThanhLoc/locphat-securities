@@ -10,6 +10,7 @@
   const WATCHLIST_KEY = 'lps_personal_watchlist_v1';
   const BATCH_SIZE = 50;
   const NOTE_MAX_LEN = 300;
+  let syncTimer = 0;
 
   /* ---------- Helpers ---------- */
   function loadWatchlist() {
@@ -30,6 +31,10 @@
     } catch (e) {
       console.error('[Watchlist] Save failed:', e);
     }
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => window.LPAuth?.syncWatchlist(items).catch(error => {
+      console.warn('[Watchlist] Supabase sync failed:', error);
+    }), 180);
   }
 
   function normalizeOptionalAiValue(value) {
@@ -823,6 +828,10 @@
     initEvents();
     renderList();
     fetchPricesBatch();
+    document.addEventListener('lp:watchlist-synced', () => {
+      renderList();
+      fetchPricesBatch();
+    });
   }
 
   if (document.readyState === 'loading') {

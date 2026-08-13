@@ -94,7 +94,7 @@ body.bubble-dialog-open { overflow: hidden; }
 .bubble-quick-close:hover, .bubble-quick-close:focus-visible { border-color: #167856; outline: 3px solid rgba(22,120,86,.15); }
 .bubble-quick-content { overflow: auto; padding: clamp(18px, 4vi, 28px); }
 .bubble-quick-identity { display: grid; grid-template-columns: 62px minmax(0, 1fr); align-items: center; gap: 14px; padding-bottom: 18px; border-bottom: 1px solid #ddd7cd; }
-.bubble-quick-logo, .bubble-quick-avatar { width: 62px; height: 62px; border: 1px solid #d5cfc3; border-radius: 50%; background: #fff; object-fit: contain; }
+.bubble-quick-logo, .bubble-quick-avatar { width: 62px; height: 62px; border: none; border-radius: 50%; background: #fff; object-fit: contain; }
 .bubble-quick-avatar { display: grid; place-items: center; color: #fff; background: #167856; font-size: 17px; font-weight: 800; }
 .bubble-quick-symbol { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px 11px; }
 .bubble-quick-symbol strong { font: 800 29px "Noto Serif", serif; }

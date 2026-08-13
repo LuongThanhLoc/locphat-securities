@@ -33,11 +33,14 @@ def get_env_api_key(key_name: str) -> str:
 
 
 DEEPSEEK_API_KEY = get_env_api_key("DEEPSEEK_API_KEY")
+_primary_deepseek_model = get_env_api_key("DEEPSEEK_MODEL") or "deepseek-v4-flash-0731"
 
-DEEPSEEK_MODELS = [
-    "deepseek-chat",
-    "deepseek-v4-flash"
-]
+DEEPSEEK_MODELS = list(dict.fromkeys([
+    _primary_deepseek_model,
+    "deepseek-v4-flash-0731",
+    "deepseek-v4-flash",
+    "deepseek-chat"
+]))
 
 _NEWS_CACHE: Dict[str, Any] = {}
 _NEWS_IMAGE_REGISTRY: Dict[str, str] = {}

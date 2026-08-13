@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f4f0e6">
-  <title>Biểu Đồ Sức Mạnh Giá LP‑RRG - Lộc Phát Securities</title>
+  <title>Biểu Đồ Sức Mạnh Giá LP‑RRG V2 - Lộc Phát Securities</title>
 
   <link rel="icon" type="image/x-icon" href="/favicon.ico?v=20260808_rrg">
 
@@ -197,7 +197,7 @@
           <i class="fa-solid fa-chart-line"></i> Technical Intelligence v3.2
         </div>
         <h1 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
-          Biểu Đồ Sức Mạnh Giá LP‑RRG
+          Biểu Đồ Sức Mạnh Giá LP‑RRG V2
         </h1>
         <p class="text-slate-400 text-sm mt-1">
           Theo dõi chu kỳ xoay chiều và động lượng giá so với chỉ số tham chiếu
@@ -236,6 +236,7 @@
             <span class="text-[11px] font-semibold text-slate-400 px-3 border-r border-slate-800 bg-slate-900/50 flex items-center h-full">Danh mục</span>
             <select id="selectGroup" class="bg-transparent text-slate-200 text-xs font-semibold px-3 focus:outline-none hover:text-emerald-400 transition-colors cursor-pointer h-full max-w-[180px]">
               <option value="SMC_TOP">Cổ phiếu Tiêu Điểm</option>
+              <option value="VN30">VN30</option>
             </select>
           </div>
 
@@ -254,6 +255,13 @@
               <option value="10">10</option>
               <option value="14" selected>14</option>
               <option value="20">20</option>
+            </select>
+          </div>
+
+          <div class="flex items-center bg-slate-950/60 border border-slate-800 rounded-lg overflow-hidden h-9">
+            <label for="selectReplaySession" class="text-[11px] font-semibold text-slate-400 px-3 border-r border-slate-800 bg-slate-900/50 flex items-center h-full"><i class="fa-solid fa-clock-rotate-left mr-1"></i> Replay</label>
+            <select id="selectReplaySession" class="bg-transparent text-slate-200 text-xs font-semibold px-3 focus:outline-none hover:text-emerald-400 transition-colors cursor-pointer h-full max-w-[150px]" aria-label="Chọn phiên LP-RRG lịch sử">
+              <option value="">Hiện tại</option>
             </select>
           </div>
 
@@ -317,6 +325,16 @@
     </div>
 
     <div id="rrgDataAlert" class="hidden px-4 py-3 rounded-lg border text-[11px] font-semibold" role="status" aria-live="polite"></div>
+
+    <section id="rrgDataQualityPanel" class="hidden bg-slate-900/80 border border-slate-800 rounded-xl px-4 py-3" aria-labelledby="rrgDataQualityTitle">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div>
+          <h2 id="rrgDataQualityTitle" class="text-xs font-bold text-white flex items-center gap-2"><i class="fa-solid fa-shield-halved text-emerald-400"></i> Kiểm định dữ liệu LP‑RRG V2</h2>
+          <p id="rrgSnapshotMeta" class="text-[10px] text-slate-500 mt-1"></p>
+        </div>
+        <div id="rrgQualityMetrics" class="flex flex-wrap gap-2 text-[10px]"></div>
+      </div>
+    </section>
 
     <!-- RRG Canvas Chart Container -->
     <div class="rrg-canvas-container" id="rrgChartWrap">
@@ -388,8 +406,9 @@
 
   </main>
 
-  <script src="/static/site-nav.js?v=20260809_market_visuals_v1"></script>
-  <script src="/static/rrg.js?v=20260808_light_v1"></script>
+  <script src="/static/auth.js?v=20260813_supabase_v1"></script>
+  <script src="/static/site-nav.js?v=20260813_freemium_v1"></script>
+  <script src="/static/rrg.js?v=20260811_rrg_v2"></script>
 </body>
 
 </html>
