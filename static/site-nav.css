@@ -267,8 +267,9 @@
 .lp-nav-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   justify-self: end;
+  flex-shrink: 0;
 }
 .lp-nav-search {
   display: flex;

@@ -148,7 +148,7 @@ body.lp-editorial {
   min-height: 62px;
   margin: 0 auto;
   padding: 7px 0;
-  grid-template-columns: minmax(180px, auto) minmax(0, 1fr) clamp(260px, 24vw, 420px);
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr) auto;
   gap: clamp(12px, 1.8vw, 30px);
   background: transparent !important;
   border: 0;
