@@ -197,6 +197,11 @@ def get_auth_me(request: Request):
     return {"authenticated": True, "user": _public_auth_user(user), "csrf_token": user.csrf_token}
 
 
+@app.get("/api/auth/admin")
+def get_auth_admin(user: AuthUser = Depends(supabase_auth.require_admin)):
+    return {"admin": True, "user": _public_auth_user(user)}
+
+
 @app.post("/api/auth/register", status_code=201)
 def register_account(payload: RegisterPayload, request: Request, response: Response):
     session = supabase_auth.signup(

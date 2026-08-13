@@ -121,6 +121,13 @@ def test_require_admin_rejects_regular_user(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_admin_status_endpoint_requires_admin(monkeypatch):
+    regular = supabase_auth.AuthUser("id", "u@example.com", "investor", "access", "csrf")
+    monkeypatch.setattr(supabase_auth, "authenticate_request", lambda request: regular)
+    with TestClient(application.app) as client:
+        assert client.get("/api/auth/admin").status_code == 403
+
+
 def test_jwt_verifies_signature_issuer_audience_and_expiry(monkeypatch):
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
