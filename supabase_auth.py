@@ -43,6 +43,7 @@ class AuthUser:
     username: str
     access_token: str
     csrf_token: str
+    role: str = "user"
 
 
 def _env(name: str, *, required: bool = True) -> str:
@@ -295,12 +296,14 @@ def _csrf_for_request(request: Request) -> str:
 
 def user_from_claims(claims: dict[str, Any], access_token: str, csrf_token: str) -> AuthUser:
     metadata = claims.get("user_metadata") if isinstance(claims.get("user_metadata"), dict) else {}
+    app_metadata = claims.get("app_metadata") if isinstance(claims.get("app_metadata"), dict) else {}
     return AuthUser(
         id=str(claims.get("sub") or ""),
         email=str(claims.get("email") or ""),
         username=str(metadata.get("username") or "Nhà đầu tư"),
         access_token=access_token,
         csrf_token=csrf_token,
+        role="admin" if app_metadata.get("role") == "admin" else "user",
     )
 
 
@@ -324,6 +327,14 @@ def require_user(request: Request) -> AuthUser:
     user = authenticate_request(request)
     if not user:
         raise HTTPException(status_code=401, detail="Bạn cần đăng nhập để sử dụng tính năng này.")
+    return user
+
+
+def require_admin(request: Request) -> AuthUser:
+    """Require a server-issued role from trusted Supabase app metadata."""
+    user = require_user(request)
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Bạn không có quyền quản trị.")
     return user
 
 

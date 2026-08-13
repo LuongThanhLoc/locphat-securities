@@ -169,7 +169,7 @@ def _safe_next(value: str) -> str:
 
 
 def _public_auth_user(user: AuthUser) -> Dict[str, str]:
-    return {"id": user.id, "email": user.email, "username": user.username}
+    return {"id": user.id, "email": user.email, "username": user.username, "role": user.role}
 
 
 def _protected_page(request: Request, filename: str):
@@ -205,11 +205,13 @@ def register_account(payload: RegisterPayload, request: Request, response: Respo
     )
     csrf = supabase_auth.set_session_cookies(response, session)
     metadata = session.get("user", {}).get("user_metadata") or {}
+    app_metadata = session.get("user", {}).get("app_metadata") or {}
     return {
         "user": {
             "id": str(session.get("user", {}).get("id") or ""),
             "email": str(session.get("user", {}).get("email") or payload.email.lower()),
             "username": str(metadata.get("username") or payload.username.lower()),
+            "role": "admin" if app_metadata.get("role") == "admin" else "user",
         },
         "csrf_token": csrf,
     }
@@ -220,11 +222,13 @@ def login_account(payload: LoginPayload, request: Request, response: Response):
     session = supabase_auth.login(request, payload.email, payload.password, payload.turnstile_token)
     csrf = supabase_auth.set_session_cookies(response, session)
     metadata = session.get("user", {}).get("user_metadata") or {}
+    app_metadata = session.get("user", {}).get("app_metadata") or {}
     return {
         "user": {
             "id": str(session.get("user", {}).get("id") or ""),
             "email": str(session.get("user", {}).get("email") or payload.email.lower()),
             "username": str(metadata.get("username") or "Nhà đầu tư"),
+            "role": "admin" if app_metadata.get("role") == "admin" else "user",
         },
         "csrf_token": csrf,
     }

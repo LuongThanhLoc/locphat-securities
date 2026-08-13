@@ -101,6 +101,26 @@ def test_csrf_is_required_for_mutations():
     assert exc.value.status_code == 403
 
 
+def test_admin_role_only_comes_from_trusted_app_metadata():
+    claims = {
+        "sub": "user-1",
+        "email": "admin@example.com",
+        "user_metadata": {"username": "thanhloc", "role": "admin"},
+        "app_metadata": {"role": "admin"},
+    }
+    assert supabase_auth.user_from_claims(claims, "access", "csrf").role == "admin"
+    claims["app_metadata"] = {}
+    assert supabase_auth.user_from_claims(claims, "access", "csrf").role == "user"
+
+
+def test_require_admin_rejects_regular_user(monkeypatch):
+    regular = supabase_auth.AuthUser("id", "u@example.com", "investor", "access", "csrf")
+    monkeypatch.setattr(supabase_auth, "authenticate_request", lambda request: regular)
+    with pytest.raises(HTTPException) as exc:
+        supabase_auth.require_admin(object())
+    assert exc.value.status_code == 403
+
+
 def test_jwt_verifies_signature_issuer_audience_and_expiry(monkeypatch):
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
