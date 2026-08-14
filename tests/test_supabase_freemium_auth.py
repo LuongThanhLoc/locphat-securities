@@ -29,7 +29,7 @@ def test_public_pages_and_auth_status_are_available(client):
 
 
 @pytest.mark.parametrize("path", [
-    "/bubbles", "/calendar", "/watchlist", "/backtest", "/rrg", "/stock/FPT",
+    "/bubbles", "/calendar", "/macro", "/watchlist", "/backtest", "/rrg", "/stock/FPT",
     "/static/bubbles.html", "/static/calendar.html", "/static/watchlist.html",
     "/static/backtest.html", "/static/rrg.html",
 ])
@@ -43,7 +43,8 @@ def test_guest_cannot_bypass_premium_html(client, path):
     "/api/all_stocks", "/api/search_suggest?q=FPT", "/api/stocks",
     "/api/analyze/FPT", "/api/quant/FPT", "/api/ai_news/FPT",
     "/api/watchlist", "/api/watchlist/quotes?symbols=FPT", "/api/rrg/data",
-    "/api/heatmap/ai_insight", "/api/backtest/rsi/FPT",
+    "/api/heatmap/ai_insight", "/api/backtest/rsi/FPT", "/api/macro-calendar",
+    "/api/macro-tickers", "/api/market-ribbon", "/api/macro-event/0123456789abcdef0123",
 ])
 def test_guest_premium_api_fails_closed(client, path):
     assert client.get(path).status_code == 401
@@ -150,6 +151,22 @@ def test_jwt_verifies_signature_issuer_audience_and_expiry(monkeypatch):
         supabase_auth.decode_access_token(bad)
 
 
+def test_jwks_client_uses_certifi_trust_store(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    captured = {}
+
+    def fake_client(uri, **kwargs):
+        captured["uri"] = uri
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(supabase_auth, "_jwks_client", None)
+    monkeypatch.setattr(supabase_auth, "PyJWKClient", fake_client)
+    assert supabase_auth._get_jwks_client() is not None
+    assert captured["uri"].endswith("/auth/v1/.well-known/jwks.json")
+    assert captured["ssl_context"] is not None
+
+
 def test_frontend_contract_blocks_search_and_includes_responsive_dialog():
     root = Path(__file__).resolve().parents[1]
     nav = (root / "static/site-nav.js").read_text()
@@ -160,6 +177,9 @@ def test_frontend_contract_blocks_search_and_includes_responsive_dialog():
     assert "onSuccess: openAiReport" in (root / "static/heatmap.js").read_text()
     assert "position:fixed" in css and "100dvh" in css and "safe-area-inset" in css
     assert "e.key==='Escape'" in auth and "function trap" in auth
+    assert "function waitForCaptchaToken" in auth
+    assert "cf-turnstile-response" in auth
+    assert "data.turnstile_token=await waitForCaptchaToken(action)" in auth
 
 
 def test_register_sets_httponly_session_cookies(monkeypatch):

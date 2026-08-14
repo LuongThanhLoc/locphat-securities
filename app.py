@@ -34,7 +34,7 @@ app = FastAPI(
 
 PREMIUM_STATIC_PAGES = {
     "/static/backtest.html", "/static/bubbles.html", "/static/calendar.html",
-    "/static/rrg.html", "/static/watchlist.html",
+    "/static/macro.html", "/static/rrg.html", "/static/watchlist.html",
 }
 
 
@@ -302,6 +302,12 @@ def read_calendar(request: Request):
     return _protected_page(request, "calendar.html")
 
 
+@app.get("/macro", response_class=HTMLResponse)
+@app.get("/economic-calendar", response_class=HTMLResponse)
+def read_macro(request: Request):
+    return _protected_page(request, "macro.html")
+
+
 @app.get("/watchlist", response_class=HTMLResponse)
 def read_watchlist(request: Request):
     return _protected_page(request, "watchlist.html")
@@ -476,6 +482,17 @@ def initialise_corporate_calendar_sync():
     except Exception as exc:
         # Calendar requests can still serve the validated last-known-good DB.
         print(f"[Calendar] Background sync initialization failed: {exc}")
+
+
+@app.on_event("startup")
+def initialise_macro_calendar_sync():
+    """Launch the idempotent Macro Calendar refresh scheduler."""
+    try:
+        from macro_calendar_engine import start_macro_background_sync, init_macro_db
+        init_macro_db()
+        start_macro_background_sync()
+    except Exception as exc:
+        print(f"[Macro Calendar] Background sync initialization failed: {exc}")
 
 
 
@@ -745,6 +762,105 @@ def get_corporate_calendar_api(
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi tải lịch doanh nghiệp: {str(e)}")
+
+
+@app.get("/api/macro-calendar")
+def get_macro_calendar_api(
+    response: Response,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    country: Optional[str] = None,
+    importance: Optional[int] = None,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    refresh: bool = False,
+    _user: AuthUser = Depends(require_user),
+):
+    try:
+        from macro_calendar_engine import get_macro_calendar
+        response.headers["Cache-Control"] = "no-store"
+        return get_macro_calendar(
+            start_date=start_date,
+            end_date=end_date,
+            country=country,
+            importance=importance,
+            category=category,
+            search=search,
+            force_refresh=refresh,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi tải lịch kinh tế vĩ mô: {str(e)}")
+
+
+def _market_ribbon_response(response: Response):
+    try:
+        from market_ribbon_service import get_market_ribbon
+
+        response.headers["Cache-Control"] = "no-store"
+        return get_market_ribbon()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Dữ liệu bảng giá VN30 tạm thời chưa sẵn sàng: {str(e)}")
+
+
+@app.get("/api/market-ribbon")
+def get_market_ribbon_api(response: Response, _user: AuthUser = Depends(require_user)):
+    return _market_ribbon_response(response)
+
+
+@app.get("/api/macro-tickers")
+def get_macro_tickers_api(response: Response, _user: AuthUser = Depends(require_user)):
+    """Temporary compatibility alias; new clients use /api/market-ribbon."""
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = '</api/market-ribbon>; rel="successor-version"'
+    return _market_ribbon_response(response)
+
+
+@app.post("/api/macro-refresh", status_code=202)
+def request_macro_refresh_api(request: Request, response: Response, user: AuthUser = Depends(require_user)):
+    """Queue a single-flight refresh without blocking the web request."""
+    supabase_auth.require_csrf(request, user)
+    try:
+        from macro_calendar_engine import request_macro_refresh
+        response.headers["Cache-Control"] = "no-store"
+        return {"success": True, "refresh": request_macro_refresh()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi yêu cầu đồng bộ dữ liệu vĩ mô: {str(e)}")
+
+
+@app.get("/api/macro-event/{event_id}")
+def get_macro_event_detail_api(event_id: str, _user: AuthUser = Depends(require_user)):
+    try:
+        from macro_calendar_engine import get_macro_event_detail
+        res = get_macro_event_detail(event_id)
+        if not res:
+            raise HTTPException(status_code=404, detail="Không tìm thấy sự kiện")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi tải chi tiết sự kiện: {str(e)}")
+
+
+@app.get("/api/macro-calendar/ics")
+def export_macro_ics_api(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _user: AuthUser = Depends(require_user),
+):
+    try:
+        from macro_calendar_engine import export_macro_ics
+        ics_text = export_macro_ics(start_date or "", end_date or "")
+        return Response(
+            content=ics_text,
+            media_type="text/calendar",
+            headers={"Content-Disposition": 'attachment; filename="locphat_macro_calendar.ics"'},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi xuất file ICS: {str(e)}")
 
 @app.get("/api/heatmap/data")
 def get_heatmap_data(response: Response, refresh: bool = False):

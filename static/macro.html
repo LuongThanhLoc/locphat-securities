@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f4f0e6">
+  <title>Tin tức vĩ mô & Lịch kinh tế - Lộc Phát Securities</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:ital,wght@0,500;0,600;0,700;0,800;1,400&display=swap&subset=vietnamese" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260814_macro_v1">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260814_macro_v1">
+  <link rel="stylesheet" href="/static/market-ribbon.css?v=20260814_v1">
+  <link rel="stylesheet" href="/static/macro.css?v=20260814_dev_warning_v1">
+</head>
+<body class="lp-editorial lp-page-macro">
+  <div class="lp-page-nav-wrap" data-lp-site-nav></div>
+
+  <section class="macro-ticker-bar market-ribbon-bar" data-market-ribbon aria-label="Bảng giá VN30 gần thời gian thực">
+    <div class="ticker-status" aria-live="polite">
+      <span class="ticker-status-dot" id="tickerStatusDot" data-market-ribbon-dot aria-hidden="true"></span>
+      <strong id="tickerStatusText" data-market-ribbon-status>Đang kết nối</strong>
+      <time id="tickerUpdatedAt" data-market-ribbon-updated></time>
+    </div>
+    <div class="ticker-viewport">
+      <div class="ticker-bar-inner" id="tickerBarInner" data-market-ribbon-track>
+        <div class="ticker-loading">Đang tải VN-Index, VN30 và cổ phiếu VN30...</div>
+      </div>
+    </div>
+  </section>
+
+  <main class="macro-shell">
+    <header class="macro-heading">
+      <div>
+        <p class="eyebrow">KINH TẾ VĨ MÔ & LIÊN THỊ TRƯỜNG</p>
+        <h1>Tin tức & Lịch kinh tế vĩ mô</h1>
+        <span class="macro-subtitle">Theo dõi các công bố kinh tế Mỹ từ nguồn có kiểm chứng và đánh giá kênh truyền dẫn tới tỷ giá, dòng vốn và TTCK Việt Nam.</span>
+        <div class="macro-dev-warning" role="alert">
+          <svg class="macro-warning-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <line x1="12" y1="9" x2="12" y2="13"></line>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+          <strong class="macro-dev-warning-text">Module đang trong thời gian phát triển, dữ liệu có thể mắc lỗi</strong>
+        </div>
+      </div>
+      <div class="macro-heading-actions">
+        <button class="secondary-btn" id="exportIcsBtn" type="button" aria-label="Xuất lịch ICS">
+          <svg class="btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>Xuất lịch ICS</span>
+        </button>
+        <button class="refresh-icon-btn" id="refreshMacroBtn" type="button" aria-label="Làm mới dữ liệu" title="Làm mới dữ liệu">
+          <svg class="refresh-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21.5 2v6h-6"></path>
+            <path d="M2.5 22v-6h6"></path>
+            <path d="M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8"></path>
+            <path d="M22 12.5a10 10 0 0 1-18.8 4.3L2.5 16"></path>
+          </svg>
+          <span>Làm mới</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- KPI Summary Cards -->
+    <section class="macro-kpis" aria-label="Tổng quan lịch vĩ mô">
+      <div class="kpi-card">
+        <span class="kpi-label">HÔM NAY</span>
+        <strong class="kpi-value" id="kpiTodayCount">--</strong>
+        <small class="kpi-sub" id="kpiTodayLabel">Sự kiện trong ngày</small>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">TUẦN NÀY</span>
+        <strong class="kpi-value" id="kpiWeekCount">--</strong>
+        <small class="kpi-sub">Tổng sự kiện tuần hiện tại</small>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">TÁC ĐỘNG MẠNH (★★★)</span>
+        <strong class="kpi-value kpi-high-impact" id="kpiHighImpactCount">--</strong>
+        <small class="kpi-sub">Sự kiện biến động lớn</small>
+      </div>
+      <div class="kpi-card kpi-next-event">
+        <span class="kpi-label">SỰ KIỆN KẾ TIẾP</span>
+        <strong class="kpi-value" id="kpiNextEventDistance">--</strong>
+        <small class="kpi-sub" id="kpiNextEventTitle">Đang cập nhật...</small>
+      </div>
+    </section>
+
+    <!-- Date Tabs Navigation -->
+    <div class="macro-toolbar">
+      <nav class="macro-date-tabs" id="dateTabs" aria-label="Chọn khoảng thời gian">
+        <button data-range="last_week" type="button">Tuần Trước <span class="tab-badge" id="badgeLastWeek">0</span></button>
+        <button data-range="yesterday" type="button">Hôm Qua <span class="tab-badge" id="badgeYesterday">0</span></button>
+        <button class="active" data-range="today" type="button">Hôm Nay <span class="tab-badge active-badge" id="badgeToday">0</span></button>
+        <button data-range="tomorrow" type="button">Ngày Mai <span class="tab-badge" id="badgeTomorrow">0</span></button>
+        <button data-range="this_week" type="button">Tuần Này <span class="tab-badge" id="badgeThisWeek">0</span></button>
+        <button data-range="next_week" type="button">Tuần Sau</button>
+        <button data-range="custom" type="button">Tùy Chọn</button>
+      </nav>
+      <div class="timezone-indicator" title="Múi giờ dữ liệu">
+        <span class="tz-dot"></span> GMT+7 (Giờ Hà Nội)
+      </div>
+    </div>
+
+    <!-- Custom Date Range Picker Container -->
+    <section class="macro-custom-range" id="customRangeSection" hidden aria-label="Khoảng ngày tùy chọn">
+      <div class="custom-range-inputs">
+        <label>Từ ngày <input id="customStartDate" type="date"></label>
+        <label>Đến ngày <input id="customEndDate" type="date"></label>
+        <button class="primary-action-btn" id="applyCustomRangeBtn" type="button">Áp dụng</button>
+      </div>
+    </section>
+
+    <!-- Filter Control Bar -->
+    <section class="macro-filter-panel" aria-label="Bộ lọc sự kiện">
+      <!-- Category Chips Filter -->
+      <div class="macro-category-filters" id="categoryFilters" aria-label="Phân loại sự kiện">
+        <button class="cat-btn active" data-category="all" type="button">Tất cả</button>
+        <button class="cat-btn" data-category="interest_rate" type="button">🏛️ Lãi suất & NHTW</button>
+        <button class="cat-btn" data-category="inflation" type="button">📈 Lạm phát & CPI</button>
+        <button class="cat-btn" data-category="employment" type="button">👔 Việc làm & Lao động</button>
+        <button class="cat-btn" data-category="growth" type="button">🚀 Tăng trưởng & GDP</button>
+        <button class="cat-btn" data-category="trade_manufacturing" type="button">🏭 Sản xuất & Thương mại</button>
+        <button class="cat-btn" data-category="energy" type="button">🛢️ Năng lượng & Dầu</button>
+        <button class="cat-btn" data-category="housing" type="button">🏢 Bất động sản</button>
+        <button class="cat-btn" data-category="bonds" type="button">📜 Trái phiếu</button>
+      </div>
+
+      <!-- Country & Importance Dropdowns & Search -->
+      <div class="macro-filter-row">
+        <div class="filter-group country-select-wrap">
+          <span class="filter-label">Phạm vi</span>
+          <div class="macro-fixed-market" id="countryFilter" data-value="USD">🇺🇸 Mỹ (USD)</div>
+        </div>
+
+        <div class="filter-group importance-select-wrap">
+          <label for="importanceFilter"><span>Độ quan trọng</span></label>
+          <select id="importanceFilter" class="lp-select">
+            <option value="0">Tất cả mức độ</option>
+            <option value="2">★★+ (Trung bình & Cao)</option>
+            <option value="3">★★★ (Chỉ tác động mạnh)</option>
+          </select>
+        </div>
+
+        <div class="filter-group search-wrap">
+          <label for="macroSearchInput"><span>Tìm kiếm</span></label>
+          <div class="search-input-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input id="macroSearchInput" type="text" placeholder="Tìm CPI, Non-Farm, FOMC, PMI, Lãi suất..." autocomplete="off">
+          </div>
+        </div>
+
+        <button class="clear-filter-btn" id="clearMacroFiltersBtn" type="button">
+          <span>Xóa lọc</span>
+        </button>
+      </div>
+
+      <div class="macro-coverage-line" id="macroCoverageStatus" role="status">
+        Đang tải dữ liệu lịch vĩ mô...
+      </div>
+    </section>
+
+    <!-- Main Events Timeline Table Container -->
+    <section class="macro-timeline-section" aria-label="Danh sách sự kiện vĩ mô">
+      <div class="macro-table-wrap">
+        <div id="macroTimelineContent">
+          <!-- Dynamically populated day groups -->
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Interactive Event Detail & AI Market Impact Drawer / Modal -->
+  <dialog class="macro-detail-dialog" id="macroDetailDialog" aria-labelledby="dialogTitle">
+    <div class="macro-dialog-backdrop" id="dialogBackdrop"></div>
+    <div class="macro-dialog-card" role="document">
+      <header class="dialog-header">
+        <div class="dialog-title-wrap">
+          <span class="dialog-flag" id="dialogFlag">🇺🇸</span>
+          <div>
+            <h2 id="dialogTitle">Chi tiết sự kiện</h2>
+            <div class="dialog-subtitle" id="dialogSubtitle">USD • Giờ công bố 19:30 GMT+7</div>
+          </div>
+        </div>
+        <button class="dialog-close-btn" id="dialogCloseBtn" type="button" aria-label="Đóng cửa sổ">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </header>
+
+      <div class="dialog-body">
+        <!-- Key Metrics Triplet -->
+        <div class="metrics-triplet">
+          <div class="triplet-box actual-box">
+            <span class="triplet-label">THỰC TẾ</span>
+            <strong class="triplet-val" id="dialogActualVal">-</strong>
+          </div>
+          <div class="triplet-box forecast-box">
+            <span class="triplet-label">DỰ BÁO</span>
+            <strong class="triplet-val" id="dialogVerificationVal">-</strong>
+          </div>
+          <div class="triplet-box previous-box">
+            <span class="triplet-label">TRƯỚC ĐÓ</span>
+            <strong class="triplet-val" id="dialogPreviousVal">-</strong>
+          </div>
+        </div>
+
+        <section class="dialog-section macro-history-section" id="dialogHistorySection" hidden>
+          <h3 class="section-title">Diễn biến lịch sử</h3>
+          <div id="dialogHistoryChart" class="macro-history-chart" role="img" aria-label="Biểu đồ lịch sử chỉ báo"></div>
+          <div class="macro-history-table-wrap">
+            <table class="macro-history-table">
+              <thead><tr><th>Kỳ</th><th>Giá trị</th></tr></thead>
+              <tbody id="dialogHistoryTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Section 1: Overview -->
+        <section class="dialog-section">
+          <h3 class="section-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            Bản chất & Ý nghĩa chỉ số
+          </h3>
+          <p class="section-text" id="dialogOverviewText">--</p>
+        </section>
+
+        <!-- Section 2: Macro Impact Rules -->
+        <section class="dialog-section">
+          <h3 class="section-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            Quy luật tác động vĩ mô & Chính sách tiền tệ
+          </h3>
+          <p class="section-text" id="dialogMacroImpactText">--</p>
+        </section>
+
+        <!-- Section 3: VN Stock Market & Sector Implications -->
+        <section class="dialog-section highlight-section">
+          <h3 class="section-title highlight-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+            Tác động tới TTCK Việt Nam & Nhóm ngành
+          </h3>
+          <p class="section-text" id="dialogVnMarketText">--</p>
+        </section>
+
+        <section class="dialog-section macro-source-section">
+          <h3 class="section-title">Nguồn và thời điểm dữ liệu</h3>
+          <p class="section-text" id="dialogSourceText">--</p>
+          <a class="macro-source-link" id="dialogSourceLink" href="#" target="_blank" rel="noopener noreferrer" hidden>Mở nguồn dữ liệu</a>
+        </section>
+      </div>
+
+      <footer class="dialog-footer">
+        <button class="secondary-btn" id="dialogCloseBottomBtn" type="button">Đóng</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <script src="/static/auth.js?v=20260814_captcha_v2"></script>
+  <script src="/static/site-nav.js?v=20260814_macro_v2"></script>
+  <script src="/static/market-ribbon.js?v=20260814_v1"></script>
+  <script src="/static/macro.js?v=20260814_market_ribbon_v2"></script>
+</body>
+</html>

@@ -47,6 +47,7 @@
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_search_icon_v5">
   <link rel="stylesheet" href="/static/watchlist-shared.css?v=20260804_v6">
   <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
+  <link rel="stylesheet" href="/static/market-ribbon.css?v=20260814_v1">
 </head>
 <body class="lp-editorial lp-page-analysis is-welcome-page font-sans antialiased min-h-screen">
 
@@ -58,6 +59,19 @@
 
   <!-- Shared Global Sticky Header (Top Level Body) -->
   <div class="lp-page-nav-wrap" data-lp-site-nav></div>
+
+  <section class="market-ribbon-bar" data-market-ribbon aria-label="Bảng giá VN30 gần thời gian thực">
+    <div class="ticker-status" aria-live="polite">
+      <span class="ticker-status-dot" data-market-ribbon-dot aria-hidden="true"></span>
+      <strong data-market-ribbon-status>Đang kết nối</strong>
+      <time data-market-ribbon-updated></time>
+    </div>
+    <div class="ticker-viewport">
+      <div class="ticker-bar-inner" data-market-ribbon-track>
+        <div class="ticker-loading">Đang tải VN-Index, VN30 và cổ phiếu VN30...</div>
+      </div>
+    </div>
+  </section>
 
   <div class="container w-full px-2 md:px-4 py-2">
     <header class="navbar" hidden>
@@ -1046,8 +1060,9 @@
     <span class="btn-label">Đầu Trang</span>
   </button>
 
-  <script src="/static/auth.js?v=20260813_supabase_v1"></script>
+  <script src="/static/auth.js?v=20260814_captcha_v2"></script>
   <script src="/static/site-nav.js?v=20260813_freemium_v1"></script>
+  <script src="/static/market-ribbon.js?v=20260814_v1"></script>
   <script src="/static/app.js?v=20260808_light_v1"></script>
 
 </body>

@@ -62,7 +62,7 @@ if (!window.handleLogoFallback) {
 
   try {
     const HISTORY_KEY = 'lps_search_history';
-    const PREMIUM_KEYS = new Set(['bubbles', 'calendar', 'backtest', 'rrg', 'watchlist']);
+    const PREMIUM_KEYS = new Set(['bubbles', 'calendar', 'macro', 'backtest', 'rrg', 'watchlist']);
     const lock = '<span class="lp-auth-lock" aria-label="Yêu cầu đăng nhập" title="Yêu cầu đăng nhập">🔒</span>';
 
     // 1. Navigation items definitions (Single Source of Truth)
@@ -97,6 +97,12 @@ if (!window.handleLogoFallback) {
         label: 'Tin tức',
         isDropdown: true,
         children: [
+          {
+            key: 'macro',
+            href: '/macro',
+            label: 'Tin tức vĩ mô',
+            description: 'Lịch kinh tế & chỉ số liên thị trường',
+          },
           {
             key: 'calendar',
             href: '/calendar',
@@ -138,6 +144,7 @@ if (!window.handleLogoFallback) {
       : path.startsWith('/bubbles') ? 'bubbles'
       : path.startsWith('/backtest') ? 'backtest'
       : path.startsWith('/rrg') ? 'rrg'
+      : path.startsWith('/macro') || path.startsWith('/economic-calendar') ? 'macro'
       : path.startsWith('/calendar') ? 'calendar'
       : path.startsWith('/watchlist') ? 'watchlist'
       : 'home';

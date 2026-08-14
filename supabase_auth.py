@@ -11,11 +11,13 @@ import hashlib
 import os
 import re
 import secrets
+import ssl
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+import certifi
 import jwt
 import requests
 from fastapi import HTTPException, Request, Response
@@ -268,7 +270,16 @@ def _get_jwks_client() -> PyJWKClient:
     global _jwks_client
     with _jwks_lock:
         if _jwks_client is None:
-            _jwks_client = PyJWKClient(f"{_base_url()}/auth/v1/.well-known/jwks.json", cache_keys=True, lifespan=300)
+            # macOS framework Python may not inherit the system trust store.
+            # Use Requests' maintained CA bundle so JWKS verification behaves
+            # consistently on local machines and Render.
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            _jwks_client = PyJWKClient(
+                f"{_base_url()}/auth/v1/.well-known/jwks.json",
+                cache_keys=True,
+                lifespan=300,
+                ssl_context=ssl_context,
+            )
         return _jwks_client
 
 

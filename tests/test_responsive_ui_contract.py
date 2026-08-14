@@ -9,6 +9,7 @@ PAGES = (
     "index.html",
     "watchlist.html",
     "calendar.html",
+    "macro.html",
     "heatmap.html",
     "rrg.html",
     "backtest.html",

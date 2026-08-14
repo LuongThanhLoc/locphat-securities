@@ -63,3 +63,24 @@ Hồ sơ công bố được bổ sung có kiểm duyệt trong `COMPANY_DISCLOS
 - Nguồn chính thức của VSDC/HOSE/HNX/SSC hoặc doanh nghiệp được ưu tiên hơn nguồn tổng hợp. Bất đồng cùng cấp phải gắn `conflict`, liệt kê trường bất đồng và không chọn giá trị âm thầm.
 - Coverage là số mã/trang/nguồn đã quét thành công, không phải tuyên bố dữ liệu đầy đủ tuyệt đối. Cache cũ hoặc partial phải hiển thị `stale`/`partial` cùng thời điểm last-known-good.
 - Refresh không được xóa last-known-good khi nguồn lỗi hoặc trả thiếu trang. Dataset mới chỉ được promote sau khi vượt qua kiểm tra schema, pagination và data-quality gate.
+
+## Hợp đồng dữ liệu Macro v2
+
+- Phạm vi sự kiện hiện tại chỉ là kinh tế Mỹ. Các lựa chọn quốc gia chưa có pipeline kiểm chứng không được hiển thị như chức năng khả dụng.
+- Thứ tự nguồn là cơ quan công bố (BLS, BEA, Federal Reserve) → FRED → FairEconomy/ForexFactory cho lịch dự phòng. Nguồn tổng hợp không được cung cấp `actual` hoặc ghi đè nguồn chính thức.
+- `forecast` luôn là `null` và không hiển thị trong giao diện. Thiếu `actual`, kỳ trước, giờ hoặc kỳ tham chiếu phải là `null`/`N/A`; không dùng AI, hash, random hoặc heuristic để tạo giá trị.
+- Mỗi observation phải khớp `indicator_key`, series, phép biến đổi và `reference_period`. Không lấy observation mới nhất gắn cho một sự kiện lịch sử chưa xác định được kỳ.
+- CPI/PCE dùng phần trăm thay đổi từ index liên tiếp; payroll dùng chênh lệch mức việc làm; GDP và lãi suất dùng đúng series đã công bố. Mọi phép biến đổi được khai báo trong indicator registry và có unit test.
+- `change_vs_previous` chỉ mô tả `up`, `down` hoặc `flat`; không mang nghĩa tốt/xấu. Phần diễn giải tác động phải trình bày theo điều kiện và bối cảnh nhiều chỉ báo.
+- Event bắt buộc có source, URL nếu có, observed/as-of time, verification và stale state.
+- Dataset chỉ được promote nếu không rỗng và coverage không giảm quá quality gate. Nguồn lỗi giữ dữ liệu nguồn đó từ last-known-good và gắn trạng thái partial/stale.
+- Production dùng PostgreSQL qua `DATABASE_URL`; SQLite chỉ dành cho local/test. Refresh chạy single-flight và không giữ HTTP request chờ nguồn ngoài.
+- Backfill/refresh bằng `python macro_sync.py backfill`; kiểm tra bằng `python macro_sync.py audit`. Audit thất bại nếu có actual không kèm evidence chính thức.
+
+## Hợp đồng Market Ribbon VN30
+
+- Ribbon chỉ gồm `VNINDEX`, `VN30` và đúng 30 thành phần VN30 đã được KBS và VCI đối chiếu; không hard-code danh sách.
+- Giá cổ phiếu dùng cùng snapshot bảng giá Vietcap với Heatmap/Bubbles. Biến động phiên là `(giá khớp / giá tham chiếu - 1) × 100`.
+- Giá hai chỉ số lấy trực tiếp từ OHLC intraday Vietcap và so với close phiên trước; không tự tổng hợp chỉ số từ giá cổ phiếu.
+- Trong phiên, client tải snapshot mỗi 10 giây và server dùng cache/single-flight. Ngoài phiên giữ close snapshot gần nhất, không gọi upstream theo chu kỳ 10 giây.
+- Giá thiếu, bằng 0, membership thiếu hoặc response rỗng không được thay thế dataset tốt; dùng last-known-good kèm `stale`, hoặc `null` nếu chưa từng có giá hợp lệ.
