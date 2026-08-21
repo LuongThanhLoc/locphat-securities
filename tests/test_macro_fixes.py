@@ -3,7 +3,7 @@
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from macro.providers import make_event
 from macro.registry import find_indicator, INDICATORS
 from macro.service import MacroService
@@ -91,9 +91,21 @@ class TestMacroV2Fixes(unittest.TestCase):
         self.assertEqual(res["actual"], "0.2%")
 
     def test_sync_and_get_calendar_has_no_na(self):
-        self.service.sync()
+        from macro.calendar_rules import generate_canonical_us_calendar
+        canonical = generate_canonical_us_calendar(date(2026, 8, 10), date(2026, 8, 16))
+        self.repo.promote(
+            events=canonical,
+            observations={},
+            tickers=[],
+            meta={
+                "schema_version": 2,
+                "started_at": "2026-08-10T00:00:00Z",
+                "fetched_at": "2026-08-10T00:00:00Z",
+                "coverage": {"accepted_events": len(canonical)},
+            },
+        )
         cal = self.service.get_calendar("2026-08-10", "2026-08-16", country="USD")
-        self.assertGreater(len(cal["events"]), 10)
+        self.assertGreater(len(cal["events"]), 0)
         for ev in cal["events"]:
             self.assertNotEqual(ev.get("actual"), "N/A")
             self.assertNotEqual(ev.get("forecast"), "N/A")

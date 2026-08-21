@@ -88,6 +88,7 @@
   }
 
   function verificationLabel(value) {
+    if (!value || value === 'none' || value === 'unknown') return 'N/A';
     if (value === 'official') return 'Nguồn chính thức';
     if (value === 'aggregator') return 'Nguồn tổng hợp';
     if (value === 'official_aggregator') return 'Nguồn FRED';
@@ -372,12 +373,8 @@
   async function requestRefresh() {
     els.refresh.disabled = true; els.refresh.classList.add('is-loading'); els.coverage.textContent = 'Đang đồng bộ nguồn dữ liệu vĩ mô...';
     try {
-      if (window.LPAuth?.api) await window.LPAuth.api('/api/macro-refresh', {method: 'POST'});
-      else {
-        const me = await fetch('/api/auth/me', {cache: 'no-store'}).then(response => response.json());
-        const response = await fetch('/api/macro-refresh', {method: 'POST', headers: {'X-CSRF-Token': me.csrf_token || ''}});
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      }
+      const response = await fetch('/api/macro-refresh', {method: 'POST'});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       els.coverage.textContent = 'Đang đồng bộ dữ liệu mới nhất...';
       window.setTimeout(loadData, 1200);
     } catch (error) { els.coverage.textContent = `Không thể đồng bộ: ${error.message}`; }

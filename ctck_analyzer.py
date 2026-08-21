@@ -741,11 +741,11 @@ def analyze_security_stock(symbol: str) -> dict:
     # Measure Data Search Speed (ms)
     fetch_latency_ms = int((time.time() - start_time) * 1000)
 
-    # 6. Historical Stock Price (Last 180 days) & Technical Analysis
+    # 6. Historical Stock Price (Last 3 Years) & Technical Analysis
     price_history = []
     try:
         end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=365 * 3 + 30)).strftime("%Y-%m-%d")
         hist_df = pd.DataFrame()
         try:
             hist_df = Quote(symbol=symbol, source='VCI').history(start=start_date, end=end_date)

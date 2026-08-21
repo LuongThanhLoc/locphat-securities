@@ -2902,29 +2902,16 @@ INPUT:
 {json.dumps(llm_input, ensure_ascii=False, separators=(',', ':'))}
 """
 
-    deepseek_model = get_env_api_key("DEEPSEEK_MODEL") or "deepseek-v4-flash-0731"
-    payload = {
-        "model": deepseek_model,
-        "messages": [
-            {"role": "system", "content": "Bạn diễn giải dữ liệu định lượng có historical context. So sánh với avg 5 ngày khi có. Tuyệt đối không thêm dữ kiện ngoài input."},
-            {"role": "user", "content": prompt},
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.15,
-        "max_tokens": 2200,
-    }
     try:
-        response = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"},
-            timeout=50.0,
+        from deepseek_client import call_deepseek_json
+        narrative = call_deepseek_json(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="Bạn diễn giải dữ liệu định lượng có historical context. So sánh với avg 5 ngày khi có. Tuyệt đối không thêm dữ kiện ngoài input.",
+            temperature=0.15,
+            max_tokens=2500,
+            enable_thinking=False,
+            timeout=40.0,
         )
-        if response.status_code != 200:
-            raise RuntimeError(f"DeepSeek API status {response.status_code}")
-
-        body = response.json()
-        narrative = _parse_json_object(body["choices"][0]["message"]["content"])
     except Exception as err:
         logger.warning(f"Lỗi gọi/parse DeepSeek AI insight: {err}")
         return _build_quant_only_heatmap_insight_v2(
@@ -3020,8 +3007,8 @@ INPUT:
             "checklist_4": str(checklist[3] if len(checklist) > 3 else "Không all-in: chia vốn tối đa 20-30% cho một vị thế")[:200],
             "checklist_5": str(checklist[4] if len(checklist) > 4 else "Đặt stop-loss ngay từ đầu, không hold hy vọng")[:200],
         },
-        "ai_engine_source": "Lộc Phát AI Engine v4.0, grounded on LP Quant snapshot + compatible 5-day history",
-        "token_usage": body.get("usage", {}),
+        "ai_engine_source": "Lộc Phát AI Engine v4.0 (DeepSeek-V4), grounded on LP Quant snapshot + compatible 5-day history",
+        "token_usage": narrative.get("_deepseek_meta", {}),
         "disclaimer": "Đây là công cụ hỗ trợ phân tích dựa trên dữ liệu và mô hình AI, không phải tư vấn đầu tư cá nhân hóa. Nhà đầu tư tự chịu trách nhiệm với quyết định của mình.",
     }
     _AI_INSIGHT_CACHE.update({"report": report, "timestamp": current_time, "snapshot_id": snapshot_id})
@@ -3279,29 +3266,16 @@ Hãy trả về JSON với các trường:
 
 Response format: JSON object"""
 
-    deepseek_model = get_env_api_key("DEEPSEEK_MODEL") or "deepseek-v4-flash-0731"
-    payload = {
-        "model": deepseek_model,
-        "messages": [
-            {"role": "system", "content": "Bạn là chuyên gia phân tích thị trường chứng khoán Việt Nam. Phân tích ngắn gọn, thực tế, có căn cứ dữ liệu."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.3,
-        "max_tokens": 1500,
-    }
-
     try:
-        response = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"},
-            timeout=50.0,
+        from deepseek_client import call_deepseek_json
+        narrative = call_deepseek_json(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="Bạn là chuyên gia phân tích thị trường chứng khoán Việt Nam. Phân tích ngắn gọn, thực tế, có căn cứ dữ liệu.",
+            temperature=0.2,
+            max_tokens=2000,
+            enable_thinking=False,
+            timeout=40.0,
         )
-        if response.status_code != 200:
-            raise RuntimeError(f"DeepSeek API status {response.status_code}")
-
-        body = response.json()
-        narrative = _parse_json_object(body["choices"][0]["message"]["content"])
 
         return {
             "report_version": "lp-weekly-radar-1.0",

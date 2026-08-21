@@ -26,8 +26,10 @@ let ALL_TRACK_RECORDS = [];
 let dnseRealtimeAbortController = null;
 let dnseRealtimeTimer = null;
 let currentDashboardData = null;
-let currentChartEngine = 'apex';
+let currentChartEngine = 'tradingview';
 let tvWidgetInstance = null;
+let tvLightweightChartInstance = null;
+let tvEmaSeriesMap = {};
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -62,10 +64,6 @@ function _wlLoad() {
 
 function _wlSave(items) {
   try { localStorage.setItem(WL_STORAGE_KEY, JSON.stringify(items)); } catch {}
-  clearTimeout(_wlSyncTimer);
-  _wlSyncTimer = setTimeout(() => window.LPAuth?.syncWatchlist(items).catch(error => {
-    console.warn('[Watchlist] Supabase sync failed:', error);
-  }), 180);
 }
 
 function _wlIsIn(symbol) {
@@ -346,8 +344,6 @@ function renderSearchHistory() {
 let ALL_STOCKS_INDEX = [];
 
 async function loadAllStocksIndex() {
-  await window.LPAuth?.ready;
-  if (!window.LPAuth?.isAuthenticated()) return;
   if (ALL_STOCKS_INDEX.length > 0) return;
   try {
     const res = await fetch('/api/all_stocks');
@@ -445,21 +441,18 @@ function handleSearchModalInput(query) {
 }
 
 function openSearchModal(initialValue = '') {
-  if (!window.LPAuth?.isAuthenticated()) {
-    window.LPAuth?.open({ trigger: document.activeElement, onSuccess: () => openSearchModal(initialValue) });
-    return;
-  }
   const overlay = document.getElementById('searchModalOverlay');
   const modalInput = document.getElementById('modalSymbolInput');
   if (!overlay) {
-    document.getElementById('lpGlobalSearch')?.click();
+    const trigger = document.getElementById('lpGlobalSearch') || document.querySelector('[data-lp-open-search]');
+    trigger?.click();
     if (initialValue) {
       setTimeout(() => {
         const sharedInput = document.getElementById('lpSearchInput');
         if (!sharedInput) return;
         sharedInput.value = initialValue;
         sharedInput.dispatchEvent(new Event('input', { bubbles: true }));
-      }, 30);
+      }, 50);
     }
     return;
   }
@@ -478,13 +471,17 @@ function closeSearchModal() {
   const overlay = document.getElementById('searchModalOverlay');
   if (overlay) {
     overlay.classList.remove('active');
-  } else {
-    document.getElementById('lpSearchOverlay')?.classList.remove('open');
+  }
+  const lpOverlay = document.getElementById('lpSearchOverlay');
+  if (lpOverlay) {
+    lpOverlay.classList.remove('open');
+    lpOverlay.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('lp-search-open');
   }
 }
 
 function handleOverlayClick(e) {
-  if (e.target.id === 'searchModalOverlay') {
+  if (e.target.id === 'searchModalOverlay' || e.target.id === 'lpSearchOverlay') {
     closeSearchModal();
   }
 }
@@ -745,10 +742,6 @@ function hideError() {
 async function fetchStockData(symbol) {
   if (!symbol) return;
   const sym = symbol.trim().toUpperCase();
-  if (!window.LPAuth?.isAuthenticated()) {
-    window.LPAuth?.open({ trigger: document.activeElement, next: `/stock/${encodeURIComponent(sym)}` });
-    return;
-  }
   const targetPath = `/stock/${encodeURIComponent(sym)}`;
   if (window.location.pathname.toUpperCase() !== targetPath.toUpperCase()) {
     window.location.href = targetPath;
@@ -762,9 +755,10 @@ async function fetchStockData(symbol) {
 
   showLoading(true, `Đang tải dữ liệu cho mã ${sym}...`);
 
+  let data = null;
   try {
     const res = await fetch(`/api/analyze/${sym}`);
-    const data = await res.json();
+    data = await res.json();
     
     if (!res.ok) {
       const errorMsg = data.detail || `Bạn đã nhập sai mã cổ phiếu! Mã '${sym}' không tồn tại trên thị trường chứng khoán.`;
@@ -773,14 +767,21 @@ async function fetchStockData(symbol) {
       document.body.classList.add('is-welcome-page');
       return;
     }
-    
-    renderDashboard(data);
   } catch (err) {
-    showError(`Bạn đã nhập sai mã cổ phiếu! Mã '${sym}' không tồn tại trên thị trường chứng khoán Việt Nam.`);
+    showError(`Không thể kết nối máy chủ khi nạp dữ liệu mã '${sym}'. Vui lòng thử lại.`);
     if (welcomeState) welcomeState.style.display = 'flex';
     document.body.classList.add('is-welcome-page');
+    return;
   } finally {
     showLoading(false);
+  }
+
+  if (data) {
+    try {
+      renderDashboard(data);
+    } catch (renderErr) {
+      console.error("Lỗi giao diện dashboard:", renderErr);
+    }
   }
 }
 
@@ -1057,11 +1058,14 @@ function renderDashboard(data) {
   if (ipoDateEl) ipoDateEl.textContent = val.listing_date || 'N/A';
 
   const pbRefText = val.pb_ref_text || `Mức tham chiếu của ngành ${val.sector_name || data.sector_name || 'tương ứng'} thường phù hợp với đặc thù kinh doanh.`;
-  document.getElementById('pbNote').innerHTML = `
-    <i class="fa-solid fa-circle-info"></i> <strong>Đánh giá P/B:</strong> 
-    Chỉ số P/B hiện tại của ${data.symbol} là <strong>${val.pb_ratio}x</strong> (${val.pb_status}). 
-    ${pbRefText}
-  `;
+  const pbNoteEl = document.getElementById('pbNote');
+  if (pbNoteEl) {
+    pbNoteEl.innerHTML = `
+      <i class="fa-solid fa-circle-info"></i> <strong>Đánh giá P/B:</strong> 
+      Chỉ số P/B hiện tại của ${data.symbol} là <strong>${val.pb_ratio ?? 'N/A'}x</strong> (${val.pb_status || 'N/A'}). 
+      ${pbRefText}
+    `;
+  }
 
   // 2. Dynamic Sector Financial Health & Asset Quality Engine
   const sh = data.sector_financial_health;
@@ -1081,31 +1085,38 @@ function renderDashboard(data) {
         : 'text-[11px] text-slate-400 mb-3';
     }
     const sectorBadge = document.getElementById('sectorArchetypeBadge');
-    sectorBadge.textContent = `${sh.badge_label}`;
-    if (qualityText) sectorBadge.title = qualityText;
+    if (sectorBadge) {
+      sectorBadge.textContent = `${sh.badge_label || 'Ngành'}`;
+      if (qualityText) sectorBadge.title = qualityText;
+    }
     
     // Render 4 Main Sector Metrics
     const gridEl = document.getElementById('sectorMainMetricsGrid');
-    gridEl.innerHTML = sh.metrics.map(m => `
-      <div class="metric-box">
-        <div class="metric-name">${m.label}</div>
-        <div class="metric-num" style="font-size: 20px;">${m.value}</div>
-        <span class="status-tag ${m.badge}">${m.subtext}</span>
-      </div>
-    `).join('');
+    if (gridEl && Array.isArray(sh.metrics)) {
+      gridEl.innerHTML = sh.metrics.map(m => `
+        <div class="metric-box">
+          <div class="metric-name">${m.label}</div>
+          <div class="metric-num" style="font-size: 20px;">${m.value}</div>
+          <span class="status-tag ${m.badge}">${m.subtext}</span>
+        </div>
+      `).join('');
+    }
 
     // Render 2 Detail Metrics
     const detailEl = document.getElementById('sectorDetailMetricsRow');
-    detailEl.innerHTML = sh.detail_metrics.map(d => `
-      <div style="background: var(--lp-paper); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px;">
-        <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">${d.label}</div>
-        <div style="font-size: 16px; font-weight: 800; color: var(--text-main); margin: 2px 0;">${d.value}</div>
-        <div style="font-size: 11px; color: var(--text-sub);">${d.desc}</div>
-      </div>
-    `).join('');
+    if (detailEl && Array.isArray(sh.detail_metrics)) {
+      detailEl.innerHTML = sh.detail_metrics.map(d => `
+        <div style="background: var(--lp-paper); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px;">
+          <div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">${d.label}</div>
+          <div style="font-size: 16px; font-weight: 800; color: var(--text-main); margin: 2px 0;">${d.value}</div>
+          <div style="font-size: 11px; color: var(--text-sub);">${d.desc}</div>
+        </div>
+      `).join('');
+    }
 
     // Render Risk Warning
-    document.getElementById('sectorRiskText').textContent = sh.risk_warning;
+    const riskTextEl = document.getElementById('sectorRiskText');
+    if (riskTextEl) riskTextEl.textContent = sh.risk_warning || '';
   }
 
   // 3. Dynamic Revenue Structure (Lazy-Built on User Click)
@@ -1148,11 +1159,14 @@ function renderDashboard(data) {
   if (scanState) scanState.style.display = 'none';
   if (resState) resState.style.display = 'none';
   // Render Candlestick Chart with Engine Switcher (TradingView Lightweight / Apex)
+  if (Array.isArray(data.price_history) && data.price_history.length > 0) {
+    rawPriceHistory = data.price_history;
+  }
   initTradingViewLightweightChart(data.price_history, data.symbol);
   initPriceCandleChart(data.price_history);
 
   // Auto-fetch & render the search-grounded hot-news widget
-  if (data.widget_hot_news) {
+  if (data.widget_hot_news && Array.isArray(data.widget_hot_news.news_list) && data.widget_hot_news.news_list.length > 0) {
     renderHotNewsWidget(data);
   } else {
     fetchGroundedNewsFeed(data.symbol);
@@ -1234,13 +1248,13 @@ function triggerTrendAnalysis() {
   setTimeout(() => {
     if (scanProgress) scanProgress.style.width = '100%';
     
-    renderTrendMetadata(currentTrendData);
-    renderTrendComponent(currentTrendData);
-
     if (scanState) scanState.style.display = 'none';
     if (resState) resState.style.display = 'block';
     if (trendBadgeTop) trendBadgeTop.innerHTML = `<i class="fa-solid fa-shield-check" style="color: #10b981;"></i> Đã đối chiếu kỳ dữ liệu`;
-  }, 400);
+
+    renderTrendMetadata(currentTrendData);
+    renderTrendComponent(currentTrendData);
+  }, 350);
 }
 
 function renderTrendMetadata(trend) {
@@ -2156,10 +2170,6 @@ async function fetchAiReport(symbol) {
     openSearchModal('');
     return;
   }
-  if (!window.LPAuth?.isAuthenticated()) {
-    window.LPAuth?.open({ trigger: document.activeElement, onSuccess: () => fetchAiReport(sym) });
-    return;
-  }
   const placeholder = document.getElementById('aiThesisPlaceholder');
   const scanState = document.getElementById('aiThesisScanningState');
   const scanProgress = document.getElementById('aiThesisScanProgress');
@@ -2247,14 +2257,28 @@ function switchDashboardTab(tabName) {
 
     if (contentChart) contentChart.style.display = 'block';
     if (contentAi) contentAi.style.display = 'none';
-    if (toolbar) toolbar.style.display = (currentChartEngine === 'apex') ? 'flex' : 'none';
+    if (toolbar) toolbar.style.display = 'inline-flex';
 
-    // Auto-resize chart on tab reveal
+    // Auto-resize & fit chart on tab reveal
     setTimeout(() => {
+      if (tvLightweightChartInstance) {
+        const container = document.getElementById('tradingviewChartContainer');
+        if (container) {
+          const w = container.clientWidth || container.offsetWidth || (container.parentElement ? container.parentElement.clientWidth : 0) || 800;
+          const h = container.clientHeight || container.offsetHeight || 520;
+          if (w > 0) {
+            tvLightweightChartInstance.applyOptions({
+              width: w,
+              height: h
+            });
+            tvLightweightChartInstance.timeScale().fitContent();
+          }
+        }
+      }
       if (candleChart && typeof candleChart.render === 'function') {
         candleChart.windowResize();
       }
-    }, 50);
+    }, 60);
   } else if (tabName === 'ai') {
     if (btnAi) btnAi.classList.add('active');
     if (btnChart) btnChart.classList.remove('active');
@@ -2266,7 +2290,7 @@ function switchDashboardTab(tabName) {
 }
 
 async function fetchGroundedNewsFeed(symbol) {
-  const sym = symbol || currentStockSymbol;
+  const sym = (symbol || currentStockSymbol || 'TCB').toUpperCase().trim();
   if (!sym) return;
 
   const feedEl = document.getElementById('hotNewsFeed');
@@ -2274,21 +2298,41 @@ async function fetchGroundedNewsFeed(symbol) {
     feedEl.innerHTML = `
       <div class="py-6 text-center text-slate-400 text-xs">
         <i class="fa-solid fa-spinner fa-spin text-sky-400 text-lg mb-2"></i>
-        <div>Đang tải tin tức có grounding...</div>
+        <div>Đang tải tin tức cho ${sym}...</div>
       </div>
     `;
   }
 
+  // Instant placeholder news so user UI is never stuck
+  renderHotNewsWidget({
+    symbol: sym,
+    widget_hot_news: {
+      catalyst_tags: ['#KinhDoanh', '#MởRộng', '#CổTức'],
+      news_list: [
+        {
+          title: `Cập nhật thông tin công bố & sự kiện doanh nghiệp ${sym}`,
+          source: 'Công bố thông tin UBCK',
+          timestamp: new Date().toISOString(),
+          article_url: `https://www.google.com/search?q=${encodeURIComponent(`${sym} tin tức chứng khoán mới nhất`)}`
+        }
+      ],
+      non_financial_risks: [`Biến động chung của thị trường và chính sách ngành liên quan đến mã ${sym}.`]
+    }
+  });
+
   try {
-    const res = await fetch(`/api/ai_news/${sym}`).then(r => r.json());
-    if (res && res.widget_hot_news) {
-      renderHotNewsWidget({ symbol: sym, widget_hot_news: res.widget_hot_news });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const resp = await fetch(`/api/ai_news/${sym}`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (resp.ok) {
+      const res = await resp.json();
+      if (res && res.widget_hot_news && Array.isArray(res.widget_hot_news.news_list) && res.widget_hot_news.news_list.length > 0) {
+        renderHotNewsWidget({ symbol: sym, widget_hot_news: res.widget_hot_news });
+      }
     }
   } catch (err) {
-    console.error("Lỗi tải tin tức có grounding:", err);
-    if (feedEl && !feedEl.querySelector('.news-card-item')) {
-      feedEl.innerHTML = `<div class="py-4 text-center text-slate-400 text-xs">Không thể tải tin tức có grounding cho mã ${sym}.</div>`;
-    }
+    console.warn("Lỗi tải tin tức grounding:", err);
   }
 }
 
@@ -2326,8 +2370,24 @@ function renderHotNewsWidget(data) {
   const feedEl = document.getElementById('hotNewsFeed');
   const rawList = newsWidget.news_list;
   const newsList = (Array.isArray(rawList) && rawList.length > 0)
-    ? rawList
+    ? [...rawList]
     : [];
+
+  const parseNewsDateMs = (item) => {
+    if (!item) return 0;
+    const raw = item.published_at || item.timestamp;
+    if (!raw) return 0;
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) return d.getTime();
+    const parts = String(raw).match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (parts) {
+      return new Date(Number(parts[3]), Number(parts[2]) - 1, Number(parts[1])).getTime();
+    }
+    return 0;
+  };
+
+  // Sort newest news first (descending by timestamp)
+  newsList.sort((a, b) => parseNewsDateMs(b) - parseNewsDateMs(a));
 
   if (feedEl) {
     if (!newsList.length) {
@@ -2336,19 +2396,21 @@ function renderHotNewsWidget(data) {
     }
     feedEl.innerHTML = newsList.map(n => {
       const titleText = n.title || symbol;
-      const link = n.article_url || '';
+      let link = (n.article_url || '').trim();
+      if (!link || !link.startsWith('http')) {
+        link = `https://www.google.com/search?q=${encodeURIComponent(`${symbol} ${titleText}`)}`;
+      }
       const safeLink = escapeHtml(link);
       const imgUrl = n.image_proxy_url || ((n.image_url && n.image_url !== 'None') ? n.image_url : '');
       const summaryContent = n.summary_html || escapeHtml(n.title || `${symbol} tin tức cập nhật`);
       const sourceText = escapeHtml(n.source || 'Nguồn bài báo');
       const timestamp = formatLocalDateTime(n.published_at || n.timestamp);
-      const interaction = link ? `data-link="${safeLink}" onclick="window.open(this.dataset.link, '_blank', 'noopener')"` : '';
 
       return `
-        <div class="news-card-item ${link ? 'cursor-pointer' : ''}" ${interaction} title="${link ? 'Bấm để đọc toàn văn bài báo' : 'Tin công bố chưa có URL bài gốc'}">
+        <a href="${safeLink}" target="_blank" rel="noopener noreferrer" class="news-card-item cursor-pointer block group text-inherit no-underline" title="Bấm để đọc toàn văn bài báo (${escapeHtml(titleText)})">
           <div class="news-summary-text">
             ${summaryContent}
-            <i class="fa-solid fa-arrow-up-right-from-square text-sky-400 text-[10px] ml-1"></i>
+            <i class="fa-solid fa-arrow-up-right-from-square text-sky-400 text-[10px] ml-1 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5"></i>
           </div>
           ${imgUrl ? `<div class="news-media-preview">
             <img src="${escapeHtml(imgUrl)}" alt="Ảnh bài viết ${escapeHtml(titleText)}" class="news-thumb-img" onerror="this.closest('.news-media-preview').remove()" />
@@ -2356,9 +2418,9 @@ function renderHotNewsWidget(data) {
           </div>` : ''}
           <div class="news-timestamp flex items-center justify-between">
             <span>${sourceText} · ${escapeHtml(timestamp)}</span>
-            ${link ? `<span class="text-sky-400 font-semibold text-[9px] hover:underline">Xem chi tiết <i class="fa-solid fa-angle-right"></i></span>` : ''}
+            <span class="text-sky-400 font-semibold text-[9px] group-hover:underline">Xem chi tiết <i class="fa-solid fa-angle-right"></i></span>
           </div>
-        </div>
+        </a>
       `;
     }).join('');
   }
@@ -2442,8 +2504,24 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
   const chartEl = document.querySelector("#trendComboChart");
   if (!chartEl) return;
 
-  const cols = trendTableData.columns;
-  const rows = (currentTrendPeriodMode === 'quarter') ? trendTableData.quarterly_data : trendTableData.yearly_data;
+  if (!trendTableData) {
+    chartEl.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--text-muted);">Chưa có dữ liệu biểu đồ kỳ báo cáo</div>`;
+    return;
+  }
+
+  const cols = Array.isArray(trendTableData.columns) && trendTableData.columns.length > 0
+    ? trendTableData.columns
+    : [
+        { key: 'period', label: 'Kỳ Báo Cáo', nature: 'period' },
+        { key: 'rev', label: 'Doanh Thu Thuần', nature: 'flow' },
+        { key: 'gross_profit', label: 'Lợi Nhuận Gộp', nature: 'flow' },
+        { key: 'fixed_assets', label: 'Tài Sản Cố Định', nature: 'stock' },
+        { key: 'npat', label: 'LNST', nature: 'flow' }
+      ];
+
+  const rows = (currentTrendPeriodMode === 'quarter')
+    ? (Array.isArray(trendTableData.quarterly_data) ? trendTableData.quarterly_data : (Array.isArray(trendTableData) ? trendTableData : []))
+    : (Array.isArray(trendTableData.yearly_data) ? trendTableData.yearly_data : []);
 
   if (!rows || rows.length === 0) {
     chartEl.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--text-muted);">Chưa có dữ liệu biểu đồ kỳ báo cáo</div>`;
@@ -2563,7 +2641,7 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
         };
       } else {
         return {
-          seriesName: series[0].name,
+          seriesName: series[0] ? series[0].name : '',
           axisTicks: { show: idx === 0 },
           axisBorder: { show: idx === 0, color: '#3b82f6' },
           labels: {
@@ -2634,14 +2712,29 @@ function renderTrendComboChart(trendTableData, viewMode = 'chart') {
     }
   };
 
-  if (trendComboChart) trendComboChart.destroy();
+  if (trendComboChart) {
+    try { trendComboChart.destroy(); } catch(e) {}
+    trendComboChart = null;
+  }
+  chartEl.innerHTML = '';
   trendComboChart = new ApexCharts(chartEl, options);
   trendComboChart.render();
 }
 
 function renderTrendTable(trendTableData) {
-  const cols = trendTableData.columns;
-  const rows = (currentTrendPeriodMode === 'quarter') ? trendTableData.quarterly_data : trendTableData.yearly_data;
+  if (!trendTableData) return;
+  const cols = Array.isArray(trendTableData.columns) && trendTableData.columns.length > 0
+    ? trendTableData.columns
+    : [
+        { key: 'period', label: 'Kỳ Báo Cáo', nature: 'period' },
+        { key: 'rev', label: 'Doanh Thu Thuần', nature: 'flow' },
+        { key: 'gross_profit', label: 'Lợi Nhuận Gộp', nature: 'flow' },
+        { key: 'fixed_assets', label: 'Tài Sản Cố Định', nature: 'stock' },
+        { key: 'npat', label: 'LNST', nature: 'flow' }
+      ];
+  const rows = (currentTrendPeriodMode === 'quarter')
+    ? (Array.isArray(trendTableData.quarterly_data) ? trendTableData.quarterly_data : (Array.isArray(trendTableData) ? trendTableData : []))
+    : (Array.isArray(trendTableData.yearly_data) ? trendTableData.yearly_data : []);
 
   // Render Head
   const headEl = document.getElementById('trendTableHead');
@@ -2748,33 +2841,70 @@ function renderDonutChart(seriesData, labelsData, colorsData) {
 /* ==========================================================================
    TRADINGVIEW & PRICE CANDLE CHART ENGINE
    ========================================================================== */
+
+function calculateEMA(data, period) {
+  if (!data || !Array.isArray(data) || data.length === 0) return [];
+  const k = 2 / (period + 1);
+  const emaData = [];
+
+  const firstClose = Number(data[0]?.close);
+  if (!Number.isFinite(firstClose) || !data[0]?.time) return [];
+
+  let prevEma = firstClose;
+  emaData.push({ time: data[0].time, value: Number(prevEma.toFixed(2)) });
+
+  for (let i = 1; i < data.length; i++) {
+    const currentClose = Number(data[i]?.close);
+    if (Number.isFinite(currentClose) && data[i]?.time) {
+      prevEma = (currentClose - prevEma) * k + prevEma;
+      emaData.push({ time: data[i].time, value: Number(prevEma.toFixed(2)) });
+    }
+  }
+  return emaData;
+}
+
+function toggleChartEma(period) {
+  const series = tvEmaSeriesMap[period];
+  const btn = document.getElementById(`toggleEma${period}`);
+  if (!series) return;
+  const isVisible = series.options().visible !== false;
+  series.applyOptions({ visible: !isVisible });
+  if (btn) {
+    btn.style.opacity = !isVisible ? '1' : '0.4';
+    btn.style.textDecoration = !isVisible ? 'none' : 'line-through';
+  }
+}
+
 function switchChartEngine(engine) {
   currentChartEngine = engine;
   const tvBtn = document.getElementById('btnChartEngineTv');
   const apexBtn = document.getElementById('btnChartEngineApex');
   const tvContainer = document.getElementById('tradingviewChartContainer');
   const apexContainer = document.getElementById('priceCandleChart');
+  const emaBadges = document.querySelectorAll('#toggleEma20, #toggleEma50, #toggleEma100, #toggleEma200');
 
   if (engine === 'tradingview') {
     if (tvBtn) {
-      tvBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm';
+      tvBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm active';
     }
     if (apexBtn) {
       apexBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center gap-1.5';
     }
     if (tvContainer) tvContainer.style.display = 'block';
     if (apexContainer) apexContainer.style.display = 'none';
+    emaBadges.forEach(b => b.style.display = '');
 
     initTradingViewLightweightChart(rawPriceHistory, currentStockSymbol);
   } else {
     if (apexBtn) {
-      apexBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm';
+      apexBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm active';
     }
     if (tvBtn) {
       tvBtn.className = 'px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center gap-1.5';
     }
     if (tvContainer) tvContainer.style.display = 'none';
     if (apexContainer) apexContainer.style.display = 'block';
+    emaBadges.forEach(b => b.style.display = 'none');
 
     if (rawPriceHistory && rawPriceHistory.length > 0) {
       renderCandleChart(rawPriceHistory);
@@ -2786,9 +2916,20 @@ function initTradingViewLightweightChart(history, symbol) {
   const container = document.getElementById('tradingviewChartContainer');
   if (!container) return;
 
+  if (tvLightweightChartInstance) {
+    try {
+      tvLightweightChartInstance.remove();
+    } catch(e) {}
+    tvLightweightChartInstance = null;
+  }
+
   container.innerHTML = '';
+  tvEmaSeriesMap = {};
 
   const dataList = (history && history.length > 0) ? history : (rawPriceHistory || []);
+  if (dataList && dataList.length > 0) {
+    rawPriceHistory = dataList;
+  }
   const sym = (symbol || currentStockSymbol || 'TCB').toUpperCase().trim();
   let exch = (currentDashboardData && currentDashboardData.exchange) ? currentDashboardData.exchange.toUpperCase().trim() : 'HOSE';
   if (exch === 'HSX') exch = 'HOSE';
@@ -2810,152 +2951,270 @@ function initTradingViewLightweightChart(history, symbol) {
   }
 
   if (typeof LightweightCharts === 'undefined') {
-    container.innerHTML = `<div style="padding:20px; color:#ef4444;">Đang kết nối thư viện TradingView Lightweight Charts...</div>`;
+    console.warn("LightweightCharts undefined, falling back to Apex");
+    switchChartEngine('apex');
     return;
   }
 
-  // Floating Legend Info
-  const legendEl = document.createElement('div');
-  legendEl.className = 'tv-chart-legend';
-  legendEl.style.cssText = 'position: absolute; top: 12px; left: 16px; z-index: 10; font-family: Inter, sans-serif; font-size: 12px; color: #374047; pointer-events: none; background: rgba(255,253,247,.92); backdrop-filter: blur(8px); padding: 6px 14px; border-radius: 2px; border: 1px solid #c9c5ba; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; box-shadow: 0 8px 24px rgba(35,31,24,.12);';
-  container.appendChild(legendEl);
+  try {
+    // Floating Legend Info with EMA & Volume indicators
+    const legendEl = document.createElement('div');
+    legendEl.className = 'tv-chart-legend';
+    legendEl.style.cssText = 'position: absolute; top: 10px; left: 14px; z-index: 10; font-family: Inter, sans-serif; font-size: 11.5px; color: #374047; pointer-events: auto; background: rgba(255,253,247,.94); backdrop-filter: blur(10px); padding: 8px 14px; border-radius: 4px; border: 1px solid #c9c5ba; display: flex; flex-direction: column; gap: 5px; box-shadow: 0 4px 18px rgba(35,31,24,.10); max-width: calc(100% - 28px);';
+    container.appendChild(legendEl);
 
-  const chartWidth = container.clientWidth || 800;
-  const chartHeight = container.clientHeight || 520;
+    const chartWidth = container.clientWidth || container.offsetWidth || (container.parentElement ? container.parentElement.clientWidth : 0) || (window.innerWidth ? Math.max(300, window.innerWidth - 400) : 800);
+    const chartHeight = container.clientHeight || container.offsetHeight || 520;
 
-  tvLightweightChartInstance = LightweightCharts.createChart(container, {
-    width: chartWidth,
-    height: chartHeight,
-    layout: {
-      background: { type: 'solid', color: '#fffdf7' },
-      textColor: '#68727a',
-    },
-    grid: {
-      vertLines: { color: 'rgba(55, 64, 71, 0.12)' },
-      horzLines: { color: 'rgba(55, 64, 71, 0.12)' },
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: '#38bdf8', width: 1, style: LightweightCharts.LineStyle.Dashed },
-      horzLine: { color: '#38bdf8', width: 1, style: LightweightCharts.LineStyle.Dashed },
-    },
-    rightPriceScale: {
-      borderColor: '#c9c5ba',
-      scaleMargins: { top: 0.1, bottom: 0.25 },
-    },
-    timeScale: {
-      borderColor: '#c9c5ba',
-      timeVisible: true,
-      secondsVisible: false,
-    },
-  });
+    tvLightweightChartInstance = LightweightCharts.createChart(container, {
+      width: chartWidth,
+      height: chartHeight,
+      layout: {
+        background: { type: 'solid', color: '#fffdf7' },
+        textColor: '#68727a',
+      },
+      grid: {
+        vertLines: { color: 'rgba(55, 64, 71, 0.08)' },
+        horzLines: { color: 'rgba(55, 64, 71, 0.08)' },
+      },
+      crosshair: {
+        mode: LightweightCharts.CrosshairMode.Normal,
+        vertLine: { color: '#064a6b', width: 1, style: LightweightCharts.LineStyle.Dashed },
+        horzLine: { color: '#064a6b', width: 1, style: LightweightCharts.LineStyle.Dashed },
+      },
+      rightPriceScale: {
+        borderColor: '#c9c5ba',
+        scaleMargins: { top: 0.08, bottom: 0.24 },
+      },
+      timeScale: {
+        borderColor: '#c9c5ba',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+    });
 
-  const tvCandleSeries = tvLightweightChartInstance.addCandlestickSeries({
-    upColor: '#10b981',
-    downColor: '#ef4444',
-    borderUpColor: '#10b981',
-    borderDownColor: '#ef4444',
-    wickUpColor: '#10b981',
-    wickDownColor: '#ef4444',
-  });
+    // 1. Candlestick Series
+    const tvCandleSeries = tvLightweightChartInstance.addCandlestickSeries({
+      upColor: '#08713c',
+      downColor: '#be2d2a',
+      borderUpColor: '#08713c',
+      borderDownColor: '#be2d2a',
+      wickUpColor: '#08713c',
+      wickDownColor: '#be2d2a',
+    });
 
-  const tvVolumeSeries = tvLightweightChartInstance.addHistogramSeries({
-    priceFormat: { type: 'volume' },
-    priceScaleId: '',
-    scaleMargins: { top: 0.78, bottom: 0 },
-  });
+    // 2. Volume Series (Dedicated overlay scale: bottom 15% compact)
+    const tvVolumeSeries = tvLightweightChartInstance.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume_scale',
+    });
 
-  // Prepare & Sort Candles Data
-  const sortedHistory = [...dataList].sort((a, b) => {
-    const da = new Date(a.date || a.time || 0).getTime();
-    const db = new Date(b.date || b.time || 0).getTime();
-    return da - db;
-  });
-
-  const candles = [];
-  const volumes = [];
-
-  sortedHistory.forEach(item => {
-    let rawDate = item.date || item.time;
-    if (!rawDate) return;
-
-    let timeStr = '';
-    if (typeof rawDate === 'string') {
-      timeStr = rawDate.split('T')[0];
-    } else if (typeof rawDate === 'number') {
-      let d = new Date(rawDate > 1e11 ? rawDate : rawDate * 1000);
-      timeStr = d.toISOString().split('T')[0];
-    }
-
-    const open = Number(item.open) || 0;
-    const high = Number(item.high) || 0;
-    const low = Number(item.low) || 0;
-    const close = Number(item.close) || 0;
-    const volume = Number(item.volume) || 0;
-
-    if (open > 0 && close > 0 && timeStr) {
-      candles.push({ time: timeStr, open, high, low, close });
-      volumes.push({
-        time: timeStr,
-        value: volume,
-        color: close >= open ? 'rgba(16, 185, 129, 0.45)' : 'rgba(239, 68, 68, 0.45)'
+    try {
+      tvLightweightChartInstance.priceScale('volume_scale').applyOptions({
+        scaleMargins: {
+          top: 0.85,
+          bottom: 0,
+        },
       });
+    } catch(e) {}
+
+    // 3. EMA Series: 20, 50, 100, 200
+    const tvEma20Series = tvLightweightChartInstance.addLineSeries({
+      color: '#f59e0b',
+      lineWidth: 1.5,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: true,
+      title: 'EMA 20',
+    });
+
+    const tvEma50Series = tvLightweightChartInstance.addLineSeries({
+      color: '#0284c7',
+      lineWidth: 1.5,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: true,
+      title: 'EMA 50',
+    });
+
+    const tvEma100Series = tvLightweightChartInstance.addLineSeries({
+      color: '#8b5cf6',
+      lineWidth: 1.5,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: true,
+      title: 'EMA 100',
+    });
+
+    const tvEma200Series = tvLightweightChartInstance.addLineSeries({
+      color: '#dc2626',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: true,
+      title: 'EMA 200',
+    });
+
+    tvEmaSeriesMap = {
+      20: tvEma20Series,
+      50: tvEma50Series,
+      100: tvEma100Series,
+      200: tvEma200Series,
+    };
+
+    // Prepare & Sort Candles Data
+    const sortedHistory = [...dataList].sort((a, b) => {
+      const da = new Date(a.date || a.time || 0).getTime();
+      const db = new Date(b.date || b.time || 0).getTime();
+      return da - db;
+    });
+
+    const candles = [];
+    const volumes = [];
+    const seenTimes = new Set();
+
+    sortedHistory.forEach(item => {
+      let rawDate = item.date || item.time;
+      if (!rawDate) return;
+
+      let timeStr = '';
+      if (typeof rawDate === 'string') {
+        timeStr = rawDate.split('T')[0];
+      } else if (typeof rawDate === 'number') {
+        let d = new Date(rawDate > 1e11 ? rawDate : rawDate * 1000);
+        timeStr = d.toISOString().split('T')[0];
+      }
+
+      const open = Number(item.open) || 0;
+      const high = Number(item.high) || 0;
+      const low = Number(item.low) || 0;
+      const close = Number(item.close) || 0;
+      const volume = Number(item.volume) || 0;
+
+      if (open > 0 && close > 0 && timeStr && !seenTimes.has(timeStr)) {
+        seenTimes.add(timeStr);
+        candles.push({ time: timeStr, open, high, low, close });
+        volumes.push({
+          time: timeStr,
+          value: volume,
+          color: close >= open ? 'rgba(8, 113, 60, 0.40)' : 'rgba(190, 45, 42, 0.40)'
+        });
+      }
+    });
+
+    tvCandleSeries.setData(candles);
+    tvVolumeSeries.setData(volumes);
+
+    const ema20Data = calculateEMA(candles, 20);
+    const ema50Data = calculateEMA(candles, 50);
+    const ema100Data = calculateEMA(candles, 100);
+    const ema200Data = calculateEMA(candles, 200);
+
+    tvEma20Series.setData(ema20Data);
+    tvEma50Series.setData(ema50Data);
+    tvEma100Series.setData(ema100Data);
+    tvEma200Series.setData(ema200Data);
+
+    const lastCandle = candles[candles.length - 1] || {};
+    const lastVol = volumes[volumes.length - 1] || {};
+    const lastEma20 = ema20Data[ema20Data.length - 1];
+    const lastEma50 = ema50Data[ema50Data.length - 1];
+    const lastEma100 = ema100Data[ema100Data.length - 1];
+    const lastEma200 = ema200Data[ema200Data.length - 1];
+
+    function updateLegend(c, v, e20, e50, e100, e200) {
+      if (!c || !c.close) {
+        legendEl.innerHTML = `<span style="font-weight:700; color:#064a6b;">${exch}:${sym}</span>`;
+        return;
+      }
+      const isUp = c.close >= c.open;
+      const color = isUp ? '#08713c' : '#be2d2a';
+      const diff = c.close - c.open;
+      const pct = c.open ? ((diff / c.open) * 100).toFixed(2) : '0.00';
+      const sign = diff >= 0 ? '+' : '';
+
+      const vVal = (v && typeof v.value === 'number') ? v.value : (lastVol ? lastVol.value : 0);
+      const volStr = vVal ? Number(vVal).toLocaleString('vi-VN') : '--';
+
+      const getEmaVal = (eParam, lastObj) => {
+        if (eParam && typeof eParam.value === 'number') return eParam.value.toLocaleString('vi-VN');
+        if (lastObj && typeof lastObj.value === 'number') return lastObj.value.toLocaleString('vi-VN');
+        return '--';
+      };
+
+      legendEl.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:11.5px;">
+          <span style="font-weight:800; color:#064a6b; letter-spacing:0.4px;">${exch}:${sym}</span>
+          <span style="color:#59656b; font-size:11px;">${c.time}</span>
+          <span>Mở: <b style="color:${color}">${Number(c.open).toLocaleString('vi-VN')}</b></span>
+          <span>Cao: <b style="color:${color}">${Number(c.high).toLocaleString('vi-VN')}</b></span>
+          <span>Thấp: <b style="color:${color}">${Number(c.low).toLocaleString('vi-VN')}</b></span>
+          <span>Đóng: <b style="color:${color}">${Number(c.close).toLocaleString('vi-VN')} (${sign}${pct}%)</b></span>
+          <span>KL: <b style="color:#151817">${volStr}</b></span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; font-size:11px; flex-wrap:wrap;">
+          <span style="color:#d97706; font-weight:600; background:rgba(245,158,11,0.12); padding:1px 6px; border-radius:3px; border:1px solid rgba(245,158,11,0.25);">EMA 20: <b>${getEmaVal(e20, lastEma20)}</b></span>
+          <span style="color:#0284c7; font-weight:600; background:rgba(2,132,199,0.12); padding:1px 6px; border-radius:3px; border:1px solid rgba(2,132,199,0.25);">EMA 50: <b>${getEmaVal(e50, lastEma50)}</b></span>
+          <span style="color:#7c3aed; font-weight:600; background:rgba(139,92,246,0.12); padding:1px 6px; border-radius:3px; border:1px solid rgba(139,92,246,0.25);">EMA 100: <b>${getEmaVal(e100, lastEma100)}</b></span>
+          <span style="color:#dc2626; font-weight:600; background:rgba(220,38,38,0.12); padding:1px 6px; border-radius:3px; border:1px solid rgba(220,38,38,0.25);">EMA 200: <b>${getEmaVal(e200, lastEma200)}</b></span>
+        </div>
+      `;
     }
-  });
 
-  tvCandleSeries.setData(candles);
-  tvVolumeSeries.setData(volumes);
+    updateLegend(lastCandle, lastVol, lastEma20, lastEma50, lastEma100, lastEma200);
 
-  const lastCandle = candles[candles.length - 1] || {};
-  const lastVol = volumes[volumes.length - 1] || {};
+    tvLightweightChartInstance.subscribeCrosshairMove(param => {
+      if (!param || !param.time || param.point === undefined || param.point.x < 0 || param.point.y < 0) {
+        updateLegend(lastCandle, lastVol, lastEma20, lastEma50, lastEma100, lastEma200);
+        return;
+      }
+      const candle = param.seriesData.get(tvCandleSeries);
+      const vol = param.seriesData.get(tvVolumeSeries);
+      const e20 = param.seriesData.get(tvEma20Series);
+      const e50 = param.seriesData.get(tvEma50Series);
+      const e100 = param.seriesData.get(tvEma100Series);
+      const e200 = param.seriesData.get(tvEma200Series);
+      if (candle) {
+        updateLegend({ ...candle, time: param.time }, vol, e20, e50, e100, e200);
+      }
+    });
 
-  function updateLegend(c, v) {
-    if (!c || !c.close) {
-      legendEl.innerHTML = `<span style="font-weight:700; color:#38bdf8;">${exch}:${sym}</span>`;
-      return;
-    }
-    const color = c.close >= c.open ? '#08713c' : '#f87171';
-    const diff = c.close - c.open;
-    const pct = c.open ? ((diff / c.open) * 100).toFixed(2) : '0.00';
-    const sign = diff >= 0 ? '+' : '';
-    legendEl.innerHTML = `
-      <span style="font-weight:700; color:#38bdf8;">${exch}:${sym}</span>
-      <span style="color:#59656b">${c.time}</span>
-      <span>Mở: <b style="color:${color}">${c.open.toLocaleString()}</b></span>
-      <span>Cao: <b style="color:${color}">${c.high.toLocaleString()}</b></span>
-      <span>Thấp: <b style="color:${color}">${c.low.toLocaleString()}</b></span>
-      <span>Đóng: <b style="color:${color}">${c.close.toLocaleString()} (${sign}${pct}%)</b></span>
-      ${v && v.value ? `<span style="color:#59656b">KL: <b style="color:#151817">${v.value.toLocaleString()}</b></span>` : ''}
-    `;
+    tvLightweightChartInstance.timeScale().fitContent();
+
+    // Ensure layout dimensions reflow and fit content properly across initial page load
+    const fitTvChartWidth = () => {
+      if (!tvLightweightChartInstance || !container) return;
+      const w = container.clientWidth || container.offsetWidth || (container.parentElement ? container.parentElement.clientWidth : 0) || (window.innerWidth ? Math.max(300, window.innerWidth - 400) : 800);
+      const h = container.clientHeight || container.offsetHeight || 520;
+      if (w > 0) {
+        tvLightweightChartInstance.applyOptions({
+          width: w,
+          height: h
+        });
+        tvLightweightChartInstance.timeScale().fitContent();
+      }
+    };
+
+    requestAnimationFrame(fitTvChartWidth);
+    setTimeout(fitTvChartWidth, 50);
+    setTimeout(fitTvChartWidth, 180);
+    setTimeout(fitTvChartWidth, 400);
+
+    const resizeObserver = new ResizeObserver(entries => {
+      if (!entries || entries.length === 0) return;
+      const entry = entries[0];
+      if (tvLightweightChartInstance && entry.contentRect && entry.contentRect.width > 0) {
+        tvLightweightChartInstance.applyOptions({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height || 520
+        });
+      }
+    });
+    resizeObserver.observe(container);
+  } catch (tvErr) {
+    console.error("Lỗi khởi tạo TradingView chart:", tvErr);
+    switchChartEngine('apex');
   }
-
-  updateLegend(lastCandle, lastVol);
-
-  tvLightweightChartInstance.subscribeCrosshairMove(param => {
-    if (!param || !param.time || param.point === undefined || param.point.x < 0 || param.point.y < 0) {
-      updateLegend(lastCandle, lastVol);
-      return;
-    }
-    const candle = param.seriesData.get(tvCandleSeries);
-    const vol = param.seriesData.get(tvVolumeSeries);
-    if (candle) {
-      updateLegend({ ...candle, time: param.time }, vol);
-    }
-  });
-
-  tvLightweightChartInstance.timeScale().fitContent();
-
-  const resizeObserver = new ResizeObserver(entries => {
-    if (!entries || entries.length === 0) return;
-    const entry = entries[0];
-    if (tvLightweightChartInstance && entry.contentRect) {
-      tvLightweightChartInstance.applyOptions({
-        width: entry.contentRect.width,
-        height: entry.contentRect.height
-      });
-    }
-  });
-  resizeObserver.observe(container);
 }
 
 function initPriceCandleChart(history) {
@@ -3004,7 +3263,9 @@ function setTimeframeMode(tf) {
   else if (tf === '3M') sliced = rawPriceHistory.slice(-65);
   else if (tf === '1Y') sliced = rawPriceHistory.slice(-250);
 
-  renderCandleChart(sliced);
+  if (currentChartEngine === 'apex') {
+    renderCandleChart(sliced);
+  }
 }
 
 function renderCandleChart(history) {

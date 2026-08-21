@@ -14,6 +14,7 @@ PAGES = (
     "rrg.html",
     "backtest.html",
     "bubbles.html",
+    "bottom-indicator.html",
 )
 
 

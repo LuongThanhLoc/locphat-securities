@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f4f0e6">
+  <title>Chỉ Báo Đáy - Lộc Phát Securities</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260815_bottom_v1">
+  <link rel="stylesheet" href="/static/bottom-indicator.css?v=20260816_ema4">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260815_bottom_v1">
+</head>
+<body class="lp-editorial lp-page-bottom-indicator">
+  <div data-lp-site-nav></div>
+
+  <main class="bottom-shell">
+    <header class="bottom-hero">
+      <div>
+        <p class="bottom-eyebrow">Kỹ thuật cổ phiếu · Dữ liệu ngày</p>
+        <h1>Chỉ Báo Đáy</h1>
+        <p>Theo dõi chu kỳ co–mở của áp lực giá–thanh khoản và kiểm định tín hiệu bằng dữ liệu lịch sử.</p>
+      </div>
+      <button class="bottom-method-button" id="openMethodDialog" type="button" aria-haspopup="dialog">
+        Nguồn &amp; phương pháp
+      </button>
+    </header>
+
+    <section class="bottom-control-card" aria-label="Thiết lập phân tích">
+      <form id="bottomAnalysisForm" class="bottom-form">
+        <label>
+          <span>Mã cổ phiếu</span>
+          <span class="bottom-symbol-field">
+            <input id="bottomSymbol" name="symbol" value="FPT" maxlength="10" autocomplete="off" spellcheck="false" aria-controls="bottomSuggestions" aria-autocomplete="list">
+            <span id="bottomSuggestions" class="bottom-suggestions" role="listbox" hidden></span>
+          </span>
+        </label>
+        <label>
+          <span>Số phiên</span>
+          <select id="bottomBarLimit" name="bar_limit">
+            <option value="252">252 phiên (~1 năm)</option>
+            <option value="500">500 phiên (~2 năm)</option>
+            <option value="748" selected>748 phiên (~3 năm)</option>
+            <option value="1000">1.000 phiên (~4 năm)</option>
+            <option value="1500">1.500 phiên (~6 năm)</option>
+          </select>
+        </label>
+        <button class="bottom-primary-button" id="bottomSubmit" type="submit">Phân tích</button>
+      </form>
+      <div class="bottom-quality-line" id="bottomQualityLine" role="status" aria-live="polite">Nhập mã và bấm Phân tích.</div>
+    </section>
+
+    <div class="bottom-tabs" role="tablist" aria-label="Nội dung Chỉ Báo Đáy">
+      <button id="analysisTab" class="bottom-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="analysisPanel">Phân tích đáy</button>
+      <button id="backtestTab" class="bottom-tab" type="button" role="tab" aria-selected="false" aria-controls="backtestPanel">Kiểm định</button>
+    </div>
+
+    <section id="bottomLoading" class="bottom-state-card" role="status" hidden>
+      <span class="bottom-spinner" aria-hidden="true"></span>
+      <div><strong>Đang kiểm định dữ liệu và tính chỉ báo…</strong><p>Hệ thống đang đối chiếu chuỗi Vietcap → KBS.</p></div>
+    </section>
+    <section id="bottomError" class="bottom-state-card is-error" role="alert" hidden></section>
+
+    <section id="analysisPanel" class="bottom-panel" role="tabpanel" aria-labelledby="analysisTab">
+      <div id="analysisEmpty" class="bottom-state-card">
+        <strong>Chưa có kết quả phân tích</strong>
+        <p>Dữ liệu chỉ được tải khi bạn chủ động bấm Phân tích.</p>
+      </div>
+      <div id="analysisResults" hidden>
+        <div class="bottom-metric-grid">
+          <article class="bottom-status-card">
+            <span>Trạng thái & Hành động</span>
+            <strong id="currentState">—</strong>
+            <small id="currentActionBadge" style="display:block;margin-top:2px;font-weight:700;color:#087b50;">—</small>
+            <small id="currentDate">—</small>
+          </article>
+          <article><span>Cơ hội</span><strong id="opportunityScore">—</strong><small>/100</small></article>
+          <article><span>Rủi ro</span><strong id="riskScore">—</strong><small>/100</small></article>
+          <article><span>Độ tin cậy</span><strong id="bottomConfidence">—</strong><small id="scoreTypeLabel">/100</small></article>
+          <article><span>RSI (14)</span><strong id="currentRsi">—</strong><small id="rsiStatus">Trung tính</small></article>
+          <article><span>Nhiệt kế thị trường</span><strong id="currentAperture">—</strong><small>percentile</small></article>
+        </div>
+
+        <div class="bottom-stacked-charts">
+          <div class="bottom-sub-panel">
+            <div class="bottom-section-head">
+              <div class="bottom-head-title">
+                <span>Giá và trạng thái</span>
+                <h2>Nến giá · EMA 20/50/100/200</h2>
+              </div>
+              <div class="bottom-head-right">
+                <div class="bottom-ema-legend" id="priceEmaLegend" aria-label="Chú giải đường EMA">
+                  <span class="ema-pill ema-20"><i class="ema-dot"></i>EMA20: <strong id="valEma20">—</strong></span>
+                  <span class="ema-pill ema-50"><i class="ema-dot"></i>EMA50: <strong id="valEma50">—</strong></span>
+                  <span class="ema-pill ema-100"><i class="ema-dot"></i>EMA100: <strong id="valEma100">—</strong></span>
+                  <span class="ema-pill ema-200"><i class="ema-dot"></i>EMA200: <strong id="valEma200">—</strong></span>
+                </div>
+                <span id="priceDateBadge" class="bottom-date-badge">Phiên: —</span>
+                <small>Marker chỉ xuất hiện khi trạng thái chuyển đổi</small>
+              </div>
+            </div>
+            <div id="priceChart" class="bottom-chart bottom-price-chart" aria-label="Biểu đồ nến giá và tín hiệu"></div>
+          </div>
+          <div class="bottom-sub-panel">
+            <div class="bottom-section-head">
+              <div class="bottom-head-title">
+                <span>Áp lực giá–thanh khoản</span>
+                <h2>Smart Money Start</h2>
+              </div>
+              <div class="bottom-head-right">
+                <div class="bottom-ema-legend" id="smRibbonLegend" aria-label="Chú giải Tri-EMA Ribbon" title="Tri-EMA Ribbon: Core (34) | Flow (13) | Pulse (5)">
+                  <span class="ema-pill"><i class="ema-dot" style="background:#10b981;"></i>Core: <strong id="smValCore" style="color:#087b50;">—</strong></span>
+                  <span class="ema-pill"><i class="ema-dot" style="background:#06b6d4;"></i>Flow: <strong id="smValFlow" style="color:#0891b2;">—</strong></span>
+                  <span class="ema-pill"><i class="ema-dot" style="background:#eab308;"></i>Pulse: <strong id="smValPulse" style="color:#d97706;">—</strong></span>
+                </div>
+              </div>
+            </div>
+            <div id="flowChart" class="bottom-chart bottom-flow-chart" aria-label="Biểu đồ Smart Money Start"></div>
+          </div>
+          <div class="bottom-sub-panel">
+            <div class="bottom-section-head">
+              <div class="bottom-head-title">
+                <span>Nhiệt kế thị trường</span>
+                <h2>Market Emotion Index</h2>
+              </div>
+              <div class="bottom-head-right">
+                <div id="crowdSentiment" class="bottom-crowd-sentiment" aria-live="polite">
+                  <span class="ema-pill"><i class="ema-dot bottom-crowd-dot"></i><strong class="bottom-crowd-value">—</strong> <span class="bottom-crowd-label">Thị trường:</span> <strong class="bottom-crowd-state">—</strong></span>
+                </div>
+              </div>
+            </div>
+            <div id="apertureChart" class="bottom-chart bottom-aperture-chart" aria-label="Biểu đồ Market Emotion Index"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="backtestPanel" class="bottom-panel" role="tabpanel" aria-labelledby="backtestTab" hidden>
+      <div id="backtestEmpty" class="bottom-state-card">
+        <strong>Chưa có kết quả kiểm định</strong>
+        <p>Hệ thống sẽ tự động mô phỏng chiến lược BB/BS và nghiên cứu biến động sau tín hiệu khi bạn mở tab này.</p>
+        <button id="runBottomBacktest" class="bottom-primary-button" type="button" style="margin-top:12px;display:inline-block;width:auto;padding:8px 18px;">Chạy kiểm định mô phỏng</button>
+      </div>
+      <div id="backtestResults" hidden>
+        <div id="backtestMetrics" class="bottom-metric-grid bottom-backtest-metrics"></div>
+        <div class="bottom-chart-card"><div class="bottom-section-head"><div><span>Hiệu quả chiến lược</span><h2>Đường cong tài sản (Equity) vs Buy &amp; Hold</h2></div><small>Khớp mở cửa phiên kế tiếp · Phí 0.15% · Thuế 0.1% · Slippage 0.1%</small></div><div id="equityChart" class="bottom-chart" style="height:320px;"></div></div>
+        <div class="bottom-study-card"><div class="bottom-section-head"><div><span>Nghiên cứu sự kiện (Forward Return)</span><h2>Event Study 3/5/10/20/60 Phiên</h2></div><small>Tỷ lệ thắng, Lợi nhuận trung vị &amp; Tỷ lệ Đáy giả</small></div><div id="eventStudyTable" class="bottom-table-wrap"></div></div>
+        <div class="bottom-study-card"><div class="bottom-section-head"><div><span>Nhật ký mô phỏng</span><h2>Lịch sử lệnh giao dịch (Trade Log)</h2></div><small>Khớp nghiêm ngặt tại ATO phiên tiếp theo</small></div><div id="tradeTable" class="bottom-table-wrap"></div></div>
+      </div>
+    </section>
+
+    <p class="bottom-disclaimer">Công cụ phục vụ nghiên cứu, không phải khuyến nghị đầu tư hoặc hệ thống đặt lệnh.</p>
+  </main>
+
+  <div id="methodDialog" class="bottom-dialog" role="dialog" aria-modal="true" aria-labelledby="methodDialogTitle" aria-hidden="true" hidden>
+    <div class="bottom-dialog-backdrop" data-close-method></div>
+    <section class="bottom-dialog-panel" tabindex="-1">
+      <header><div><span>Nguồn &amp; phương pháp</span><h2 id="methodDialogTitle">Proxy áp lực giá–thanh khoản</h2></div><button id="closeMethodDialog" type="button" aria-label="Đóng nguồn và phương pháp">×</button></header>
+      <div id="methodDialogBody" class="bottom-dialog-body">
+        <p>Mô hình dùng dữ liệu OHLCV ngày đã kiểm định từ Vietcap → KBS, kết hợp CMF, MFI, ATR, OBV và sức mạnh tương đối với VNINDEX.</p>
+        <p>Chỉ báo không đại diện cho dữ liệu giao dịch thực của tổ chức, khối ngoại hoặc tự doanh. Điểm số là độ đồng thuận quy tắc, không phải xác suất.</p>
+        <p>Tín hiệu được xác nhận cuối phiên; lệnh kiểm định chỉ được khớp ở giá mở cửa phiên kế tiếp.</p>
+      </div>
+    </section>
+  </div>
+
+  <script src="/static/site-nav.js?v=20260815_bottom_v1"></script>
+  <script src="/static/bottom-indicator.js?v=20260816_ema4"></script>
+</body>
+</html>

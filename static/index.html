@@ -16,7 +16,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Noto+Serif:wght@500;600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="/static/vendor/fontawesome/css/fontawesome.min.css">
+  <link rel="stylesheet" href="/static/vendor/fontawesome/css/solid.min.css">
   
   <!-- Tailwind CSS v3 CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -41,12 +42,12 @@
     }
   </script>
 
-  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
-  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/static/apexcharts.min.js?v=6.10.0"></script>
+  <script src="/static/lightweight-charts.standalone.production.js?v=4.1.1"></script>
   <link rel="stylesheet" href="/static/style.css?v=20260805_trend_table_v3">
   <link rel="stylesheet" href="/static/site-nav.css?v=20260805_search_icon_v5">
   <link rel="stylesheet" href="/static/watchlist-shared.css?v=20260804_v6">
-  <link rel="stylesheet" href="/static/editorial.css?v=20260808_light_v3">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260818_local_chart_v4">
   <link rel="stylesheet" href="/static/market-ribbon.css?v=20260814_v1">
 </head>
 <body class="lp-editorial lp-page-analysis is-welcome-page font-sans antialiased min-h-screen">
@@ -601,18 +602,27 @@
           <!-- TAB 1 CONTENT: Biểu Đồ Nến (Chart) -->
           <div id="dashTabContentChart" class="glass-card p-4" style="margin-bottom: 0;">
             <div class="flex flex-wrap items-center justify-between mb-3 border-b border-slate-800 pb-2.5 gap-2">
-              <div class="card-title text-sm font-bold text-slate-100 flex items-center gap-2">
-                <i class="fa-solid fa-chart-candlestick text-emerald-400"></i> Diễn Biến Giá & Khối Lượng Giao Dịch
+              <div class="flex items-center gap-3 flex-wrap">
+                <div class="card-title text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <i class="fa-solid fa-chart-candlestick text-emerald-400"></i> Diễn Biến Giá & Khối Lượng
+                </div>
+                <!-- EMA Indicator Badges (Interactive Toggles) -->
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <button id="toggleEma20" onclick="toggleChartEma(20)" class="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/15 text-amber-600 border border-amber-500/30 hover:bg-amber-500/25 transition-all cursor-pointer" title="Ẩn/Hiện đường EMA 20 (Cam)">EMA 20</button>
+                  <button id="toggleEma50" onclick="toggleChartEma(50)" class="px-2 py-0.5 text-[10px] font-bold rounded bg-sky-500/15 text-sky-600 border border-sky-500/30 hover:bg-sky-500/25 transition-all cursor-pointer" title="Ẩn/Hiện đường EMA 50 (Xanh)">EMA 50</button>
+                  <button id="toggleEma100" onclick="toggleChartEma(100)" class="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/15 text-purple-600 border border-purple-500/30 hover:bg-purple-500/25 transition-all cursor-pointer" title="Ẩn/Hiện đường EMA 100 (Tím)">EMA 100</button>
+                  <button id="toggleEma200" onclick="toggleChartEma(200)" class="px-2 py-0.5 text-[10px] font-bold rounded bg-red-500/15 text-red-600 border border-red-500/30 hover:bg-red-500/25 transition-all cursor-pointer" title="Ẩn/Hiện đường EMA 200 (Đỏ)">EMA 200</button>
+                </div>
               </div>
 
               <div class="chart-engine-actions flex items-center gap-2">
                 <!-- Engine Switcher Buttons -->
                 <div class="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800/80">
-                  <button id="btnChartEngineApex" onclick="switchChartEngine('apex')" class="px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm">
-                    <i class="fa-solid fa-chart-area text-xs"></i> Chart Nội Bộ
-                  </button>
-                  <button id="btnChartEngineTv" onclick="switchChartEngine('tradingview')" class="px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center gap-1.5">
+                  <button id="btnChartEngineTv" onclick="switchChartEngine('tradingview')" class="px-3 py-1 text-xs font-semibold rounded-lg text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-1.5 transition-all shadow-sm">
                     <i class="fa-solid fa-bolt text-xs"></i> TradingView Engine
+                  </button>
+                  <button id="btnChartEngineApex" onclick="switchChartEngine('apex')" class="px-3 py-1 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all flex items-center gap-1.5">
+                    <i class="fa-solid fa-chart-area text-xs"></i> Chart Nội Bộ
                   </button>
                 </div>
 
@@ -624,10 +634,10 @@
             </div>
 
             <!-- TradingView Lightweight Chart Box -->
-            <div id="tradingviewChartContainer" class="chart-box rounded-xl overflow-hidden relative" style="display: none; height: 520px; width: 100%; background: #0b0f19;"></div>
+            <div id="tradingviewChartContainer" class="chart-box rounded-xl overflow-hidden relative" style="display: block; height: 520px; width: 100%; background: #fffdf7;"></div>
 
             <!-- ApexChart Box -->
-            <div id="priceCandleChart" class="chart-box" style="min-height: 440px; width: 100%;"></div>
+            <div id="priceCandleChart" class="chart-box" style="display: none; min-height: 440px; width: 100%;"></div>
           </div>
 
           <!-- TAB 2 CONTENT: Nhận Định AI & Luận Điểm -->
@@ -1060,10 +1070,9 @@
     <span class="btn-label">Đầu Trang</span>
   </button>
 
-  <script src="/static/auth.js?v=20260814_captcha_v2"></script>
-  <script src="/static/site-nav.js?v=20260813_freemium_v1"></script>
+  <script src="/static/site-nav.js?v=20260821_public_nav_v1"></script>
   <script src="/static/market-ribbon.js?v=20260814_v1"></script>
-  <script src="/static/app.js?v=20260808_light_v1"></script>
+  <script src="/static/app.js?v=20260818_chart_news_fix_v5"></script>
 
 </body>
 </html>

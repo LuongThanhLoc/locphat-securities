@@ -6,10 +6,10 @@ import urllib.parse
 import hashlib
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from html import escape
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from bs4 import BeautifulSoup
 from market_data_provider import Company
 from data_freshness import now_vn_iso
@@ -33,13 +33,14 @@ def get_env_api_key(key_name: str) -> str:
 
 
 DEEPSEEK_API_KEY = get_env_api_key("DEEPSEEK_API_KEY")
-_primary_deepseek_model = get_env_api_key("DEEPSEEK_MODEL") or "deepseek-v4-flash-0731"
+_primary_deepseek_model = get_env_api_key("DEEPSEEK_MODEL") or "deepseek-chat"
 
 DEEPSEEK_MODELS = list(dict.fromkeys([
     _primary_deepseek_model,
-    "deepseek-v4-flash-0731",
+    "deepseek-chat",
+    "deepseek-reasoner",
     "deepseek-v4-flash",
-    "deepseek-chat"
+    "deepseek-v4-pro"
 ]))
 
 _NEWS_CACHE: Dict[str, Any] = {}
@@ -49,6 +50,134 @@ _NEWS_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 Chrome/124.0 Safari/537.36 LPSecResearch/2.0"
 }
+
+ISSUER_IDENTITY_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "FPT": {
+        "symbol": "FPT",
+        "legal_name": "Công ty Cổ phần FPT",
+        "direct_aliases": ["tập đoàn fpt", "fpt corporation", "ctcp fpt", "fpt software", "fpt is", "fpt telecom"],
+        "excluded_subsidiaries": ["frt", "fpt retail", "long châu", "nhà thuốc long châu", "fpt shop", "fpts", "chứng khoán fpt", "fox"],
+    },
+    "FRT": {
+        "symbol": "FRT",
+        "legal_name": "Công ty Cổ phần Bán lẻ Kỹ thuật số FPT",
+        "direct_aliases": ["fpt retail", "long châu", "nhà thuốc long châu", "fpt shop", "ctcp bán lẻ kỹ thuật số fpt"],
+        "excluded_subsidiaries": ["fpt software", "fpt is", "fpt telecom", "fpts"],
+    },
+    "MWG": {
+        "symbol": "MWG",
+        "legal_name": "Công ty Cổ phần Đầu tư Thế Giới Di Động",
+        "direct_aliases": ["thế giới di động", "mobile world", "ctcp đầu tư thế giới di động", "bách hóa xanh", "an khang", "avakids", "era blue"],
+        "excluded_subsidiaries": [],
+    },
+    "VIC": {
+        "symbol": "VIC",
+        "legal_name": "Tập đoàn Vingroup",
+        "direct_aliases": ["vingroup", "tập đoàn vingroup", "ctcp tập đoàn vingroup"],
+        "excluded_subsidiaries": ["vinhomes", "vhm", "vincom retail", "vre", "vinfast", "vfs"],
+    },
+    "VHM": {
+        "symbol": "VHM",
+        "legal_name": "Công ty Cổ phần Vinhomes",
+        "direct_aliases": ["vinhomes", "ctcp vinhomes"],
+        "excluded_subsidiaries": ["vincom retail", "vre", "vinfast", "vfs"],
+    },
+    "VRE": {
+        "symbol": "VRE",
+        "legal_name": "Công ty Cổ phần Vincom Retail",
+        "direct_aliases": ["vincom retail", "ctcp vincom retail"],
+        "excluded_subsidiaries": ["vinhomes", "vhm", "vinfast", "vfs"],
+    },
+    "HPG": {
+        "symbol": "HPG",
+        "legal_name": "Công ty Cổ phần Tập đoàn Hòa Phát",
+        "direct_aliases": ["tập đoàn hòa phát", "thép hòa phát", "hòa phát", "ctcp tập đoàn hòa phát"],
+        "excluded_subsidiaries": [],
+    },
+    "VNM": {
+        "symbol": "VNM",
+        "legal_name": "Công ty Cổ phần Sữa Việt Nam",
+        "direct_aliases": ["vinamilk", "sữa việt nam", "ctcp sữa việt nam"],
+        "excluded_subsidiaries": [],
+    },
+}
+
+def resolve_entity_relevance(
+    symbol: str,
+    title: str,
+    snippet: str = "",
+    source: str = "",
+    issuer_symbol: Optional[str] = None
+) -> float:
+    """Định danh thực thể và trả về điểm liên quan entity_relevance trong khoảng [0.0, 1.0].
+    
+    Quy tắc:
+    - Tách biệt source_credibility (độ tin cậy nguồn) và entity_relevance (độ liên quan thực thể).
+    - Nguồn CBTT/Vietcap không được gán 1.0 nếu tin tức thuộc về doanh nghiệp khác (ví dụ: tin GEE cho FPT).
+    - Loại trừ các công ty con đã tách sàn (ví dụ: Long Châu/FRT đối với FPT).
+    """
+    import re
+    clean_sym = str(symbol or "").upper().strip()
+    if not clean_sym:
+        return 0.0
+
+    # 1. Nếu có trường issuer_symbol cụ thể từ nguồn API
+    if issuer_symbol:
+        clean_issuer = str(issuer_symbol).upper().strip()
+        if clean_issuer == clean_sym:
+            return 1.0
+        elif len(clean_issuer) >= 3 and clean_issuer != clean_sym:
+            return 0.05
+
+    text = f"{title} {snippet}".strip()
+    text_lower = text.lower()
+    src_lower = str(source or "").lower()
+
+    # 2. Kiểm tra nếu tiêu đề có tiền tố mã cổ phiếu khác (e.g. "GEE: ...", "[FRT] ...")
+    prefix_match = re.match(r'^\s*\[?([A-Z0-9]{3,4})\]?[\s:]', title)
+    if prefix_match:
+        found_prefix = prefix_match.group(1).upper()
+        if found_prefix != clean_sym and found_prefix in ("GEE", "FRT", "MWG", "VIC", "VHM", "VRE", "HPG", "VNM", "SSI", "VND", "TCB", "MBB", "VPB", "VCB", "CTG", "BID", "GEX", "PVD", "PVS", "DGC", "DXG", "NVL", "DIG"):
+            # Kiểm tra xem trong nội dung có nhắc trực tiếp đến clean_sym hay không
+            if not re.search(r'(\bcổ phiếu\s+' + clean_sym + r'\b|\bmã\s+' + clean_sym + r'\b|\$' + clean_sym + r'\b|\(' + clean_sym + r'\)|\b' + clean_sym + r':)', text, re.IGNORECASE):
+                return 0.05
+
+    profile = ISSUER_IDENTITY_REGISTRY.get(clean_sym)
+    if profile:
+        excluded = profile.get("excluded_subsidiaries", [])
+        direct_aliases = profile.get("direct_aliases", [])
+
+        has_excluded = any(re.search(r'\b' + re.escape(exc) + r'\b', text_lower) for exc in excluded)
+        has_direct = any(re.search(r'\b' + re.escape(alias) + r'\b', text_lower) for alias in direct_aliases)
+        has_ticker_explicit = bool(re.search(r'(\bcổ phiếu\s+' + clean_sym + r'\b|\bmã\s+' + clean_sym + r'\b|\$' + clean_sym + r'\b|\(' + clean_sym + r'\)|\b' + clean_sym + r':|\b' + clean_sym + r'\s*\(hose\)|\b' + clean_sym + r'\s*\(hnx\))', text, re.IGNORECASE))
+        has_ticker_title = bool(re.search(r'\b' + clean_sym + r'\b', title, re.IGNORECASE))
+        has_ticker_snippet = bool(re.search(r'\b' + clean_sym + r'\b', snippet, re.IGNORECASE))
+
+        # Nếu tin chỉ nhắc tới công ty con bị loại trừ mà không nhắc trực tiếp công ty mẹ
+        if has_excluded and not has_direct and not has_ticker_explicit:
+            return 0.20
+
+        if has_direct or has_ticker_explicit:
+            return 0.95
+        elif has_ticker_title:
+            return 0.85
+        elif has_ticker_snippet:
+            return 0.65
+        else:
+            # Nếu nguồn CBTT mà không tìm thấy bất kỳ dấu hiệu nào của mã -> không liên quan
+            return 0.05
+    else:
+        has_ticker_explicit = bool(re.search(r'(\bcổ phiếu\s+' + clean_sym + r'\b|\bmã\s+' + clean_sym + r'\b|\$' + clean_sym + r'\b|\(' + clean_sym + r'\)|\b' + clean_sym + r':)', text, re.IGNORECASE))
+        has_ticker_title = bool(re.search(r'\b' + clean_sym + r'\b', title, re.IGNORECASE))
+        has_ticker_snippet = bool(re.search(r'\b' + clean_sym + r'\b', snippet, re.IGNORECASE))
+
+        if has_ticker_explicit:
+            return 0.95
+        elif has_ticker_title:
+            return 0.85
+        elif has_ticker_snippet:
+            return 0.65
+        return 0.05
 
 
 def _unwrap_article_url(url: str) -> str:
@@ -63,10 +192,57 @@ def _unwrap_article_url(url: str) -> str:
     return url if parsed.scheme in ("http", "https") else ""
 
 
+def _parse_news_datetime(val: Any) -> datetime:
+    """Parse various date formats into timezone-aware datetime for accurate sorting."""
+    if not val:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if isinstance(val, (int, float)):
+        try:
+            return datetime.fromtimestamp(val, tz=timezone.utc)
+        except Exception:
+            return datetime.min.replace(tzinfo=timezone.utc)
+    s = str(val).strip()
+    # 1. Try ISO 8601 format
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone(timedelta(hours=7)))
+        return dt
+    except Exception:
+        pass
+    # 2. Try RFC 2822 format (RSS pubDate)
+    try:
+        dt = parsedate_to_datetime(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        pass
+    # 3. Try standard date/time string formats
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%Y/%m/%d",
+    ):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=timezone(timedelta(hours=7)))
+        except Exception:
+            pass
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def _article_metadata(item: Dict[str, Any]) -> Dict[str, Any]:
     url = _unwrap_article_url(item.get("article_url", ""))
     item["article_url"] = url
-    if not url:
+    if not url or "google.com/search" in url:
         return item
     try:
         response = requests.get(url, headers=_NEWS_HEADERS, timeout=8, allow_redirects=True)
@@ -95,7 +271,11 @@ def _article_metadata(item: Dict[str, Any]) -> Dict[str, Any]:
             'meta[name="pubdate"]',
         )
         if published:
-            item["published_at"] = published
+            try:
+                dt = _parse_news_datetime(published)
+                item["published_at"] = dt.isoformat()
+            except Exception:
+                item["published_at"] = published
     except Exception as exc:
         print(f"Article metadata warning for {url}: {exc}")
         item["source"] = urllib.parse.urlparse(url).netloc
@@ -120,7 +300,7 @@ def _bing_rss_news(symbol: str) -> List[Dict[str, Any]]:
         published_at = published_raw
         if published_raw:
             try:
-                published_at = parsedate_to_datetime(published_raw).isoformat()
+                published_at = _parse_news_datetime(published_raw).isoformat()
             except (TypeError, ValueError):
                 pass
         if title and link:
@@ -144,18 +324,27 @@ def _company_disclosure_news(symbol: str) -> List[Dict[str, Any]]:
         if frame is None or frame.empty:
             return []
         items = []
-        for _, row in frame.head(10).iterrows():
+        for _, row in frame.head(20).iterrows():
             title = str(row.get("newsTitle") or "").strip()
             link = str(row.get("newsSourceLink") or "").strip()
+            if not link.startswith(("http://", "https://")):
+                link = f"https://www.google.com/search?q={urllib.parse.quote_plus(f'{symbol} {title}')}"
             image_url = str(row.get("newsImageUrl") or row.get("newsSmallImageUrl") or "").strip()
+            raw_date = str(row.get("publicDate") or "").strip()
+            published_at = raw_date
+            if raw_date:
+                try:
+                    published_at = _parse_news_datetime(raw_date).isoformat()
+                except Exception:
+                    pass
             if title:
                 items.append({
                     "title": title,
                     "snippet": title,
-                    "article_url": link if link.startswith(("http://", "https://")) else "",
+                    "article_url": link,
                     "image_url": image_url if image_url.startswith(("http://", "https://")) else "",
-                    "published_at": str(row.get("publicDate") or ""),
-                    "timestamp": str(row.get("publicDate") or "Mới cập nhật"),
+                    "published_at": published_at,
+                    "timestamp": raw_date or "Mới cập nhật",
                     "source": "Công bố doanh nghiệp / Vietcap",
                     "do_tin_cay": "Nguồn công bố doanh nghiệp",
                 })
@@ -163,6 +352,7 @@ def _company_disclosure_news(symbol: str) -> List[Dict[str, Any]]:
     except Exception as exc:
         print(f"Company disclosure news warning for {symbol}: {exc}")
         return []
+
 
 def fetch_real_news_feed(symbol: str) -> List[Dict[str, Any]]:
     """Fetch grounded headlines and resolve real article images when available."""
@@ -185,8 +375,15 @@ def fetch_real_news_feed(symbol: str) -> List[Dict[str, Any]]:
             seen.add(key)
             unique.append(item)
 
+    # Sort candidates strictly newest-first (descending by datetime) BEFORE slicing
+    unique.sort(key=lambda x: _parse_news_datetime(x.get("published_at") or x.get("timestamp")), reverse=True)
+
     with ThreadPoolExecutor(max_workers=5) as pool:
-        enriched = list(pool.map(_article_metadata, unique[:5]))
+        enriched = list(pool.map(_article_metadata, unique[:8]))
+
+    # Re-sort enriched candidates strictly newest-first (descending by datetime)
+    enriched.sort(key=lambda x: _parse_news_datetime(x.get("published_at") or x.get("timestamp")), reverse=True)
+
     fetched_at = now_vn_iso()
     for item in enriched:
         title = item.get("title", "")
@@ -418,38 +615,26 @@ def generate_ai_advisor_analysis(symbol: str, stock_data: Dict[str, Any]) -> Dic
 
     # 1. Attempt DeepSeek API (Primary Engine)
     if deepseek_key:
-        for model_name in DEEPSEEK_MODELS:
-            try:
-                url = "https://api.deepseek.com/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {deepseek_key}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": model_name,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.3,
-                    "max_tokens": 3000
-                }
-                res = requests.post(url, json=payload, headers=headers, timeout=30.0)
-                if res.status_code == 200:
-                    body = res.json()
-                    content = body["choices"][0]["message"]["content"]
-                    parsed = json.loads(content)
-                    report = parsed.get("ai_deep_analysis_report", parsed)
-                    report["title"] = "BÁO CÁO PHÂN TÍCH CHUYÊN SÂU LỘC PHÁT AI"
-                    report["source"] = "deepseek"
-                    if "widget_hot_news" in parsed:
-                        report["widget_hot_news"] = parsed["widget_hot_news"]
-                    break
-                else:
-                    print(f"DeepSeek API warning status {res.status_code}: {res.text}")
-            except Exception as e:
-                print(f"Warning: DeepSeek model {model_name} failed: {e}")
-                continue
+        try:
+            from deepseek_client import call_deepseek_json
+            parsed = call_deepseek_json(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=3500,
+                enable_thinking=False,
+                timeout=35.0,
+            )
+            report = parsed.get("ai_deep_analysis_report", parsed)
+            report["title"] = "BÁO CÁO PHÂN TÍCH CHUYÊN SÂU LỘC PHÁT AI"
+            report["source"] = "deepseek"
+            if "_deepseek_meta" in parsed:
+                report["_deepseek_meta"] = parsed["_deepseek_meta"]
+            if "widget_hot_news" in parsed:
+                report["widget_hot_news"] = parsed["widget_hot_news"]
+            if "forensic_analysis" in parsed and isinstance(parsed["forensic_analysis"], dict):
+                report["forensic_analysis"] = parsed["forensic_analysis"]
+        except Exception as e:
+            print(f"Warning: DeepSeek API analysis failed: {e}")
 
     if not report:
         # Fallback Generator

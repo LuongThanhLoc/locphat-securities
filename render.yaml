@@ -30,18 +30,6 @@ services:
           property: connectionString
       - key: RRG_DATA_V2_ENABLED
         value: "false"
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_PUBLISHABLE_KEY
-        sync: false
-      - key: SUPABASE_SECRET_KEY
-        sync: false
-      - key: SUPABASE_JWT_AUDIENCE
-        value: authenticated
-      - key: TURNSTILE_SITE_KEY
-        sync: false
-      - key: AUTH_RATE_LIMIT_SECRET
-        generateValue: true
 
   - type: cron
     name: locphats-rrg-sync

@@ -713,21 +713,156 @@ body.lp-editorial {
   color: var(--lp-ink) !important;
 }
 .lp-page-analysis #sectorDetailMetricsRow > div,
-.lp-page-analysis .dash-tab-bar,
-.lp-page-analysis #chartTimeframeToolbar,
 .lp-page-analysis .news-card-item {
   background: var(--lp-paper-muted) !important;
   border-color: var(--lp-line) !important;
   border-radius: 0 !important;
   color: var(--lp-ink) !important;
+  text-decoration: none !important;
+  display: flex !important;
+  flex-direction: column !important;
 }
-.lp-page-analysis .news-card-item:hover { background: var(--lp-navy-soft) !important; }
+.lp-page-analysis .news-card-item:hover { background: var(--lp-navy-soft) !important; color: var(--lp-ink) !important; }
 .lp-page-analysis .news-card-item span { color: var(--lp-muted) !important; }
+
+/* Dashboard Horizontal Nav Tabs Bar */
+.lp-page-analysis .dash-tab-bar {
+  background: var(--lp-paper-strong) !important;
+  border: 1px solid var(--lp-line) !important;
+  border-radius: 12px !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 8px 12px !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
+}
+
 .lp-page-analysis .dash-tab-btn {
   background: transparent !important;
   color: var(--lp-muted) !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px !important;
+  padding: 7px 14px !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  min-height: 36px !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  transition: all 0.2s ease !important;
 }
-.lp-page-analysis .dash-tab-btn.active { background: var(--lp-navy) !important; color: #fff !important; }
+.lp-page-analysis .dash-tab-btn:hover {
+  background: var(--lp-navy-soft) !important;
+  color: var(--lp-ink) !important;
+}
+.lp-page-analysis .dash-tab-btn.active {
+  background: var(--lp-navy) !important;
+  color: #ffffff !important;
+  border-color: var(--lp-navy-deep) !important;
+  box-shadow: 0 2px 8px rgba(6, 74, 107, 0.25) !important;
+}
+.lp-page-analysis .dash-tab-btn.active i {
+  color: #ffffff !important;
+}
+
+/* Timeframe Selector & Toggle Buttons */
+.lp-page-analysis #chartTimeframeToolbar,
+.lp-page-analysis .mode-toggle-group {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 3px !important;
+  background: var(--lp-paper-muted) !important;
+  border: 1px solid var(--lp-line-soft) !important;
+  border-radius: 8px !important;
+  padding: 3px !important;
+  max-width: 100% !important;
+  flex-wrap: nowrap !important;
+}
+
+.lp-page-analysis #chartTimeframeToolbar .toggle-btn,
+.lp-page-analysis .mode-toggle-group .toggle-btn {
+  min-height: 28px !important;
+  height: 28px !important;
+  min-width: 32px !important;
+  padding: 0 10px !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--lp-muted) !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.lp-page-analysis #chartTimeframeToolbar .toggle-btn:hover,
+.lp-page-analysis .mode-toggle-group .toggle-btn:hover {
+  background: var(--lp-navy-soft) !important;
+  color: var(--lp-ink) !important;
+}
+.lp-page-analysis #chartTimeframeToolbar .toggle-btn.active,
+.lp-page-analysis .mode-toggle-group .toggle-btn.active {
+  background: var(--lp-navy) !important;
+  color: #ffffff !important;
+  border-color: var(--lp-navy-deep) !important;
+}
+
+/* Chart Container & Header Elements in Tab 1 */
+.lp-page-analysis #dashTabContentChart {
+  background: var(--lp-paper-strong) !important;
+  border: 1px solid var(--lp-line) !important;
+  border-radius: 12px !important;
+  padding: 16px !important;
+  margin-bottom: 0 !important;
+}
+.lp-page-analysis #dashTabContentChart .border-b {
+  border-color: var(--lp-line-soft) !important;
+}
+.lp-page-analysis .chart-engine-actions > div {
+  background: var(--lp-paper-muted) !important;
+  border: 1px solid var(--lp-line-soft) !important;
+  border-radius: 8px !important;
+  padding: 2px !important;
+}
+.lp-page-analysis #btnChartEngineTv,
+.lp-page-analysis #btnChartEngineApex {
+  padding: 4px 10px !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  border-radius: 6px !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: var(--lp-muted) !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+.lp-page-analysis #btnChartEngineTv.active,
+.lp-page-analysis #btnChartEngineApex.active {
+  background: var(--lp-navy) !important;
+  color: #ffffff !important;
+  border-color: var(--lp-navy-deep) !important;
+}
+.lp-page-analysis #tvExternalLink {
+  background: var(--lp-navy-soft) !important;
+  color: var(--lp-navy) !important;
+  border: 1px solid var(--lp-line) !important;
+  border-radius: 8px !important;
+  padding: 5px 10px !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+  transition: all 0.15s ease !important;
+}
+.lp-page-analysis #tvExternalLink:hover {
+  background: var(--lp-navy) !important;
+  color: #ffffff !important;
+}
 .lp-page-analysis .apexcharts-text { fill: var(--lp-muted) !important; }
 .lp-page-analysis .apexcharts-gridline { stroke: var(--lp-line-soft) !important; }
 .lp-page-analysis .apexcharts-toolbar,

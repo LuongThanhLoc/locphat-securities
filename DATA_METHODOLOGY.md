@@ -81,6 +81,17 @@ Hồ sơ công bố được bổ sung có kiểm duyệt trong `COMPANY_DISCLOS
 
 - Ribbon chỉ gồm `VNINDEX`, `VN30` và đúng 30 thành phần VN30 đã được KBS và VCI đối chiếu; không hard-code danh sách.
 - Giá cổ phiếu dùng cùng snapshot bảng giá Vietcap với Heatmap/Bubbles. Biến động phiên là `(giá khớp / giá tham chiếu - 1) × 100`.
-- Giá hai chỉ số lấy trực tiếp từ OHLC intraday Vietcap và so với close phiên trước; không tự tổng hợp chỉ số từ giá cổ phiếu.
-- Trong phiên, client tải snapshot mỗi 10 giây và server dùng cache/single-flight. Ngoài phiên giữ close snapshot gần nhất, không gọi upstream theo chu kỳ 10 giây.
 - Giá thiếu, bằng 0, membership thiếu hoặc response rỗng không được thay thế dataset tốt; dùng last-known-good kèm `stale`, hoặc `null` nếu chưa từng có giá hợp lệ.
+
+## Hợp đồng tích hợp DeepSeek AI (V4 Engine)
+
+- **Nguyên tắc**: DeepSeek chỉ dùng để diễn giải định lượng (qualitative narrative) và trích xuất luận điểm từ dữ liệu đã được Python Quant tính toán; tuyệt đối không để AI tự bịa đặt giá mục tiêu, cắt lỗ hay điểm số.
+- **Client tập trung**: Mọi request đến `api.deepseek.com` đều đi qua module [`deepseek_client.py`](deepseek_client.py).
+- **Hệ sinh thái Model DeepSeek-V4**:
+  - `deepseek-v4-flash` (Mặc định cho web fast-path): Giá Off-Peak ($0.007-$0.22/1M in, $0.66/1M out), Peak ($0.014-$0.44/1M in, $1.32/1M out), Context 1M tokens.
+  - `deepseek-v4-pro` (Model phân tích & suy luận chuyên sâu): Giá Off-Peak ($0.022-$0.66/1M in, $1.98/1M out), Peak ($0.044-$1.32/1M in, $3.96/1M out).
+  - `deepseek-chat` / `deepseek-reasoner`: Các alias chính thức tương thích ngược.
+- **Khung giờ giá ưu đãi (Off-Peak)**: 01:00–04:00 UTC và 06:00–10:00 UTC (giảm 50% chi phí).
+- **Cơ chế Thinking Mode**: Đối với các tác vụ JSON nhanh (phân tích cổ phiếu, heatmap macro insight), hệ thống gửi `thinking: {"type": "disabled"}` để tối ưu tốc độ (< 2s) và loại bỏ chi phí token reasoning không cần thiết.
+- **Dự phòng (Fallback)**: Khi mất kết nối API hoặc chưa cấu hình API Key, hệ thống tự động fallback về báo cáo Quant thuần (rule-based) mà không làm sập giao diện người dùng.
+

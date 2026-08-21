@@ -5,9 +5,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   min-height: 46px;
   overflow: hidden;
-  position: sticky;
-  top: 56px;
-  z-index: 90;
+  position: relative;
   box-shadow: 0 2px 10px rgba(21, 24, 23, .03);
 }
 
@@ -91,7 +89,6 @@
 .market-ribbon-bar .ticker-stale[hidden] { display: none; }
 
 @media (max-width: 768px) {
-  .market-ribbon-bar { top: 52px; }
   .market-ribbon-bar .ticker-status { padding-inline: .55rem; }
   .market-ribbon-bar .ticker-status time { display: none; }
   .market-ribbon-bar .ticker-item { gap: .32rem; padding: .22rem .45rem; font-size: .75rem; }

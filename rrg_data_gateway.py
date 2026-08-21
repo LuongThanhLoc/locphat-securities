@@ -158,8 +158,14 @@ def _normalise_frame(
     data["date"] = pd.to_datetime(data["date"], errors="coerce")
     if data["date"].isna().any():
         raise DataQualityError("ngày_không_hợp_lệ")
-    if (data["date"].dt.weekday >= 5).any():
-        raise DataQualityError("có_dữ_liệu_cuối_tuần_sai_thị_trường")
+    weekend_mask = data["date"].dt.weekday >= 5
+    if weekend_mask.any():
+        num_weekend = int(weekend_mask.sum())
+        max_allowed_weekend = max(2, int(len(data) * 0.005))
+        if num_weekend <= max_allowed_weekend and not weekend_mask.iloc[-1]:
+            data = data.loc[~weekend_mask].copy()
+        else:
+            raise DataQualityError("có_dữ_liệu_cuối_tuần_sai_thị_trường")
     data = data.sort_values("date").drop_duplicates("date", keep="last")
     if trading_calendar is not None and symbol.upper() not in BENCHMARKS:
         official = {str(value)[:10] for value in trading_calendar}
@@ -171,12 +177,29 @@ def _normalise_frame(
             data[column] = np.nan
         data[column] = pd.to_numeric(data[column], errors="coerce")
     prices = data[["open", "high", "low", "close"]]
-    if not np.isfinite(prices.to_numpy()).all() or (prices <= 0).any().any():
-        raise DataQualityError("giá_nan_vô_cực_hoặc_không_dương")
-    if ((data["low"] > data[["open", "close"]].min(axis=1)) |
-            (data["high"] < data[["open", "close"]].max(axis=1)) |
-            (data["low"] > data["high"])).any():
+    invalid_prices = (~np.isfinite(prices.to_numpy())).any(axis=1) | (prices <= 0).any(axis=1)
+    if invalid_prices.any():
+        num_invalid = int(invalid_prices.sum())
+        max_allowed = max(2, int(len(data) * 0.005))
+        if num_invalid <= max_allowed and not invalid_prices.iloc[-1]:
+            data = data.loc[~invalid_prices].copy()
+        else:
+            raise DataQualityError("giá_nan_vô_cực_hoặc_không_dương")
+    
+    if (data["low"] > data["high"]).any():
         raise DataQualityError("ohlc_không_nhất_quán")
+
+    inconsistent_mask = (
+        (data["low"] > data[["open", "close"]].min(axis=1)) |
+        (data["high"] < data[["open", "close"]].max(axis=1))
+    )
+    if inconsistent_mask.any():
+        num_inconsistent = int(inconsistent_mask.sum())
+        max_allowed = max(2, int(len(data) * 0.005)) if len(data) >= 100 else 0
+        if num_inconsistent <= max_allowed and not inconsistent_mask.iloc[-1]:
+            data = data.loc[~inconsistent_mask].copy()
+        else:
+            raise DataQualityError("ohlc_không_nhất_quán")
     non_null_volume = data["volume"].dropna()
     if (non_null_volume < 0).any():
         raise DataQualityError("khối_lượng_âm")

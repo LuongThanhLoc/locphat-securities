@@ -61,7 +61,7 @@ def test_macro_ui_cancels_stale_requests_and_escapes_source_data():
 def test_macro_dialog_is_above_navigation_and_mobile_safe():
     html = (ROOT / "static/macro.html").read_text(encoding="utf-8")
     css = (ROOT / "static/macro.css").read_text(encoding="utf-8")
-    assert html.index("/static/auth.js") < html.index("/static/site-nav.js")
+    assert "/static/site-nav.js" in html
     assert "z-index: 100000" in css
     assert "100dvh" in css
     assert "100vi" in css
@@ -69,9 +69,8 @@ def test_macro_dialog_is_above_navigation_and_mobile_safe():
     assert "env(safe-area-inset-bottom)" in css
 
 
-def test_macro_refresh_is_authenticated_non_blocking_api():
+def test_macro_refresh_is_non_blocking_api():
     app = (ROOT / "app.py").read_text(encoding="utf-8")
     script = (ROOT / "static/macro.js").read_text(encoding="utf-8")
     assert '@app.post("/api/macro-refresh", status_code=202)' in app
-    assert "Depends(require_user)" in app
-    assert "window.LPAuth.api('/api/macro-refresh', {method: 'POST'})" in script
+    assert "/api/macro-refresh" in script

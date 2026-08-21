@@ -10,9 +10,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   min-height: 46px;
   overflow: hidden;
-  position: sticky;
-  top: 56px;
-  z-index: 90;
+  position: relative;
   box-shadow: 0 2px 10px rgba(21, 24, 23, 0.03);
 }
 
@@ -1101,7 +1099,7 @@
 
 /* Mobile Responsive */
 @media (max-width: 768px) {
-  .macro-ticker-bar { grid-template-columns: auto minmax(0, 1fr); top: 52px; }
+  .macro-ticker-bar { grid-template-columns: auto minmax(0, 1fr); }
   .ticker-status { padding-inline: 0.55rem; }
   .ticker-status time { display: none; }
   .ticker-item { gap: 0.32rem; padding: 0.22rem 0.45rem; font-size: 0.75rem; }

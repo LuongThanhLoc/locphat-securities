@@ -1313,10 +1313,6 @@
   }
 
   async function runWeeklyAnalysis() {
-    if (!window.LPAuth?.isAuthenticated()) {
-      window.LPAuth?.open({ trigger: document.activeElement, onSuccess: runWeeklyAnalysis });
-      return;
-    }
     const btn = $('weeklyAnalysisBtn');
     const hint = $('weeklyHint');
 
@@ -1421,10 +1417,6 @@
   }
 
   async function openAiReport() {
-    if (!window.LPAuth?.isAuthenticated()) {
-      window.LPAuth?.open({ trigger: document.activeElement, onSuccess: openAiReport });
-      return;
-    }
     const dialog = $('aiDialog');
     dialog.showModal();
     if (state.aiReport) {
