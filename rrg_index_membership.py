@@ -138,6 +138,31 @@ def get_index_membership(
             })
             return list(cached["symbols"]), meta
 
+        # Single-source fallback when one provider is temporarily down and no store snapshot exists
+        if len(results) == 1 and not mismatch:
+            single_source, symbols = next(iter(results.items()))
+            fingerprint = hashlib.sha256(
+                json.dumps(symbols, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            snapshot_id = f"{code.lower()}-{fingerprint[:20]}"
+            meta = {
+                "snapshot_id": snapshot_id,
+                "index_code": code,
+                "as_of_date": date.today().isoformat(),
+                "source": f"vnstock/{single_source}",
+                "source_chain": [f"vnstock/{single_source}"],
+                "source_agreement": False,
+                "stale": False,
+                "provider_errors": errors,
+                "fingerprint": fingerprint,
+                "rule_version": INDEX_MEMBERSHIP_RULE_VERSION,
+                "fetched_at": int(now),
+            }
+            if durable_store is not None:
+                durable_store.save_index_membership_snapshot(code, symbols, meta)
+            _CACHE[code] = {"symbols": symbols, "meta": meta, "fetched_at_epoch": now}
+            return list(symbols), dict(meta)
+
         detail = "KBS và VCI trả danh sách khác nhau" if mismatch else "; ".join(
             f"{source}: {error}" for source, error in sorted(errors.items())
         )

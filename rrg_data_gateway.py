@@ -171,7 +171,12 @@ def _normalise_frame(
         official = {str(value)[:10] for value in trading_calendar}
         unexpected = set(data["date"].dt.strftime("%Y-%m-%d")) - official
         if unexpected:
-            raise DataQualityError("phiên_không_thuộc_lịch_benchmark:" + sorted(unexpected)[0])
+            max_allowed_unexpected = max(3, int(len(data) * 0.02))
+            latest_date_str = data["date"].dt.strftime("%Y-%m-%d").iloc[-1]
+            if len(unexpected) <= max_allowed_unexpected and latest_date_str in official:
+                data = data.loc[data["date"].dt.strftime("%Y-%m-%d").isin(official)].copy()
+            else:
+                raise DataQualityError("phiên_không_thuộc_lịch_benchmark:" + sorted(unexpected)[0])
     for column in ("open", "high", "low", "close", "volume"):
         if column not in data:
             data[column] = np.nan

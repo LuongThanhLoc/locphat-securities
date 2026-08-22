@@ -6,7 +6,9 @@ beautifulsoup4>=4.12.0
 websockets>=12.0
 certifi>=2024.2.2
 gunicorn>=21.0.0
-vnstock>=4.0.5
+vnstock>=4.0.7
+vnai>=2.5.9
 holidays>=0.68
 python-dateutil>=2.8.0
 psycopg[binary,pool]>=3.1.18
+
