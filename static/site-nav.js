@@ -88,6 +88,12 @@ if (!window.handleLogoFallback) {
             label: 'Bong bóng thị trường',
             description: 'Quan sát biến động cổ phiếu dạng bong bóng',
           },
+          {
+            key: 'volume-overview',
+            href: '/tong-quan-klgd',
+            label: 'Tổng quan KLGD',
+            description: 'Khối ngoại và tự doanh trong 20 phiên',
+          },
         ],
       },
       {
@@ -146,6 +152,7 @@ if (!window.handleLogoFallback) {
     const active = path.startsWith('/stock') ? 'home'
       : path.startsWith('/heatmap') ? 'heatmap'
       : path.startsWith('/bubbles') ? 'bubbles'
+      : path.startsWith('/tong-quan-klgd') ? 'volume-overview'
       : path.startsWith('/chi-bao-day') ? 'bottom-indicator'
       : path.startsWith('/backtest') ? 'backtest'
       : path.startsWith('/rrg') ? 'rrg'
@@ -160,7 +167,7 @@ if (!window.handleLogoFallback) {
 
     // Inject Search CSS if not present
     if (!document.querySelector('link[data-lp-search-style]')) {
-      document.head.insertAdjacentHTML('beforeend', '<link data-lp-search-style rel="stylesheet" href="/static/site-nav-search.css?v=20260808_centered_responsive_v3">');
+      document.head.insertAdjacentHTML('beforeend', '<link data-lp-search-style rel="stylesheet" href="/static/site-nav-search.css?v=20260824_volume_v2">');
     }
 
     // 2. Render Header

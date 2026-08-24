@@ -10,7 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import uvicorn
 from ctck_analyzer import analyze_security_stock, CTCK_STOCKS
 from peer_comparison_engine import get_peer_comparison
@@ -23,6 +23,13 @@ from rsi_backtest_engine import run_backtest
 from bottom_indicator_engine import get_bottom_analysis, get_bottom_backtest
 from rrg_data_gateway import HistoryUnavailable
 from rrg_data_store import RrgStoreUnavailable
+from volume_flow_engine import (
+    VolumeFlowSourceError,
+    VolumeFlowSymbolNotFound,
+    VolumeFlowUnavailable,
+    get_volume_flow_service,
+)
+from volume_flow_store import VolumeFlowStoreUnavailable, get_volume_flow_store
 
 app = FastAPI(
     title="Hệ Thống Phân Tích Cổ Phiếu Chứng Khoán (CTCK)",
@@ -35,12 +42,64 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if not os.path.exists(static_dir):
     os.makedirs(static_dir)
 
+
+def _cache_busting_headers_for_file(filepath: str) -> dict:
+    """Generate ETag + aggressive anti-cache HTTP response headers based on actual file mtime.
+    Browsers compare ETag between requests. If file edited on disk, ETag changes,
+    causing browsers to DISCARD stale cache instantly."""
+    mtime = int(os.path.getmtime(filepath))
+    size = os.path.getsize(filepath)
+    etag_value = f'W/"lpsec-{mtime}-{size}"'
+    return {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+        "Surrogate-Control": "no-store",
+        "ETag": etag_value,
+        "Last-Modified": datetime.fromtimestamp(mtime, timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        "Vary": "*",
+    }
+
+
+@app.get("/static/site-nav.js")
+def get_site_nav_js():
+    js_path = os.path.join(static_dir, "site-nav.js")
+    if os.path.exists(js_path):
+        return FileResponse(js_path, media_type="application/javascript", headers=_cache_busting_headers_for_file(js_path))
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+@app.get("/static/site-nav.css")
+def get_site_nav_css():
+    css_path = os.path.join(static_dir, "site-nav.css")
+    if os.path.exists(css_path):
+        return FileResponse(css_path, media_type="text/css", headers=_cache_busting_headers_for_file(css_path))
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+@app.get("/static/site-nav-search.css")
+def get_site_nav_search_css():
+    css_path = os.path.join(static_dir, "site-nav-search.css")
+    if os.path.exists(css_path):
+        return FileResponse(css_path, media_type="text/css", headers=_cache_busting_headers_for_file(css_path))
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+@app.get("/static/site-nav-ai.css")
+def get_site_nav_ai_css():
+    css_path = os.path.join(static_dir, "site-nav-ai.css")
+    if os.path.exists(css_path):
+        return FileResponse(css_path, media_type="text/css", headers=_cache_busting_headers_for_file(css_path))
+    raise HTTPException(status_code=404, detail="File not found")
+
+
 @app.get("/static/heatmap.js")
 def get_heatmap_js():
     js_path = os.path.join(static_dir, "heatmap.js")
     if os.path.exists(js_path):
         return FileResponse(js_path, media_type="application/javascript", headers=_cache_busting_headers_for_file(js_path))
     raise HTTPException(status_code=404, detail="File not found")
+
 
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -54,6 +113,13 @@ try:
     start_intraday_poller()
 except Exception as boot_err:
     print(f"[Heatmap] Warning: failed to start intraday poller: {boot_err}")
+
+# Initialize this module independently: a database outage must not prevent the
+# rest of the public application from starting.
+try:
+    get_volume_flow_store(required=False)
+except Exception as boot_err:
+    print(f"[Tổng quan KLGD] Warning: database initialization failed: {boot_err}")
 
 
 def _build_quant_decision(symbol: str, stock_data: dict) -> dict:
@@ -96,23 +162,6 @@ def _require_explicit_deepseek_action(user_action: Optional[str]) -> None:
             detail="DeepSeek chi duoc goi sau thao tac chu dong cua nguoi dung.",
         )
 
-def _cache_busting_headers_for_file(filepath: str) -> dict:
-    """Generate ETag + aggressive anti-cache HTTP response headers based on actual file mtime.
-    Browsers compare ETag between requests. If file edited on disk, ETag changes,
-    causing browsers to DISCARD stale cache instantly."""
-    mtime = int(os.path.getmtime(filepath))
-    size = os.path.getsize(filepath)
-    etag_value = f'W/"lpsec-{mtime}-{size}"'
-    return {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-        "Pragma": "no-cache",
-        "Expires": "0",
-        "Surrogate-Control": "no-store",
-        "ETag": etag_value,
-        "Last-Modified": datetime.utcfromtimestamp(mtime).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        "Vary": "*",
-    }
-
 
 def _serve_page(filename: str):
     path = os.path.join(static_dir, filename)
@@ -138,6 +187,11 @@ def read_heatmap():
 @app.get("/bubbles", response_class=HTMLResponse)
 def read_market_bubbles():
     return _serve_page("bubbles.html")
+
+
+@app.get("/tong-quan-klgd", response_class=HTMLResponse)
+def read_volume_overview():
+    return _serve_page("volume-overview.html")
 
 @app.get("/stock/{symbol}", response_class=HTMLResponse)
 def read_stock(symbol: str):
@@ -171,6 +225,45 @@ def read_bottom_indicator():
 @app.get("/rrg", response_class=HTMLResponse)
 def read_rrg():
     return _serve_page("rrg.html")
+
+
+@app.get("/api/volume-overview/{symbol}")
+def get_volume_overview_api(symbol: str, response: Response):
+    """Return the latest 20 finalized sessions, always read from PostgreSQL."""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        return get_volume_flow_service().get_overview(symbol)
+    except VolumeFlowSymbolNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (VolumeFlowUnavailable, VolumeFlowStoreUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/volume-overview/{symbol}/live")
+def get_volume_overview_live_api(symbol: str, response: Response):
+    """Return one validated price-board snapshot; never persist it as EOD."""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        return get_volume_flow_service().get_live_overview(symbol)
+    except VolumeFlowSymbolNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (VolumeFlowUnavailable, VolumeFlowSourceError, VolumeFlowStoreUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/price-chart/{symbol}")
+def get_price_chart_api(symbol: str, response: Response):
+    """Return verified, unadjusted EOD OHLC history read from PostgreSQL."""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        return get_volume_flow_service().get_price_chart(symbol)
+    except VolumeFlowSymbolNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (VolumeFlowUnavailable, VolumeFlowSourceError, VolumeFlowStoreUnavailable) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 @app.get("/api/rrg/data")
 def get_rrg_data_api(

@@ -30,6 +30,7 @@ let currentChartEngine = 'tradingview';
 let tvWidgetInstance = null;
 let tvLightweightChartInstance = null;
 let tvEmaSeriesMap = {};
+let sharedAnalysisPriceChart = null;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -1162,8 +1163,7 @@ function renderDashboard(data) {
   if (Array.isArray(data.price_history) && data.price_history.length > 0) {
     rawPriceHistory = data.price_history;
   }
-  initTradingViewLightweightChart(data.price_history, data.symbol);
-  initPriceCandleChart(data.price_history);
+  renderSharedAnalysisPriceChart(data.price_history, data.symbol, data.exchange);
 
   // Auto-fetch & render the search-grounded hot-news widget
   if (data.widget_hot_news && Array.isArray(data.widget_hot_news.news_list) && data.widget_hot_news.news_list.length > 0) {
@@ -2842,6 +2842,20 @@ function renderDonutChart(seriesData, labelsData, colorsData) {
    TRADINGVIEW & PRICE CANDLE CHART ENGINE
    ========================================================================== */
 
+function renderSharedAnalysisPriceChart(history, symbol, exchange) {
+  const host = document.getElementById('analysisSharedPriceChart');
+  if (!host || !window.LPPriceChart) return;
+  const options = {
+    symbol: symbol || currentStockSymbol,
+    exchange: exchange || currentDashboardData?.exchange || 'HOSE',
+    sessions: Array.isArray(history) ? history : [],
+  };
+  if (sharedAnalysisPriceChart) sharedAnalysisPriceChart.setData(options);
+  else sharedAnalysisPriceChart = window.LPPriceChart.create(host, {
+    ...options, timeframe: currentPriceTimeframe || 'ALL', engine: 'tradingview',
+  });
+}
+
 function calculateEMA(data, period) {
   if (!data || !Array.isArray(data) || data.length === 0) return [];
   const k = 2 / (period + 1);
@@ -2864,6 +2878,10 @@ function calculateEMA(data, period) {
 }
 
 function toggleChartEma(period) {
+  if (sharedAnalysisPriceChart) {
+    sharedAnalysisPriceChart.toggleEMA(Number(period));
+    return;
+  }
   const series = tvEmaSeriesMap[period];
   const btn = document.getElementById(`toggleEma${period}`);
   if (!series) return;
@@ -2876,6 +2894,11 @@ function toggleChartEma(period) {
 }
 
 function switchChartEngine(engine) {
+  if (sharedAnalysisPriceChart) {
+    currentChartEngine = engine;
+    sharedAnalysisPriceChart.switchEngine(engine);
+    return;
+  }
   currentChartEngine = engine;
   const tvBtn = document.getElementById('btnChartEngineTv');
   const apexBtn = document.getElementById('btnChartEngineApex');
@@ -3224,6 +3247,10 @@ function initPriceCandleChart(history) {
 
 function setTimeframeMode(tf) {
   currentPriceTimeframe = tf;
+  if (sharedAnalysisPriceChart) {
+    sharedAnalysisPriceChart.setTimeframe(tf);
+    return;
+  }
 
   ['1D', '3D', '1W', '1M', '3M', '1Y', 'ALL'].forEach(t => {
     const btn = document.getElementById(`btnTf${t}`);

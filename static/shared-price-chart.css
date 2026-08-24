@@ -1,0 +1,45 @@
+.lp-price-chart { min-width: 0; color: #151817; font-family: Inter, sans-serif; }
+.lp-price-chart [hidden] { display: none !important; }
+.lp-price-chart__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; border-bottom: 1px solid #e7e0d4; }
+.lp-price-chart__title { min-width: 0; }
+.lp-price-chart__title h3 { margin: 0; font: 700 clamp(18px, 2vw, 25px)/1.2 "Noto Serif", Georgia, serif; }
+.lp-price-chart__title p { margin: 5px 0 0; color: #68727a; font-size: 10px; }
+.lp-price-chart__actions, .lp-price-chart__engine, .lp-price-chart__ema, .lp-price-chart__timeframes { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.lp-price-chart__actions { justify-content: flex-end; }
+.lp-price-chart button, .lp-price-chart__external { min-height: 32px; padding: 0 10px; border: 1px solid #cbc5b8; background: #f7f3e9; color: #59656b; font: 700 11px/1 Inter, sans-serif; text-decoration: none; cursor: pointer; }
+.lp-price-chart button:hover, .lp-price-chart button:focus-visible, .lp-price-chart__external:hover, .lp-price-chart__external:focus-visible { border-color: #064a6b; color: #064a6b; outline: 0; }
+.lp-price-chart button.active { border-color: #064a6b; background: #064a6b; color: white; }
+.lp-price-chart button:disabled { cursor: not-allowed; opacity: .35; text-decoration: line-through; }
+.lp-price-chart__external { display: inline-flex; align-items: center; }
+.lp-price-chart__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 18px; border-bottom: 1px solid #eee8dc; background: #fbf8f0; }
+.lp-price-chart__ema button[data-period="20"] { border-color: #efbf76; color: #bd6900; }
+.lp-price-chart__ema button[data-period="50"] { border-color: #93c8e3; color: #0276ad; }
+.lp-price-chart__ema button[data-period="100"] { border-color: #c6a8f4; color: #7c3aed; }
+.lp-price-chart__ema button[data-period="200"] { border-color: #f0a0a0; color: #c62828; }
+.lp-price-chart__ema button.off { opacity: .42; text-decoration: line-through; }
+.lp-price-chart__canvas-wrap { position: relative; min-height: clamp(400px, 43vw, 560px); background: #fffdf7; overflow: hidden; }
+.lp-price-chart__canvas { width: 100%; height: clamp(400px, 43vw, 560px); }
+.lp-price-chart__legend { position: absolute; z-index: 4; top: 10px; left: 14px; max-width: calc(100% - 28px); padding: 8px 12px; border: 1px solid #c9c5ba; background: rgba(255,253,247,.94); box-shadow: 0 4px 18px rgba(35,31,24,.1); font-size: 11px; line-height: 1.5; pointer-events: none; }
+.lp-price-chart__legend-main, .lp-price-chart__legend-ema { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 9px; }
+.lp-price-chart__legend-main b:first-child { color: #064a6b; }
+.lp-price-chart__legend-ema { margin-top: 5px; }
+.lp-price-chart__legend-ema span { padding: 1px 5px; border: 1px solid currentColor; }
+.lp-price-chart__legend-ema span:nth-child(1) { color: #bd6900; }
+.lp-price-chart__legend-ema span:nth-child(2) { color: #0276ad; }
+.lp-price-chart__legend-ema span:nth-child(3) { color: #7c3aed; }
+.lp-price-chart__legend-ema span:nth-child(4) { color: #c62828; }
+.lp-price-chart__empty { display: grid; place-items: center; min-height: 400px; padding: 24px; color: #68727a; text-align: center; }
+.lp-price-chart__note { margin: 0; padding: 8px 18px; border-top: 1px solid #eee8dc; color: #68727a; font-size: 10px; }
+
+@media (max-width: 860px) {
+  .lp-price-chart__head, .lp-price-chart__toolbar { align-items: flex-start; flex-direction: column; }
+  .lp-price-chart__actions { justify-content: flex-start; }
+}
+@media (max-width: 640px) {
+  .lp-price-chart__head, .lp-price-chart__toolbar { padding-inline: 12px; }
+  .lp-price-chart__actions, .lp-price-chart__engine, .lp-price-chart__timeframes { width: 100%; }
+  .lp-price-chart__engine button, .lp-price-chart__timeframes button { flex: 1; padding-inline: 5px; }
+  .lp-price-chart__external { width: 100%; justify-content: center; }
+  .lp-price-chart__canvas-wrap, .lp-price-chart__canvas { min-height: 400px; height: 400px; }
+  .lp-price-chart__legend { top: 7px; left: 7px; max-width: calc(100% - 14px); font-size: 9px; }
+}

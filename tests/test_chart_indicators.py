@@ -7,24 +7,20 @@ def test_index_html_has_ema_and_chart_elements():
     index_path = Path(__file__).parent.parent / "static" / "index.html"
     content = index_path.read_text(encoding="utf-8")
 
-    assert "toggleEma20" in content, "Missing toggleEma20 button in index.html"
-    assert "toggleEma50" in content, "Missing toggleEma50 button in index.html"
-    assert "toggleEma100" in content, "Missing toggleEma100 button in index.html"
-    assert "toggleEma200" in content, "Missing toggleEma200 button in index.html"
-    assert 'id="tradingviewChartContainer"' in content, "Missing tradingviewChartContainer"
+    assert 'id="analysisSharedPriceChart"' in content
+    assert "/static/shared-price-chart.js" in content
+    assert "/static/shared-price-chart.css" in content
 
 
 def test_app_js_has_ema_and_compact_volume_scale():
-    app_js_path = Path(__file__).parent.parent / "static" / "app.js"
+    app_js_path = Path(__file__).parent.parent / "static" / "shared-price-chart.js"
     content = app_js_path.read_text(encoding="utf-8")
 
-    assert "function calculateEMA(" in content, "Missing calculateEMA function in app.js"
-    assert "function toggleChartEma(" in content, "Missing toggleChartEma function in app.js"
-    assert "tvEma20Series" in content, "Missing tvEma20Series in app.js"
-    assert "tvEma50Series" in content, "Missing tvEma50Series in app.js"
-    assert "tvEma100Series" in content, "Missing tvEma100Series in app.js"
-    assert "tvEma200Series" in content, "Missing tvEma200Series in app.js"
-    assert "top: 0.85" in content, "Volume scale margins not set to compact 15% height"
+    assert "function calculateEMA(" in content
+    assert "toggleEMA(period)" in content
+    assert "const PERIODS = [20, 50, 100, 200]" in content
+    assert "top: .84" in content
+    assert "const WINDOWS = { '1D': 1, '3D': 3, '1W': 5, '1M': 22, '3M': 65, '1Y': 250 }" in content
 
 
 def test_ema_mathematical_correctness():

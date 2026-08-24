@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f0e6">
+  <title>Tổng quan KLGD - Lộc Phát Securities</title>
+  <link rel="icon" href="/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Serif:wght@600;700;800&display=swap&subset=vietnamese" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site-nav.css?v=20260824_volume_v2">
+  <link rel="stylesheet" href="/static/editorial.css?v=20260824_volume_v1">
+  <link rel="stylesheet" href="/static/shared-price-chart.css?v=20260824_shared_v1">
+  <link rel="stylesheet" href="/static/volume-overview.css?v=20260824_volume_v1">
+</head>
+<body class="lp-editorial lp-page-volume-overview">
+  <div class="lp-page-nav-wrap" data-lp-site-nav></div>
+
+  <main class="vf-shell">
+    <header class="vf-hero">
+      <div class="vf-hero-copy">
+        <p class="vf-eyebrow">Trực quan thị trường Việt Nam</p>
+        <h1>Tổng quan KLGD</h1>
+        <p>Đối chiếu lực mua – bán của khối ngoại và tự doanh trên 20 phiên giao dịch đã chốt.</p>
+      </div>
+
+      <form class="vf-search" id="volumeSearchForm" role="search" autocomplete="off">
+        <label for="volumeSymbolInput">Tìm mã cổ phiếu</label>
+        <div class="vf-search-control">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+          <input id="volumeSymbolInput" type="search" placeholder="FPT, VCB, BSR..." maxlength="40" aria-autocomplete="list" aria-controls="volumeSuggestions" aria-expanded="false">
+          <button type="submit">Xem dữ liệu</button>
+        </div>
+        <div class="vf-suggestions" id="volumeSuggestions" role="listbox" hidden></div>
+      </form>
+    </header>
+
+    <section class="vf-state" id="volumeState" aria-live="polite">
+      <span class="vf-state-dot"></span>
+      <strong>Đang chuẩn bị dữ liệu</strong>
+      <span>Vui lòng chờ trong giây lát…</span>
+    </section>
+
+    <div id="volumeContent" hidden>
+      <section class="vf-stock-head" aria-labelledby="volumeStockTitle">
+        <div class="vf-stock-identity">
+          <span class="vf-ticker" id="volumeTicker">---</span>
+          <div>
+            <h2 id="volumeStockTitle">Đang tải doanh nghiệp</h2>
+            <p><span id="volumeExchange">---</span><i></i><span id="volumeCoverage">--/20 phiên</span></p>
+          </div>
+        </div>
+        <div class="vf-asof">
+          <span>Dữ liệu EOD đến</span>
+          <strong id="volumeAsOf">--/--/----</strong>
+          <small id="volumeFreshness">Đang xác minh</small>
+        </div>
+      </section>
+
+      <aside class="vf-live" id="volumeLive" hidden aria-live="polite">
+        <div class="vf-live-heading">
+          <span class="vf-live-pill" id="liveLabel">Tạm tính trong phiên</span>
+          <span><strong>Khối ngoại <span id="liveDate"></span></strong><small id="liveObserved">Snapshot bảng giá Vietcap</small></span>
+        </div>
+        <dl id="liveMetrics">
+          <div><dt>Mua</dt><dd id="liveBuy">--</dd></div>
+          <div><dt>Bán</dt><dd id="liveSell">--</dd></div>
+          <div><dt>Ròng</dt><dd id="liveNet">--</dd></div>
+        </dl>
+        <button class="vf-live-refresh" id="volumeManualRefresh" type="button">Cập nhật</button>
+      </aside>
+
+      <section class="vf-participant-grid" aria-label="Tổng hợp giao dịch theo nhóm nhà đầu tư">
+        <article class="vf-participant-card" data-participant="foreign">
+          <header>
+            <div><span>Nhà đầu tư</span><h3>Khối ngoại</h3></div>
+            <span class="vf-card-date" data-field="date">Phiên gần nhất</span>
+          </header>
+          <div class="vf-latest-grid">
+            <div><span>KL mua</span><strong class="positive" data-field="latest-buy-volume">--</strong><small data-field="latest-buy-value">--</small></div>
+            <div><span>KL bán</span><strong class="negative" data-field="latest-sell-volume">--</strong><small data-field="latest-sell-value">--</small></div>
+            <div><span>KL ròng</span><strong data-field="latest-net-volume">--</strong><small data-field="latest-net-value">--</small></div>
+          </div>
+          <footer>
+            <span><b data-field="period-net-value">--</b><small>GT ròng 20 phiên</small></span>
+            <span><b data-field="period-ratio">--</b><small>Tỷ lệ mua / bán</small></span>
+            <span><b data-field="period-days">--</b><small>Phiên mua / bán ròng</small></span>
+          </footer>
+        </article>
+
+        <article class="vf-participant-card" data-participant="proprietary">
+          <header>
+            <div><span>Thành viên thị trường</span><h3>Tự doanh</h3></div>
+            <span class="vf-card-date" data-field="date">Phiên gần nhất</span>
+          </header>
+          <div class="vf-latest-grid">
+            <div><span>KL mua</span><strong class="positive" data-field="latest-buy-volume">--</strong><small data-field="latest-buy-value">--</small></div>
+            <div><span>KL bán</span><strong class="negative" data-field="latest-sell-volume">--</strong><small data-field="latest-sell-value">--</small></div>
+            <div><span>KL ròng</span><strong data-field="latest-net-volume">--</strong><small data-field="latest-net-value">--</small></div>
+          </div>
+          <footer>
+            <span><b data-field="period-net-value">--</b><small>GT ròng 20 phiên</small></span>
+            <span><b data-field="period-ratio">--</b><small>Tỷ lệ mua / bán</small></span>
+            <span><b data-field="period-days">--</b><small>Phiên mua / bán ròng</small></span>
+          </footer>
+        </article>
+      </section>
+
+      <section class="vf-chart-grid">
+        <article class="vf-panel vf-price-panel">
+          <div id="volumeSharedPriceChart" aria-label="Biểu đồ nến, khối lượng và EMA lịch sử giá"></div>
+        </article>
+
+        <article class="vf-panel vf-flow-panel">
+          <header class="vf-panel-head vf-flow-head">
+            <div><span>Dòng tiền giao dịch</span><h3 id="flowChartTitle">NET theo ngày và lũy kế YTD</h3></div>
+            <div class="vf-chart-controls">
+              <div class="vf-segmented" id="participantTabs" role="group" aria-label="Nhóm nhà đầu tư">
+                <button class="active" type="button" data-participant="foreign" aria-pressed="true">Khối ngoại</button>
+                <button type="button" data-participant="proprietary" aria-pressed="false">Tự doanh</button>
+              </div>
+              <div class="vf-segmented" id="metricTabs" role="group" aria-label="Đơn vị dữ liệu">
+                <button class="active" type="button" data-metric="value" aria-pressed="true">Giá trị</button>
+                <button type="button" data-metric="volume" aria-pressed="false">Khối lượng</button>
+              </div>
+            </div>
+          </header>
+          <div class="vf-flow-chart" id="volumeFlowChart" role="img" aria-label="Biểu đồ NET theo ngày và dòng tiền lũy kế"></div>
+          <p class="vf-flow-note" id="flowDataNote" hidden></p>
+          <div class="vf-flow-legend"><span><i class="daily"></i>NET trong ngày</span><span id="flowCumulativeLegendItem"><i class="net"></i><b id="flowCumulativeLegend">Lũy kế YTD</b></span></div>
+        </article>
+      </section>
+
+      <section class="vf-panel vf-table-panel">
+        <header class="vf-panel-head">
+          <div><span>Dữ liệu chi tiết</span><h3 id="volumeTableTitle">20 phiên gần nhất · Giá trị</h3></div>
+          <p>Đơn vị tự động rút gọn; rê chuột hoặc chạm vào biểu đồ để xem số đầy đủ.</p>
+        </header>
+        <div class="vf-table-wrap" tabindex="0" aria-label="Bảng dữ liệu giao dịch 20 phiên, có thể cuộn ngang">
+          <table>
+            <thead>
+              <tr>
+                <th>Ngày</th><th>Đóng cửa</th><th>KL thị trường</th>
+                <th>Khối ngoại mua</th><th>Khối ngoại bán</th><th>Khối ngoại ròng</th>
+                <th>Tự doanh mua</th><th>Tự doanh bán</th><th>Tự doanh ròng</th><th>Trạng thái tự doanh</th>
+              </tr>
+            </thead>
+            <tbody id="volumeTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <details class="vf-method">
+        <summary>Nguồn dữ liệu &amp; phương pháp</summary>
+        <div>
+          <p>Dữ liệu EOD từ Vietcap public REST, được kiểm tra quan hệ ròng = mua − bán, ghi vào PostgreSQL rồi mới hiển thị. Lịch phiên lấy theo lịch sử giá của từng mã.</p>
+          <p>Khối ngoại YTD chỉ hiển thị khi nguồn phủ đủ từ phiên đầu năm và mọi phép ròng đều khớp mua − bán. Phiên tự doanh không có bản ghi nguồn được để trống, không điền số 0. Dữ liệu trong phiên chỉ mang tính tạm tính và không được lưu vào lịch sử EOD.</p>
+        </div>
+      </details>
+    </div>
+  </main>
+
+  <script src="/static/lightweight-charts.standalone.production.js?v=4.1.1"></script>
+  <script src="/static/apexcharts.min.js?v=20260824"></script>
+  <script src="/static/site-nav.js?v=20260824_volume_v2"></script>
+  <script src="/static/shared-price-chart.js?v=20260824_shared_v1"></script>
+  <script src="/static/volume-overview.js?v=20260824_volume_shared_v1"></script>
+</body>
+</html>
