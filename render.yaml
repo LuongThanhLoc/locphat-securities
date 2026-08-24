@@ -51,6 +51,8 @@ services:
 
 databases:
   - name: locphats-rrg
-    plan: basic-256mb
+    # Free is deliberate for this personal deployment. Render Free Postgres
+    # expires after 30 days; do not silently promote this to a paid plan.
+    plan: free
     databaseName: locphats_rrg
     user: locphats_rrg
