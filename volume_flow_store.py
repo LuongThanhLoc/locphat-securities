@@ -545,6 +545,10 @@ def get_volume_flow_store(required: bool = True) -> Optional[PostgresVolumeFlowS
         return None
     with _STORE_LOCK:
         if _STORE is None:
-            _STORE = PostgresVolumeFlowStore()
-            _STORE.init_schema()
+            # Publish the singleton only after schema initialization succeeds.
+            # A managed database can still be starting while the web service
+            # boots; keeping _STORE unset lets a later request retry cleanly.
+            candidate = PostgresVolumeFlowStore()
+            candidate.init_schema()
+            _STORE = candidate
     return _STORE
